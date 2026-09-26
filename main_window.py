@@ -841,6 +841,17 @@ class MainWindow(QMainWindow):
         form = self._form()
         w.setLayout(form)
         form.addRow(self._section("Farm na głębokości"))
+        self.field_depth_mode = QComboBox()
+        for key, label in (("fixed", "Stała głębokość (wpisz poniżej)"),
+                           ("max", "Maksymalna odblokowana (automatycznie)"),
+                           ("max_normal", "Maksymalna bez bonusu wrogów (automatycznie)")):
+            self.field_depth_mode.addItem(label, key)
+        self.field_depth_mode.setToolTip(
+            "Maksymalna odblokowana: bot klika „›”, aż przestanie się dać.\n"
+            "Bez bonusu wrogów: najwyższa głębokość, na której gra pisze „enemies at normal "
+            "strength” (gear wystarcza) - rośnie sama, gdy gear się poprawi.")
+        self.field_depth_mode.currentIndexChanged.connect(self._apply_config_fields)
+        form.addRow("Tryb:", self.field_depth_mode)
         self.field_farm_depth = QSpinBox(); self.field_farm_depth.setRange(0, 9999)
         self.field_farm_depth.setSpecialValueText("nie zmieniaj")
         self.field_farm_depth.setToolTip("0 = bot nie rusza wyboru głębokości")
@@ -850,10 +861,12 @@ class MainWindow(QMainWindow):
         self.field_depth_interval.setSuffix(" min")
         self.field_depth_interval.valueChanged.connect(self._apply_config_fields)
         form.addRow("Sprawdzaj głębokość co:", self.field_depth_interval)
-        form.addRow(self._hint("Bot wchodzi w Profile → CHOOSE DEPTH i ustawia tę głębokość: klika kafelek "
+        form.addRow(self._hint("Bot wchodzi w Profile → CHOOSE DEPTH i ustawia głębokość: klika kafelek "
                                "z numerem (do 79) albo strzałki ‹ › (80+). Sprawdza ją od razu po zmianie "
-                               "i potem co podany czas. Gdy głębokość nie jest jeszcze odblokowana, zostaje "
-                               "najbliższa możliwa. Ustawienie osobne dla każdej instancji."))
+                               "i potem co podany czas - w trybach automatycznych wtedy też podnosi ją, gdy "
+                               "odblokujesz więcej albo gear się poprawi. Gdy wpisana głębokość nie jest "
+                               "odblokowana, zostaje najbliższa możliwa. Ustawienie osobne dla każdej "
+                               "instancji."))
 
         form.addRow(self._section("Paczki"))
         self.field_auto_packs = QCheckBox("Otwieraj paczki, gdy gear jest za słaby")
@@ -1110,7 +1123,7 @@ class MainWindow(QMainWindow):
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake,
                 self.field_play_debris, self.field_skip_fishing,
-                self.field_farm_depth, self.field_depth_interval,
+                self.field_depth_mode, self.field_farm_depth, self.field_depth_interval,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
                 self.field_salvage_full, self.field_salvage_items, self.field_salvage_hold_min,
                 self.field_salvage_hold_max,
@@ -1155,6 +1168,7 @@ class MainWindow(QMainWindow):
             self.field_mistake.setValue(cfg.mistake_chance * 100)
             self.field_play_debris.setChecked(cfg.play_debris)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
+            self.field_depth_mode.setCurrentIndex(max(0, self.field_depth_mode.findData(cfg.depth_mode)))
             self.field_farm_depth.setValue(max(0, cfg.farm_depth))
             self.field_depth_interval.setValue(max(1, int(cfg.depth_check_interval_min)))
             self.field_auto_packs.setChecked(cfg.auto_packs)
@@ -1195,7 +1209,9 @@ class MainWindow(QMainWindow):
         packs = enabled and self.field_auto_packs.isChecked()
         for w in (self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds):
             w.setEnabled(packs)
-        self.field_depth_interval.setEnabled(enabled and self.field_farm_depth.value() > 0)
+        fixed = self.field_depth_mode.currentData() in (None, "fixed")
+        self.field_farm_depth.setEnabled(enabled and fixed)
+        self.field_depth_interval.setEnabled(enabled and (not fixed or self.field_farm_depth.value() > 0))
         fallback = self.field_idle_fallback.isChecked() or not self.field_idle_just_loot.isChecked()
         self.idle_point_box.setVisible(fallback)
         self.field_unknown_after.setEnabled(enabled and self.field_save_unknown.isChecked())
@@ -1294,6 +1310,7 @@ class MainWindow(QMainWindow):
         cfg.mistake_chance = self.field_mistake.value() / 100.0
         cfg.play_debris = self.field_play_debris.isChecked()
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
+        cfg.depth_mode = self.field_depth_mode.currentData() or "fixed"
         cfg.farm_depth = self.field_farm_depth.value()
         cfg.depth_check_interval_min = float(self.field_depth_interval.value())
         cfg.auto_packs = self.field_auto_packs.isChecked()

@@ -368,6 +368,31 @@ def find_wide_bottom_button(bgr: np.ndarray) -> Rect | None:
     return best
 
 
+def find_center_button(bgr: np.ndarray) -> Rect | None:
+    """
+    Pełny, nasycony przycisk na środku ekranu, węższy niż PROCEED - np.
+    "Done" na ekranie "Pack Opened" po przejrzeniu kart z paczki. Tylko
+    na ciemnym ekranie bez paska nawigacji (JUST LOOT).
+    """
+    H, W = bgr.shape[:2]
+    y0, y1 = int(0.3 * H), int(0.9 * H)
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    if float(np.median(gray)) > 40:
+        return None
+    hsv = cv2.cvtColor(bgr[y0:y1], cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 100, 150), (180, 255, 255))
+    best = None
+    for x, y, w, h, area in _components(mask):
+        if (0.4 * W <= w <= 0.85 * W and 0.03 * H <= h <= 0.08 * H and area >= 0.8 * w * h
+                and abs(x + w / 2 - W / 2) < 0.05 * W):
+            r = Rect(x, y0 + y, w, h)
+            if best is None or r.w * r.h > best.w * best.h:
+                best = r
+    if best is None or find_just_loot(bgr) is not None:
+        return None
+    return best
+
+
 def has_defeat_text(bgr: np.ndarray, button: Rect | None = None) -> bool:
     """
     Czerwony napis "Defeated." kończący log walki, nad przyciskiem
@@ -515,6 +540,8 @@ class DepthSelector:
     right: Rect                # strzałka "›"
     tiles: list[DepthTile]     # przy "big" - jedna pozycja (sama liczba)
     bottom: int                # dolna krawędź rzędu (pod nim opis siły wrogów)
+    left_found: bool = True    # False = strzałka nieaktywna (ledwo widoczna)
+    right_found: bool = True
 
     @property
     def current(self) -> int | None:
@@ -571,6 +598,7 @@ def find_depth_selector(bgr: np.ndarray) -> DepthSelector | None:
         left = next((s for s in same_row if s.x < 0.06 * W), None)
         right = next((s for s in same_row if s.x + s.w > 0.94 * W), None)
         # nieaktywna strzałka jest ledwo widoczna - lustrzane odbicie drugiej
+        left_found, right_found = left is not None, right is not None
         if left is None:
             left = Rect(W - right.x - right.w, right.y, right.w, right.h)
         if right is None:
@@ -589,7 +617,7 @@ def find_depth_selector(bgr: np.ndarray) -> DepthSelector | None:
                 selected = float(((ring[:, 1] > 90) & (ring[:, 2] > 120)).mean()) > 0.3
                 tiles.append(DepthTile(number, s, selected))
         if tiles:
-            return DepthSelector("tiles", left, right, tiles, bottom)
+            return DepthSelector("tiles", left, right, tiles, bottom, left_found, right_found)
 
         # duża biała liczba między strzałkami
         band_y1 = int(max(0, cy - 0.12 * W))
@@ -605,5 +633,5 @@ def find_depth_selector(bgr: np.ndarray) -> DepthSelector | None:
             gy2 = max(c[1] + c[3] for c in comps)
             rect = Rect(x1 + gx1, band_y1 + gy1, gx2 - gx1, gy2 - gy1)
             return DepthSelector("big", left, right, [DepthTile(number, rect, True)],
-                                 max(bottom, rect.y + rect.h))
+                                 max(bottom, rect.y + rect.h), left_found, right_found)
     return None

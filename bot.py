@@ -80,7 +80,7 @@ DROP_CHOICES: dict[str, tuple[str, int]] = {
 # Ustawienia osobne dla każdej instancji - wszystkie pozostałe są w GUI
 # wspólne (zmiana na jednej instancji ustawia je na wszystkich).
 PER_INSTANCE_FIELDS = ("name", "schedule", "daily_limit_hours", "close_game_during_break",
-                       "schedule_poll_interval", "farm_depth")
+                       "schedule_poll_interval", "farm_depth", "depth_mode")
 
 
 @dataclass
@@ -303,6 +303,10 @@ class BotConfig:
     # DEPTH") strzałkami / kafelkiem i pilnuje co depth_check_interval_min
     # minut. 0 = nie zmieniaj głębokości.
     farm_depth: int = 0
+    # "fixed" - głębokość farm_depth; "max" - najwyższa odblokowana;
+    # "max_normal" - najwyższa, na której wrogowie nie mają bonusu
+    # ("enemies at normal strength"). Dla "max*" farm_depth jest pomijane.
+    depth_mode: str = "fixed"
     depth_check_interval_min: float = 15.0
     # Punkty do klikania jako obszary: (x, y, promień) - x i promień jako
     # ułamek szerokości ekranu, y jako ułamek wysokości. Bot klika w losowe
@@ -319,6 +323,10 @@ class BotConfig:
     # ------------------------------------------------------------------ #
     # Serializacja do/z JSON (jedno miejsce dla GUI i manager.py)
     # ------------------------------------------------------------------ #
+    @property
+    def depth_enabled(self) -> bool:
+        return self.depth_mode in ("max", "max_normal") or self.farm_depth > 0
+
     @classmethod
     def from_dict(cls, data: dict) -> "BotConfig":
         """Buduje BotConfig ze słownika instancji z config.json. Brakujące
@@ -369,6 +377,7 @@ class BotConfig:
             ("packs_max_rounds", int),
             ("pack_plus_taps", int),
             ("farm_depth", int),
+            ("depth_mode", str),
             ("depth_check_interval_min", float),
         ):
             if key in data and data[key] is not None:
@@ -459,6 +468,7 @@ class BotConfig:
             "packs_max_rounds": self.packs_max_rounds,
             "pack_plus_taps": self.pack_plus_taps,
             "farm_depth": self.farm_depth,
+            "depth_mode": self.depth_mode,
             "depth_check_interval_min": self.depth_check_interval_min,
             "nav_profile": list(self.nav_profile),
             "nav_craft": list(self.nav_craft),
@@ -843,7 +853,7 @@ class DustMineBot:
         # klikanie idle (Keep Current / odkrycie karty), a ich elementy
         # (np. zakładki RING, tekst przedmiotu) nie mogą udawać minigry
         if frame is not None and (screens.find_drop_choice(frame) or screens.find_reveal_card(frame)
-                                  or screens.find_item_card(frame)):
+                                  or screens.find_item_card(frame) or screens.find_center_button(frame)):
             return None
         kind = vision.screen_kind(det)
         if kind == "debris" and not self.config.play_debris:
@@ -876,7 +886,8 @@ class DustMineBot:
             # karty (zakryta "?" po walce, odkryta z dropu / paczki): szybka
             # ścieżka - bez wykrywania planszy i z krótką przerwą, jak
             # człowiek szybko przeklikujący karty
-            card = screens.find_reveal_card(frame) or screens.find_item_card(frame)
+            card = (screens.find_reveal_card(frame) or screens.find_item_card(frame)
+                    or screens.find_center_button(frame))
             if card is not None and not self._paused:
                 if self._on_frame is not None:
                     self._on_frame(cfg.name, frame, vision.DetectionResult(None, []), "idle")
@@ -1108,6 +1119,11 @@ class DustMineBot:
                 # punkt wypadł na karcie - kliknij nad nią
                 x, y = humanize.random_point_in_circle(w / 2, item.y / 2, 0.08 * w)
             return x, y
+        # "Pack Opened" -> "Done" (ekran po kartach z paczki)
+        done = screens.find_center_button(frame)
+        if done is not None:
+            cx, cy = done.center
+            return humanize.random_point_in_circle(cx, cy, min(done.w, done.h) * 0.3)
         if cfg.idle_target == "just_loot":
             button = screens.find_just_loot(frame)
             if button is not None:

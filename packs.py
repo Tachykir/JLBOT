@@ -59,7 +59,7 @@ class PackOpener:
         """Wywoływane na każdej klatce idle. Liczy porażki z rzędu i mówi,
         czy pora na procedurę: "defeats" | "check" | None."""
         cfg = self.bot.config
-        if not cfg.auto_packs and cfg.farm_depth <= 0:
+        if not cfg.auto_packs and not cfg.depth_enabled:
             return None
         self._size = (frame.shape[1], frame.shape[0])
 
@@ -91,8 +91,8 @@ class PackOpener:
                 return "defeats"
             if self._last_check is None or now - self._last_check >= cfg.packs_check_interval_min * 60:
                 return "check"
-        if cfg.farm_depth > 0 and (self._last_depth_check is None
-                                   or cfg.farm_depth != self._depth_target_seen
+        if cfg.depth_enabled and (self._last_depth_check is None
+                                   or self._depth_goal() != self._depth_target_seen
                                    or now - self._last_depth_check >= cfg.depth_check_interval_min * 60):
             return "depth"
         return None
@@ -174,62 +174,173 @@ class PackOpener:
                                duration_ms=random.randint(300, 450))
             self.bot._sleep(random.uniform(0.7, 1.0))
 
+    def _depth_goal(self):
+        """Cel ustawiania (zmiana = sprawdź od razu)."""
+        cfg = self.bot.config
+        return cfg.depth_mode if cfg.depth_mode in ("max", "max_normal") else cfg.farm_depth
+
+    def _read_depth(self):
+        return screens.find_depth_selector(self._frame())
+
     def ensure_depth(self, already_on_profile: bool = False) -> bool | None:
         """
-        Ustawia w Profile głębokość `farm_depth`. Kafelki (do 79): klik
-        w kafelek z numerem albo strzałka w stronę celu; duża liczba (80+):
-        strzałka co 1. Gdy strzałka nic nie zmienia (koniec zakresu),
-        zostaje najbliższa możliwa głębokość. True = ustawiona, False =
-        nie da się dokładnie (np. cel poza odblokowanym zakresem), None =
-        nie odczytano selektora.
+        Ustawia głębokość w Profile ("CHOOSE DEPTH") wg `depth_mode`:
+          - "fixed": `farm_depth`,
+          - "max": najwyższa odblokowana (strzałka "›" aż przestanie
+            cokolwiek zmieniać / zgaśnie),
+          - "max_normal": jak "max", a potem "‹" aż zniknie bonus wrogów
+            ("enemies at normal strength").
+        Kafelki (do 79): klik w kafelek z numerem albo strzałka w stronę
+        celu; duża liczba (80+): strzałka co 1. True = ustawiona, False =
+        nie da się dokładnie (cel poza odblokowanym zakresem), None = nie
+        odczytano selektora.
         """
-        bot, cfg = self.bot, self.bot.config
-        target = cfg.farm_depth
+        cfg = self.bot.config
         self._last_depth_check = time.monotonic()
-        self._depth_target_seen = target
-        if target <= 0:
+        self._depth_target_seen = self._depth_goal()
+        if not cfg.depth_enabled:
             return True
         if not already_on_profile:
             self._open_profile()
-        sel = screens.find_depth_selector(self._frame())
-        start = sel.current if sel is not None else None
+        sel = self._read_depth()
+        if sel is None:
+            logger.warning("[%s] nie znaleziono wyboru głębokości (CHOOSE DEPTH) w Profile", cfg.name)
+            return None
+        start = sel.current
+
+        if cfg.depth_mode == "max":
+            result, sel = self._move_depth(sel, None)
+            if result is None:
+                return None
+            final = sel.current if sel is not None else None
+            if final != start:
+                logger.info("[%s] głębokość: %s -> %s (maks. odblokowana)", cfg.name, start, final)
+            return True
+        if cfg.depth_mode == "max_normal":
+            sel = self._climb_normal(sel)
+            if sel is None:
+                return None
+            if sel.current != start:
+                logger.info("[%s] głębokość: %s -> %s (najwyższa bez bonusu wrogów)", cfg.name, start, sel.current)
+            return True
+
+        target = cfg.farm_depth
+        result, sel = self._move_depth(sel, target)
+        if result is True and start != target:
+            logger.info("[%s] głębokość ustawiona: %s -> %d", cfg.name, start, target)
+        elif result is False:
+            logger.warning("[%s] głębokości %d nie da się wybrać - zostaje %s (poza odblokowanym zakresem?)",
+                           cfg.name, target, sel.current if sel is not None else None)
+        return result
+
+    def _move_depth(self, sel, target: int | None):
+        """Przesuwa wybór do `target` (None = jak najwyżej). Zwraca
+        (True/False/None, ostatni odczyt selektora)."""
+        cfg = self.bot.config
         stuck = 0
         prev_state = None
-        for _ in range(300):
+        for _ in range(400):
             if self._abort():
-                return None
+                return None, sel
             if sel is None:
-                logger.warning("[%s] nie znaleziono wyboru głębokości (CHOOSE DEPTH) w Profile", cfg.name)
-                return None
+                logger.warning("[%s] zgubiono wybór głębokości w Profile", cfg.name)
+                return None, sel
             numbers = [t.number for t in sel.tiles if t.number is not None]
             current = sel.current
-            if current == target:
-                if start != target:
-                    logger.info("[%s] głębokość ustawiona: %s -> %d", cfg.name, start, target)
-                return True
             if not numbers:
                 logger.warning("[%s] nie udało się odczytać numeru głębokości", cfg.name)
-                return None
+                return None, sel
+            if target is not None and current == target:
+                return True, sel
             state = (tuple(numbers), current)
-            if state == prev_state:
+            at_end = target is None or target > max(numbers)
+            # nieaktywna "›" przy dużej liczbie = koniec zakresu, bez klikania
+            if at_end and sel.kind == "big" and not sel.right_found:
+                stuck = 3
+            elif state == prev_state:
                 stuck += 1
-                if stuck >= 3:
-                    logger.warning("[%s] głębokości %d nie da się wybrać - zostaje %s "
-                                   "(poza odblokowanym zakresem?)", cfg.name, target, current)
-                    return False
             else:
                 stuck = 0
             prev_state = state
+            if stuck >= 3:
+                # koniec zakresu - przy kafelkach wybierz skrajny widoczny
+                if sel.kind == "tiles":
+                    edge_number = max(numbers) if at_end else min(numbers)
+                    edge = next(t for t in sel.tiles if t.number == edge_number)
+                    if current != edge_number:
+                        self._tap_rect(edge.rect)
+                        self.bot._sleep(humanize.human_delay(0.2, 0.6))
+                        sel = self._read_depth()
+                return (True if target is None else False), sel
 
-            tile = next((t for t in sel.tiles if t.number == target), None)
+            tile = next((t for t in sel.tiles if t.number == target), None) if target is not None else None
             if sel.kind == "tiles" and tile is not None:
                 self._tap_rect(tile.rect)
             else:
-                ref = current if current is not None else (numbers[0] if target < numbers[0] else numbers[-1])
-                self._tap_rect(sel.right if target > ref else sel.left)
-            bot._sleep(humanize.human_delay(0.2, 0.6))
-            sel = screens.find_depth_selector(self._frame())
-        return False
+                if target is None:
+                    up = True
+                else:
+                    ref = current if current is not None else (numbers[0] if target < numbers[0] else numbers[-1])
+                    up = target > ref
+                self._tap_rect(sel.right if up else sel.left)
+            self.bot._sleep(humanize.human_delay(0.2, 0.6))
+            sel = self._read_depth()
+        return False, sel
+
+    def _climb_normal(self, sel):
+        """Najwyższa głębokość bez bonusu wrogów, szukana od obecnej: z
+        bonusem - w dół, bez - w górę po 1, dopóki bonus się nie pojawi
+        (wtedy o 1 z powrotem) albo nie skończy się zakres. Przy kolejnych
+        sprawdzeniach to zwykle 1-2 kliknięcia."""
+        cfg = self.bot.config
+        warning = screens.frontier_warning(self._frame())
+        if warning is None:
+            logger.warning("[%s] nie odczytano siły wrogów w Profile", cfg.name)
+            return None
+        if warning:
+            return self._step_down_until_normal(sel)
+        for _ in range(400):
+            if self._abort() or sel is None:
+                return None
+            before = sel.current
+            if before is None:
+                return sel
+            result, after = self._move_depth(sel, before + 1)
+            if result is not True:
+                return after if result is False else None   # koniec zakresu / błąd
+            frame = self._frame()
+            warning = screens.frontier_warning(frame)
+            if warning:
+                result, after = self._move_depth(screens.find_depth_selector(frame), before)
+                return after
+            sel = after
+        return sel
+
+    def _step_down_until_normal(self, sel):
+        """Z najwyższej głębokości schodzi "‹" aż zniknie ostrzeżenie o
+        bonusie wrogów. Zwraca ostatni odczyt selektora (None = błąd)."""
+        cfg = self.bot.config
+        for _ in range(200):
+            if self._abort():
+                return None
+            frame = self._frame()
+            warning = screens.frontier_warning(frame)
+            if warning is None:
+                logger.warning("[%s] nie odczytano siły wrogów w Profile", cfg.name)
+                return None
+            sel = screens.find_depth_selector(frame)
+            if sel is None or not warning:
+                return sel
+            before = sel.current
+            if before is None or before <= 1:
+                return sel
+            result, after = self._move_depth(sel, before - 1)
+            if result is None:
+                return None
+            if result is False:
+                logger.warning("[%s] nie da się zejść poniżej głębokości %s", cfg.name, before)
+                return after
+        return sel
 
     def open_round(self) -> bool:
         """Jedna runda: max paczek, OPEN, wszystkie karty. False = nie
@@ -301,6 +412,12 @@ class PackOpener:
                 unchanged = 0
             prev = small
 
+            done = screens.find_center_button(frame)
+            if done is not None:
+                # "Pack Opened" - "Done" po ostatniej karcie
+                self._tap_rect(done)
+                bot._sleep(random.uniform(0.5, 0.8))
+                continue
             button = screens.find_wide_bottom_button(frame)
             if button is not None:
                 self._tap_rect(button)
@@ -329,7 +446,7 @@ class PackOpener:
         self._last_check = time.monotonic()
 
         warning = self.check_profile()
-        if cfg.farm_depth > 0 and self.ensure_depth(already_on_profile=True) is not None:
+        if cfg.depth_enabled and self.ensure_depth(already_on_profile=True) is not None:
             # po zmianie głębokości zmienia się też ostrzeżenie o sile wrogów
             warning = screens.frontier_warning(self._frame())
         if reason == "check" and warning is not True:

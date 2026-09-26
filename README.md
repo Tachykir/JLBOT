@@ -203,6 +203,16 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   ustawienia i potem co `depth_check_interval_min` minut (domyślnie 15),
   zawsze tylko na ekranie z paskiem nawigacji (nie w trakcie walki).
   Gdy głębokość nie jest odblokowana, zostaje najbliższa możliwa.
+  Tryb (`depth_mode`): `fixed` — wpisana głębokość; `max` — maksymalna
+  odblokowana (bot klika „›”, aż przestanie się dać albo strzałka
+  zgaśnie); `max_normal` — najwyższa, na której gra pisze „enemies at
+  normal strength” (od obecnej w górę po 1, aż pojawi się bonus wrogów,
+  wtedy krok wstecz). Tryby automatyczne same podnoszą głębokość przy
+  kolejnych sprawdzeniach. Uwaga: przy `max_normal` sprawdzanie Profile
+  nie otworzy paczek (wrogowie nigdy nie mają bonusu) — paczki otworzą
+  się po serii porażek.
+- **Ekran „Pack Opened”** — przycisk „Done” po kartach z paczki jest
+  klikany w procedurze paczek i w zwykłym trybie.
 - **Szybkie klikanie kart** — seria kliknięć „+” i przeklikiwanie kart z
   paczek idą jednym poleceniem ADB (2–3 kliknięcia na zrzut ekranu);
   karty z dropu po walce („?” i „TAP ANYWHERE TO CONTINUE”) bot klika
