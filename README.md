@@ -137,9 +137,15 @@ instancji:
   grze sortowanie tak, żeby na górze były najsłabsze przedmioty (np. Item
   Level rosnąco) — rozebrania nie da się cofnąć. Czas przytrzymania:
   `salvage_hold_ms` (GUI: zakładka Paczki).
-- **`idle_point`** — [x, y] punktu awaryjnego (gdy nie widać ani JUST
-  LOOT, ani PROCEED) albo stałego przy `idle_target: "fixed"`.
-  Odczytaj współrzędne z `calibrate.py --grid`.
+- **Nieznane ekrany** — gdy bot nie rozpoznaje ekranu, nic nie klika. Po
+  `unknown_screen_after_s` (30 s) zapisuje jeden zrzut do folderu
+  `unknown_screens` obok programu i pisze o tym w logu — prześlij taki
+  zrzut, żeby dodać obsługę ekranu (`save_unknown_screens`, GUI: Ochrona).
+- **`idle_point`** — punkt awaryjny: klikany na nieznanym ekranie tylko
+  przy `idle_fallback_enabled: true` (domyślnie wyłączone) albo zawsze
+  przy `idle_target: "fixed"` (GUI: zakładka Punkty).
+- **`board_region`** — zwykle niepotrzebny (wykrywanie działa na całym
+  ekranie); w GUI w zwijanej sekcji „Zaawansowane” zakładki Ogólne.
 - **`board_region`** — [x1, y1, x2, y2] obszaru planszy gry, żeby
   ograniczyć wykrywanie i uniknąć fałszywych trafień w innych elementach
   UI. Ustal na podstawie sugestii z `calibrate.py`.

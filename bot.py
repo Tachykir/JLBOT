@@ -30,6 +30,8 @@ import random
 import threading
 import logging
 import datetime as dt
+import sys
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -104,6 +106,17 @@ class BotConfig:
     #                 idle_point,
     #   "fixed"     - zawsze idle_point (dawne zachowanie).
     idle_target: str = "just_loot"
+
+    # Czy w trybie "just_loot" klikać punkt awaryjny (idle_point), gdy bot
+    # nie rozpozna żadnego ekranu. Domyślnie wyłączone - klikanie "na
+    # ślepo" na nieznanym ekranie może trafić w coś przypadkowego.
+    idle_fallback_enabled: bool = False
+
+    # Zapisywanie zrzutów ekranów, których bot nie rozpoznaje dłużej niż
+    # `unknown_screen_after_s` sekund (folder unknown_screens obok programu)
+    # - żeby można je było przesłać i dodać ich obsługę.
+    save_unknown_screens: bool = True
+    unknown_screen_after_s: float = 30.0
 
     # Co wybrać na ekranie dropu po wygranej walce (panel z przyciskami
     # Replace / Equip & Salvage / Salvage / Keep Current):
@@ -339,6 +352,9 @@ class BotConfig:
             ("max_drag_attempts_per_ball", int),
             ("mistake_chance", float),
             ("salvage_when_full", bool),
+            ("idle_fallback_enabled", bool),
+            ("save_unknown_screens", bool),
+            ("unknown_screen_after_s", float),
             ("salvage_items", int),
             ("play_debris", bool),
             ("skip_fishing", bool),
@@ -395,6 +411,9 @@ class BotConfig:
             "idle_point": list(self.idle_point),
             "idle_point_radius": self.idle_point_radius,
             "idle_target": self.idle_target,
+            "idle_fallback_enabled": self.idle_fallback_enabled,
+            "save_unknown_screens": self.save_unknown_screens,
+            "unknown_screen_after_s": self.unknown_screen_after_s,
             "drop_choice": self.drop_choice,
             "salvage_when_full": self.salvage_when_full,
             "salvage_items": self.salvage_items,
@@ -439,6 +458,13 @@ class BotConfig:
         }
 
 
+def unknown_screens_dir() -> Path:
+    """Folder na zrzuty nierozpoznanych ekranów - obok programu (obok .exe
+    w wersji zbudowanej, obok bot.py przy uruchamianiu ze źródeł)."""
+    base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    return base / "unknown_screens"
+
+
 @dataclass
 class BotStats:
     cycles: int = 0
@@ -477,6 +503,8 @@ class DustMineBot:
         self._last_drop: vision.Circle | None = None
         self._idle_point_warned = False
         self._last_drop_choice = 0.0
+        self._unknown_since: float | None = None   # od kiedy ekran nierozpoznany
+        self._unknown_saved = False
         self._inventory_full = False            # po "Inventory Full": Salvage na ekranie dropu
         self._inventory_salvage_pending = False # potem: rozebrać przedmioty w Inventory
         self._last_decision: Decision | None = None
@@ -834,6 +862,8 @@ class DustMineBot:
                 self._on_frame(cfg.name, frame, det, "idle")
 
             kind = self._enabled_kind(det, frame)
+            if kind is not None:
+                self._note_unknown(None)
             if kind is None and not self._paused:
                 reason = self._packs.observe(frame)
                 if reason is not None:
@@ -955,9 +985,48 @@ class DustMineBot:
     def _mistake(self) -> bool:
         return random.random() < self.config.mistake_chance
 
+    def _note_unknown(self, frame: np.ndarray | None) -> None:
+        """Liczy, jak długo ekran pozostaje nierozpoznany (frame=None =
+        rozpoznany); po `unknown_screen_after_s` zapisuje jeden zrzut."""
+        cfg = self.config
+        if frame is None:
+            self._unknown_since = None
+            self._unknown_saved = False
+            return
+        now = time.monotonic()
+        if self._unknown_since is None:
+            self._unknown_since = now
+            return
+        if (not cfg.save_unknown_screens or self._unknown_saved
+                or now - self._unknown_since < cfg.unknown_screen_after_s):
+            return
+        self._unknown_saved = True
+        try:
+            folder = unknown_screens_dir()
+            folder.mkdir(parents=True, exist_ok=True)
+            # nie zaśmiecaj dysku - zostaw najwyżej 50 ostatnich zrzutów
+            old = sorted(folder.glob("*.png"))
+            for f in old[:-49]:
+                f.unlink(missing_ok=True)
+            safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in cfg.name)
+            path = folder / f"{dt.datetime.now():%Y%m%d_%H%M%S_%f}_{safe_name}.png"
+            cv2.imwrite(str(path), frame)
+            logger.warning("[%s] nie rozpoznaję ekranu od %.0f s - zapisano zrzut: %s "
+                           "(prześlij go, żeby dodać obsługę tego ekranu)",
+                           cfg.name, now - self._unknown_since, path)
+        except Exception as e:
+            logger.warning("[%s] nie udało się zapisać zrzutu nierozpoznanego ekranu: %s", cfg.name, e)
+
     def _idle_click_point(self, frame: np.ndarray) -> tuple[int, int] | None:
         """Punkt kliknięcia w trybie idle - patrz BotConfig.idle_target.
         Ekrany dropu po wygranej walce są obsługiwane zawsze."""
+        self._unknown_hit = False
+        point = self._idle_click_point_inner(frame)
+        if not self._unknown_hit:
+            self._note_unknown(None)  # ekran rozpoznany - zeruj licznik
+        return point
+
+    def _idle_click_point_inner(self, frame: np.ndarray) -> tuple[int, int] | None:
         cfg = self.config
 
         # wybór przedmiotu z dropu (Replace / ... / Keep Current)
@@ -988,6 +1057,11 @@ class DustMineBot:
             if proceed is not None:
                 cx, cy = proceed.center
                 return humanize.random_point_in_circle(cx, cy, min(proceed.w, proceed.h) * 0.3)
+            # nic nie rozpoznano
+            self._unknown_hit = True
+            self._note_unknown(frame)
+            if not cfg.idle_fallback_enabled:
+                return None
         x, y = self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
         h, w = frame.shape[:2]
         if not (0 <= x < w and 0 <= y < h):
