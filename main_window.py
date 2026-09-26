@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -33,13 +34,21 @@ from PySide6.QtWidgets import (
     QTimeEdit, QCheckBox, QDialog, QDialogButtonBox,
 )
 
-from bot import BotConfig, RandomRange, ScheduleWindow, schedule_from_list, schedule_to_list
-from gui_worker import BotWorker
+from bot import BotConfig, BotStats, RandomRange, ScheduleWindow
+from gui_worker import BotWorker, SnapshotWorker
 from preview_widget import PreviewWidget, EditMode
 from adb_controller import list_ldplayer_devices
 import vision
 
 logger = logging.getLogger("gui")
+
+
+def default_config_path() -> Path:
+    """config.json obok aplikacji: obok .exe w wersji zbudowanej
+    (PyInstaller), obok main_window.py przy uruchamianiu ze źródeł."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "config.json"
+    return Path(__file__).resolve().parent / "config.json"
 
 STATUS_COLORS = {
     "connecting": "#f0ad4e",
@@ -70,7 +79,9 @@ class InstanceEntry:
         self.status: str = "stopped"
         self.last_frame: np.ndarray | None = None
         self.last_det: vision.DetectionResult | None = None
+        self.last_stats: BotStats | None = None
         self.list_item: QListWidgetItem | None = None
+        self.snapshot_worker: SnapshotWorker | None = None
 
 
 _DAY_LABELS = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"]
@@ -269,6 +280,10 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
 
+        path = default_config_path()
+        if path.exists():
+            self._load_config_file(path)
+
     # ------------------------------------------------------------------ #
     def _build_ui(self) -> None:
         central = QWidget()
@@ -379,6 +394,21 @@ class MainWindow(QMainWindow):
         self.field_serial.editingFinished.connect(self._apply_config_fields)
         form.addRow("ADB serial:", self.field_serial)
 
+        self.field_game_package = QLineEdit()
+        self.field_game_package.setPlaceholderText("np. com.timhilgenstoehlerexpo.justlootapp")
+        self.field_game_package.setToolTip(
+            "Nazwa pakietu gry - potrzebna do restartu gry, watchdogów\n"
+            "(czarny ekran, wypadnięcie z gry) i zamykania gry na przerwę.\n"
+            "Puste = te funkcje są wyłączone."
+        )
+        self.field_game_package.editingFinished.connect(self._apply_config_fields)
+        form.addRow("game_package:", self.field_game_package)
+
+        self.field_game_activity = QLineEdit()
+        self.field_game_activity.setPlaceholderText("opcjonalnie, np. pakiet/.MainActivity")
+        self.field_game_activity.editingFinished.connect(self._apply_config_fields)
+        form.addRow("game_activity:", self.field_game_activity)
+
         self.field_idle_x = QSpinBox(); self.field_idle_x.setRange(0, 9999)
         self.field_idle_y = QSpinBox(); self.field_idle_y.setRange(0, 9999)
         self.field_idle_x.valueChanged.connect(self._apply_config_fields)
@@ -455,7 +485,7 @@ class MainWindow(QMainWindow):
         schedule_container = QWidget(); schedule_container.setLayout(schedule_row)
         form.addRow("Harmonogram:", schedule_container)
 
-        self.stats_label = QLabel("Cykle: 0   Kulki: 0   Błędy: 0")
+        self.stats_label = QLabel(self._format_stats(None))
         form.addRow("Statystyki:", self.stats_label)
 
         note = QLabel("Wskazówka: zmiany w polach idle_point / board_region\n"
@@ -579,7 +609,8 @@ class MainWindow(QMainWindow):
         # wartości w QSpinBox/QDoubleSpinBox wywołuje valueChanged/editingFinished,
         # które od razu (przedwcześnie) nadpisują config innej/nowej instancji
         # wartościami domyślnymi z widgetu, zanim zdążymy wczytać prawdziwe dane.
-        fields = (self.field_name, self.field_serial, self.field_idle_x, self.field_idle_y,
+        fields = (self.field_name, self.field_serial, self.field_game_package,
+                  self.field_game_activity, self.field_idle_x, self.field_idle_y,
                   self.field_idle_radius,
                   self.field_region_x1, self.field_region_y1, self.field_region_x2,
                   self.field_region_y2,
@@ -591,6 +622,8 @@ class MainWindow(QMainWindow):
         try:
             self.field_name.setText(cfg.name)
             self.field_serial.setText(entry.serial)
+            self.field_game_package.setText(cfg.game_package or "")
+            self.field_game_activity.setText(cfg.game_activity or "")
             self.field_idle_x.setValue(cfg.idle_point[0])
             self.field_idle_y.setValue(cfg.idle_point[1])
             self.field_idle_radius.setValue(cfg.idle_point_radius)
@@ -613,6 +646,14 @@ class MainWindow(QMainWindow):
             for w in fields:
                 w.blockSignals(False)
         self.schedule_summary_label.setText(self._schedule_summary_text(cfg.schedule))
+        self.stats_label.setText(self._format_stats(entry.last_stats))
+
+    @staticmethod
+    def _format_stats(stats: BotStats | None) -> str:
+        if stats is None:
+            return "Cykle: 0   Kulki: 0   Przeciągnięcia: 0   Błędy: 0   Restarty: 0"
+        return (f"Cykle: {stats.cycles}   Kulki: {stats.balls_collected}   "
+                f"Przeciągnięcia: {stats.drags}   Błędy: {stats.errors}   Restarty: {stats.restarts}")
 
     def _schedule_summary_text(self, schedule: list[ScheduleWindow]) -> str:
         if not schedule:
@@ -647,7 +688,8 @@ class MainWindow(QMainWindow):
             )
 
     def _set_config_form_enabled(self, enabled: bool) -> None:
-        for w in (self.field_name, self.field_serial, self.field_idle_x, self.field_idle_y,
+        for w in (self.field_name, self.field_serial, self.field_game_package,
+                  self.field_game_activity, self.field_idle_x, self.field_idle_y,
                   self.field_idle_radius,
                   self.field_region_x1, self.field_region_y1, self.field_region_x2,
                   self.field_region_y2,
@@ -664,6 +706,13 @@ class MainWindow(QMainWindow):
         if entry is None:
             return
         cfg = entry.config
+
+        new_name = self.field_name.text().strip()
+        if new_name and new_name != cfg.name:
+            self._rename_entry(entry, new_name)
+
+        cfg.game_package = self.field_game_package.text().strip() or None
+        cfg.game_activity = self.field_game_activity.text().strip() or None
         cfg.idle_point = (self.field_idle_x.value(), self.field_idle_y.value())
         cfg.idle_point_radius = self.field_idle_radius.value()
         region = (self.field_region_x1.value(), self.field_region_y1.value(),
@@ -685,10 +734,29 @@ class MainWindow(QMainWindow):
         )
         entry.serial = self.field_serial.text().strip()
 
+        # Działający bot trzyma ten sam obiekt BotConfig, więc zmiany
+        # działają od razu, bez restartu wątku.
         self.preview.set_known_config(cfg.idle_point, cfg.board_region, cfg.idle_point_radius)
 
+    def _rename_entry(self, entry: InstanceEntry, new_name: str) -> None:
+        old_name = entry.config.name
         if entry.worker is not None and entry.worker.isRunning():
-            entry.worker.update_config(idle_point=cfg.idle_point, board_region=cfg.board_region)
+            QMessageBox.warning(self, "Instancja aktywna",
+                                 "Zatrzymaj instancję przed zmianą nazwy.")
+            self.field_name.setText(old_name)
+            return
+        if new_name in self.instances:
+            QMessageBox.warning(self, "Nazwa zajęta",
+                                 f"Instancja o nazwie '{new_name}' już istnieje.")
+            self.field_name.setText(old_name)
+            return
+        entry.config.name = new_name
+        self.instances = {(new_name if k == old_name else k): v for k, v in self.instances.items()}
+        self.selected_name = new_name
+        entry.list_item.setData(Qt.UserRole, new_name)
+        entry.list_item.setText(self._format_list_label(entry))
+        self.preview_title.setText(f"<b>Podgląd</b> - {new_name}")
+        self._log_local(f"Zmieniono nazwę instancji '{old_name}' -> '{new_name}'")
 
     # ------------------------------------------------------------------ #
     # Podgląd - edycja przez klik
@@ -726,23 +794,49 @@ class MainWindow(QMainWindow):
         self._log_local(f"Ustawiono board_region = ({x1}, {y1}, {x2}, {y2})")
 
     def _refresh_preview_once(self) -> None:
-        """Pobiera jeden zrzut ekranu natychmiast (przydatne, gdy bot
-        jest zatrzymany i nie generuje klatek automatycznie)."""
+        """Pobiera jeden zrzut ekranu w tle (przydatne, gdy bot jest
+        zatrzymany i nie generuje klatek automatycznie)."""
         entry = self._current_entry()
         if entry is None:
             return
-        from adb_controller import ADBController, ADBError
-        try:
-            adb = ADBController(serial=entry.serial)
-            frame = adb.screenshot()
-            det = vision.detect(frame, region=entry.config.board_region)
-            entry.last_frame = frame
-            entry.last_det = det
+        if entry.worker is not None and entry.worker.isRunning():
+            self._log_local(f"[{entry.config.name}] bot działa - podgląd odświeża się automatycznie")
+            return
+        if entry.snapshot_worker is not None and entry.snapshot_worker.isRunning():
+            return
+        # parent=self: wątek żyje do końca, nawet gdy instancja zostanie
+        # w międzyczasie usunięta z listy
+        worker = SnapshotWorker(entry.config.name, entry.serial, entry.config.board_region, parent=self)
+        worker.done.connect(self._on_snapshot_done)
+        worker.failed.connect(self._on_snapshot_failed)
+        entry.snapshot_worker = worker
+        self.btn_refresh_preview.setEnabled(False)
+        worker.finished.connect(lambda: self._on_snapshot_finished(entry, worker))
+        worker.start()
+        self._log_local(f"[{entry.config.name}] pobieram zrzut ekranu...")
+
+    def _on_snapshot_finished(self, entry: InstanceEntry, worker: SnapshotWorker) -> None:
+        self.btn_refresh_preview.setEnabled(True)
+        if entry.snapshot_worker is worker:
+            entry.snapshot_worker = None
+        worker.deleteLater()
+
+    @Slot(str, np.ndarray, object)
+    def _on_snapshot_done(self, name: str, frame: np.ndarray, det: object) -> None:
+        entry = self.instances.get(name)
+        if entry is None:
+            return
+        entry.last_frame = frame
+        entry.last_det = det
+        if name == self.selected_name:
             self.preview.update_frame(frame, det)
-            self._log_local(f"[{entry.config.name}] odświeżono podgląd ręcznie "
-                             f"(DROP={'tak' if det.drop else 'nie'}, kulki={len(det.balls)})")
-        except ADBError as e:
-            QMessageBox.critical(self, "Błąd ADB", str(e))
+        self._log_local(f"[{name}] odświeżono podgląd ręcznie "
+                         f"(DROP={'tak' if det.drop else 'nie'}, kulki={len(det.balls)})")
+
+    @Slot(str, str)
+    def _on_snapshot_failed(self, name: str, message: str) -> None:
+        self._log_local(f"[{name}] błąd odświeżania podglądu: {message}")
+        QMessageBox.critical(self, "Błąd ADB", message)
 
     # ------------------------------------------------------------------ #
     # Start / Stop / Pauza
@@ -804,8 +898,7 @@ class MainWindow(QMainWindow):
                 self, "Brak game_package",
                 f"Instancja '{entry.config.name}' nie ma ustawionego pola "
                 f"'game_package' - nie wiadomo, którą aplikację zrestartować.\n\n"
-                f"Ustaw game_package w konfiguracji tej instancji (np. w pliku "
-                f"config.json) i uruchom bota ponownie."
+                f"Wpisz game_package w panelu konfiguracji instancji."
             )
             return
 
@@ -850,7 +943,6 @@ class MainWindow(QMainWindow):
         self.log_view.moveCursor(QTextCursor.End)
 
     def _log_local(self, text: str) -> None:
-        import time
         ts = time.strftime("%H:%M:%S")
         self.log_view.append(f"{ts} [GUI] {text}")
         self.log_view.moveCursor(QTextCursor.End)
@@ -866,10 +958,14 @@ class MainWindow(QMainWindow):
             color = STATUS_COLORS.get(status, "#fff")
             entry.list_item.setForeground(QColor(color))
 
-    @Slot(str, int, int, int)
-    def _on_stats_updated(self, name: str, cycles: int, balls: int, errors: int) -> None:
+    @Slot(str, object)
+    def _on_stats_updated(self, name: str, stats: object) -> None:
+        entry = self.instances.get(name)
+        if entry is None:
+            return
+        entry.last_stats = stats
         if name == self.selected_name:
-            self.stats_label.setText(f"Cykle: {cycles}   Kulki: {balls}   Błędy: {errors}")
+            self.stats_label.setText(self._format_stats(stats))
 
     @Slot(str, str)
     def _on_connection_failed(self, name: str, message: str) -> None:
@@ -881,83 +977,50 @@ class MainWindow(QMainWindow):
     # Config JSON
     # ------------------------------------------------------------------ #
     def _load_config_dialog(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Wczytaj config", "", "JSON (*.json)")
+        start_dir = str(self._config_path or default_config_path())
+        path, _ = QFileDialog.getOpenFileName(self, "Wczytaj config", start_dir, "JSON (*.json)")
         if not path:
             return
+        if any(e.worker is not None and e.worker.isRunning() for e in self.instances.values()):
+            QMessageBox.warning(self, "Instancje aktywne",
+                                 "Zatrzymaj wszystkie instancje przed wczytaniem innego configu.")
+            return
+        self._load_config_file(Path(path))
+
+    def _load_config_file(self, path: Path) -> None:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            loaded = [(BotConfig.from_dict(inst), inst["serial"]) for inst in data.get("instances", [])]
         except Exception as e:
-            QMessageBox.critical(self, "Błąd wczytywania", str(e))
+            QMessageBox.critical(self, "Błąd wczytywania", f"{path}:\n{e}")
+            return
+
+        names = [cfg.name for cfg, _ in loaded]
+        if len(names) != len(set(names)):
+            QMessageBox.critical(self, "Błąd wczytywania",
+                                 f"{path}:\nNazwy instancji w configu muszą być unikalne.")
             return
 
         self.instance_list.clear()
         self.instances.clear()
+        self.selected_name = None
+        for cfg, serial in loaded:
+            self._register_instance(InstanceEntry(config=cfg, serial=serial))
 
-        for inst in data.get("instances", []):
-            cfg = BotConfig(
-                name=inst["name"],
-                idle_point=tuple(inst["idle_point"]),
-                idle_point_radius=inst.get("idle_point_radius", 50.0),
-                idle_click_interval=RandomRange.from_value(inst.get("idle_click_interval", [0.8, 1.4])),
-                board_region=tuple(inst["board_region"]) if inst.get("board_region") else None,
-                drag_duration_ms=RandomRange.from_value(inst.get("drag_duration_ms", [800, 1300])),
-                between_drags_delay=RandomRange.from_value(inst.get("between_drags_delay", [0.5, 1.1])),
-                empty_detections_to_exit=inst.get("empty_detections_to_exit", 2),
-                max_seconds_per_game_screen=inst.get("max_seconds_per_game_screen", 60.0),
-                idle_poll_interval=inst.get("idle_poll_interval", 0.5),
-                schedule=schedule_from_list(inst.get("schedule")),
-                schedule_poll_interval=inst.get("schedule_poll_interval", 15.0),
-                close_game_during_break=inst.get("close_game_during_break", True),
-                game_package=inst.get("game_package"),
-                game_activity=inst.get("game_activity"),
-                black_screen_timeout=inst.get("black_screen_timeout", 20.0),
-                black_screen_brightness_threshold=inst.get("black_screen_brightness_threshold", 10.0),
-                restart_settle_delay=inst.get("restart_settle_delay", 10.0),
-                foreign_app_packages=tuple(inst.get(
-                    "foreign_app_packages",
-                    ["com.android.vending", "com.android.chrome", "com.android.browser"],
-                )),
-                foreground_check_interval=inst.get("foreground_check_interval", 3.0),
-            )
-            entry = InstanceEntry(config=cfg, serial=inst["serial"])
-            self._register_instance(entry)
-
-        self._config_path = Path(path)
+        self._config_path = path
         self._log_local(f"Wczytano config: {path} ({len(self.instances)} instancji)")
 
     def _save_config_dialog(self) -> None:
-        default = str(self._config_path) if self._config_path else "config.json"
+        default = str(self._config_path or default_config_path())
         path, _ = QFileDialog.getSaveFileName(self, "Zapisz config", default, "JSON (*.json)")
         if not path:
             return
 
-        data = {"instances": []}
-        for entry in self.instances.values():
-            cfg = entry.config
-            data["instances"].append({
-                "serial": entry.serial,
-                "name": cfg.name,
-                "idle_point": list(cfg.idle_point),
-                "idle_point_radius": cfg.idle_point_radius,
-                "board_region": list(cfg.board_region) if cfg.board_region else None,
-                "idle_click_interval": cfg.idle_click_interval.to_dict(),
-                "drag_duration_ms": cfg.drag_duration_ms.to_dict(),
-                "between_drags_delay": cfg.between_drags_delay.to_dict(),
-                "empty_detections_to_exit": cfg.empty_detections_to_exit,
-                "max_seconds_per_game_screen": cfg.max_seconds_per_game_screen,
-                "idle_poll_interval": cfg.idle_poll_interval,
-                "schedule": schedule_to_list(cfg.schedule),
-                "schedule_poll_interval": cfg.schedule_poll_interval,
-                "close_game_during_break": cfg.close_game_during_break,
-                "game_package": cfg.game_package,
-                "game_activity": cfg.game_activity,
-                "black_screen_timeout": cfg.black_screen_timeout,
-                "black_screen_brightness_threshold": cfg.black_screen_brightness_threshold,
-                "restart_settle_delay": cfg.restart_settle_delay,
-                "foreign_app_packages": list(cfg.foreign_app_packages),
-                "foreground_check_interval": cfg.foreground_check_interval,
-            })
+        data = {"instances": [
+            {"serial": entry.serial, **entry.config.to_dict()}
+            for entry in self.instances.values()
+        ]}
 
         try:
             with open(path, "w", encoding="utf-8") as f:
@@ -971,12 +1034,20 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ #
     def closeEvent(self, event) -> None:
+        threads = []
         for entry in self.instances.values():
             if entry.worker is not None and entry.worker.isRunning():
                 entry.worker.request_stop()
-        for entry in self.instances.values():
-            if entry.worker is not None:
-                entry.worker.wait(3000)
+                threads.append(entry.worker)
+            if entry.snapshot_worker is not None and entry.snapshot_worker.isRunning():
+                threads.append(entry.snapshot_worker)
+        # Bot przerywa swoje pauzy natychmiast po stop(); najdłużej może
+        # trwać bieżąca komenda ADB (timeout 10 s), stąd wspólny limit 15 s.
+        deadline = time.monotonic() + 15.0
+        for t in threads:
+            remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
+            if not t.wait(remaining_ms):
+                logger.warning("Wątek nie zakończył się w czasie - zamykam mimo to")
         event.accept()
 
 

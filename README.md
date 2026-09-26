@@ -110,7 +110,9 @@ instancji:
 }
 ```
 
-- **`serial`** — z `adb devices`.
+- **`serial`** — z `adb devices`. Adresy sieciowe (`127.0.0.1:5555`)
+  bot łączy przez `adb connect`; seriale lokalnych emulatorów
+  (`emulator-5556`) są tylko sprawdzane na liście `adb devices`.
 - **`idle_point`** — [x, y] punktu, w który bot klika, czekając na
   pojawienie się ekranu z kulkami (np. przycisk otwierający "eksplozję").
   Odczytaj współrzędne z `calibrate.py --grid`.
@@ -118,9 +120,22 @@ instancji:
   ograniczyć wykrywanie i uniknąć fałszywych trafień w innych elementach
   UI. Ustal na podstawie sugestii z `calibrate.py`.
 
+- **`game_package`** — nazwa pakietu gry (dla Just Loot:
+  `com.timhilgenstoehlerexpo.justlootapp`). Bez niej nie działa restart
+  gry ani watchdogi. Można ją też wpisać w GUI.
+
 Pełna lista opcjonalnych parametrów (z domyślnymi wartościami) jest
 w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
-`between_drags_delay`, `idle_click_interval`.
+`between_drags_delay`, `idle_click_interval`, a także:
+
+- **`foreground_lost_timeout`** (domyślnie 15 s) — jeśli gra nie jest na
+  pierwszym planie dłużej niż tyle sekund (np. wysypała się do pulpitu
+  Androida), bot ją restartuje. `0` wyłącza. Aplikacje z
+  `foreign_app_packages` (Google Play, przeglądarka) powodują restart
+  natychmiast.
+- **`max_drag_attempts_per_ball`** (domyślnie 3) — po tylu nieudanych
+  przeciągnięciach tej samej kulki bot uznaje ją za niezbieralną i
+  pomija do końca bieżącego ekranu gry.
 
 ## Krok 3: uruchomienie
 
@@ -151,7 +166,9 @@ Okno pozwala na:
   uruchomionej instancji.
 - **Start / Stop / Pauza** dla pojedynczej instancji albo wszystkich
   naraz.
-- **Zapis / wczytanie configu** do/z pliku JSON (ten sam format co
+- **Zapis / wczytanie configu** do/z pliku JSON. Przy starcie GUI
+  automatycznie wczytuje `config.json` leżący obok aplikacji (albo obok
+  `main_window.py`), jeśli istnieje (ten sam format co
   `config.example.json`, więc GUI i CLI (`manager.py`) są w pełni
   kompatybilne — możesz skonfigurować w GUI, zapisać, i potem odpalać
   bez GUI przez `manager.py`, albo odwrotnie).
@@ -178,7 +195,7 @@ Albo automatyczne wykrycie wszystkich podłączonych urządzeń ADB
 mają identyczny układ):
 
 ```bash
-python manager.py --auto --idle-x 360 --idle-y 640
+python manager.py --auto --idle-x 436 --idle-y 1488
 ```
 
 Zatrzymanie: `Ctrl+C` w terminalu — manager grzecznie zatrzyma wszystkie

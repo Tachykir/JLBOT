@@ -107,6 +107,15 @@ class ADBController:
     # Połączenie
     # ------------------------------------------------------------------ #
     def _connect(self, timeout: float) -> None:
+        # `adb connect` ma sens tylko dla urządzeń sieciowych ("host:port").
+        # Seriale typu "emulator-5556" (lokalny emulator) albo seriale USB
+        # są widoczne w `adb devices` same z siebie - `adb connect` na nich
+        # próbowałby rozwiązać "emulator-5556" jako nazwę hosta i zgłosiłby
+        # błąd, więc dla nich tylko sprawdzamy obecność na liście urządzeń.
+        if ":" not in self.serial:
+            self._verify_in_device_list()
+            return
+
         # `adb connect` jest idempotentne - bezpiecznie wywoływać wielokrotnie.
         # UWAGA: `adb connect` na nieosiągalny adres często zwraca returncode 0
         # mimo błędu (komunikat "cannot connect" / "failed to connect" trafia
@@ -142,17 +151,25 @@ class ADBController:
         if not connected:
             raise ADBError(f"Nie udało się połączyć z {self.serial}: {output.strip() or '(brak odpowiedzi)'}")
 
+        self._verify_in_device_list()
+
+    def _verify_in_device_list(self) -> None:
         # Ostateczna weryfikacja: urządzenie musi też realnie figurować
         # w `adb devices` ze statusem "device" (a nie "offline" czy nieobecne
         # wcale) - to wyłapuje przypadki, gdzie `connect` zgłasza pozorny
         # sukces, ale urządzenie i tak nie odpowiada na komendy.
         try:
             devices = list_ldplayer_devices(self.adb_path)
+        except FileNotFoundError as e:
+            raise ADBError(
+                f"Nie znaleziono programu '{self.adb_path}'. Upewnij się, że ADB "
+                f"jest zainstalowane i dostępne w PATH."
+            ) from e
         except Exception:
             devices = None
         if devices is not None and self.serial not in devices:
             raise ADBError(
-                f"Połączono z {self.serial}, ale urządzenie nie widnieje jako aktywne "
+                f"Urządzenie {self.serial} nie widnieje jako aktywne "
                 f"w `adb devices` (może być offline). Sprawdź, czy instancja LDPlayer "
                 f"działa i ma włączone ADB debugging."
             )

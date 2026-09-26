@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 import random
+import threading
 import logging
 import datetime as dt
 from dataclasses import dataclass, field
@@ -60,9 +61,27 @@ class ScheduleWindow:
     end: str    # "HH:MM"
     days: tuple[int, ...] | None = None  # None = wszystkie dni
 
-    def _parse(self, hhmm: str) -> tuple[int, int]:
-        h, m = hhmm.split(":")
-        return int(h), int(m)
+    def __post_init__(self) -> None:
+        # Walidacja od razu przy tworzeniu - błędny wpis w configu ma
+        # wywalić się czytelnym komunikatem przy wczytywaniu, a nie
+        # wyjątkiem co 2 sekundy w pętli bota.
+        self._parse(self.start)
+        self._parse(self.end)
+        if self.days is not None:
+            for d in self.days:
+                if not (isinstance(d, int) and 0 <= d <= 6):
+                    raise ValueError(f"Nieprawidłowy dzień tygodnia w harmonogramie: {d!r} (dozwolone 0-6)")
+
+    @staticmethod
+    def _parse(hhmm: str) -> tuple[int, int]:
+        try:
+            h, m = hhmm.split(":")
+            h, m = int(h), int(m)
+        except (AttributeError, ValueError):
+            raise ValueError(f"Nieprawidłowa godzina w harmonogramie: {hhmm!r} (oczekiwano HH:MM)") from None
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise ValueError(f"Nieprawidłowa godzina w harmonogramie: {hhmm!r} (oczekiwano HH:MM)")
+        return h, m
 
     def contains(self, moment: dt.datetime) -> bool:
         if self.days is not None and moment.weekday() not in self.days:
@@ -271,11 +290,100 @@ class BotConfig:
     # każdej pojedynczej klatce.
     foreground_check_interval: float = 3.0
 
+    # Ile sekund gra może NIEPRZERWANIE nie być na pierwszym planie
+    # (np. wysypała się do pulpitu Androida albo otworzyło się coś
+    # spoza listy foreign_app_packages), zanim watchdog ją zrestartuje.
+    # 0 wyłącza ten mechanizm (zostaje tylko natychmiastowy restart dla
+    # foreign_app_packages).
+    foreground_lost_timeout: float = 15.0
+
+    # Ile razy z rzędu bot może przeciągać "tę samą" kulkę (w tym samym
+    # miejscu), zanim uzna ją za niezbieralną / fałszywe wykrycie i
+    # pominie do końca bieżącego ekranu gry.
+    max_drag_attempts_per_ball: int = 3
+
+    # ------------------------------------------------------------------ #
+    # Serializacja do/z JSON (jedno miejsce dla GUI i manager.py)
+    # ------------------------------------------------------------------ #
+    @classmethod
+    def from_dict(cls, data: dict) -> "BotConfig":
+        """Buduje BotConfig ze słownika instancji z config.json. Brakujące
+        pola dostają wartości domyślne z tej klasy."""
+        d = cls(name=data["name"])
+        if "idle_point" in data:
+            d.idle_point = tuple(int(v) for v in data["idle_point"])
+        if "idle_point_radius" in data:
+            d.idle_point_radius = float(data["idle_point_radius"])
+        if "idle_click_interval" in data:
+            d.idle_click_interval = RandomRange.from_value(data["idle_click_interval"])
+        # brak board_region w configu = przeszukiwanie całego ekranu (jak dotychczas)
+        region = data.get("board_region")
+        d.board_region = tuple(int(v) for v in region) if region else None
+        if "drag_duration_ms" in data:
+            d.drag_duration_ms = RandomRange.from_value(data["drag_duration_ms"])
+        if "between_drags_delay" in data:
+            d.between_drags_delay = RandomRange.from_value(data["between_drags_delay"])
+        if "schedule" in data:
+            d.schedule = schedule_from_list(data["schedule"])
+        if "foreign_app_packages" in data:
+            d.foreign_app_packages = tuple(data["foreign_app_packages"] or ())
+        for key, conv in (
+            ("empty_detections_to_exit", int),
+            ("max_seconds_per_game_screen", float),
+            ("idle_poll_interval", float),
+            ("schedule_poll_interval", float),
+            ("close_game_during_break", bool),
+            ("black_screen_timeout", float),
+            ("black_screen_brightness_threshold", float),
+            ("restart_settle_delay", float),
+            ("foreground_check_interval", float),
+            ("foreground_lost_timeout", float),
+            ("max_drag_attempts_per_ball", int),
+        ):
+            if key in data and data[key] is not None:
+                setattr(d, key, conv(data[key]))
+        d.game_package = data.get("game_package") or None
+        d.game_activity = data.get("game_activity") or None
+        if d.board_region is not None:
+            x1, y1, x2, y2 = d.board_region
+            if x2 <= x1 or y2 <= y1:
+                raise ValueError(f"[{d.name}] board_region musi mieć x2 > x1 i y2 > y1: {d.board_region}")
+        return d
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "idle_point": list(self.idle_point),
+            "idle_point_radius": self.idle_point_radius,
+            "board_region": list(self.board_region) if self.board_region else None,
+            "idle_click_interval": self.idle_click_interval.to_dict(),
+            "drag_duration_ms": self.drag_duration_ms.to_dict(),
+            "between_drags_delay": self.between_drags_delay.to_dict(),
+            "empty_detections_to_exit": self.empty_detections_to_exit,
+            "max_seconds_per_game_screen": self.max_seconds_per_game_screen,
+            "idle_poll_interval": self.idle_poll_interval,
+            "schedule": schedule_to_list(self.schedule),
+            "schedule_poll_interval": self.schedule_poll_interval,
+            "close_game_during_break": self.close_game_during_break,
+            "game_package": self.game_package,
+            "game_activity": self.game_activity,
+            "black_screen_timeout": self.black_screen_timeout,
+            "black_screen_brightness_threshold": self.black_screen_brightness_threshold,
+            "restart_settle_delay": self.restart_settle_delay,
+            "foreign_app_packages": list(self.foreign_app_packages),
+            "foreground_check_interval": self.foreground_check_interval,
+            "foreground_lost_timeout": self.foreground_lost_timeout,
+            "max_drag_attempts_per_ball": self.max_drag_attempts_per_ball,
+        }
+
 
 @dataclass
 class BotStats:
     cycles: int = 0
+    # Szacunkowa liczba faktycznie zebranych kulek (spadek liczby
+    # wykrytych kulek po przeciągnięciu), a nie liczba samych przeciągnięć.
     balls_collected: int = 0
+    drags: int = 0
     errors: int = 0
     restarts: int = 0
 
@@ -286,7 +394,10 @@ class DustMineBot:
         self.adb = adb
         self.config = config
         self.stats = BotStats()
-        self._stop = False
+        # Event zamiast zwykłej flagi: wszystkie pauzy w pętli czekają na
+        # nim (self._sleep), więc stop() przerywa je natychmiast, zamiast
+        # czekać np. 10-15 s do końca restart_settle_delay / poll harmonogramu.
+        self._stop_event = threading.Event()
         self._paused = False
         self._on_frame = on_frame
 
@@ -294,13 +405,25 @@ class DustMineBot:
         # od kiedy nieprzerwanie widzimy czarny ekran. None = ekran
         # aktualnie nie jest czarny (licznik zresetowany).
         self._black_screen_since: float | None = None
+        self._last_black_log: float = 0.0
+        # Watchdog pierwszego planu: od kiedy gra NIE jest na pierwszym planie.
+        self._game_away_since: float | None = None
         self._watchdog_disabled_logged = False
         self._manual_restart_requested = False
         self._last_foreground_check: float = 0.0
         self._last_schedule_log: float = 0.0
 
     def stop(self) -> None:
-        self._stop = True
+        self._stop_event.set()
+
+    @property
+    def _stop(self) -> bool:
+        return self._stop_event.is_set()
+
+    def _sleep(self, seconds: float) -> bool:
+        """Śpi `seconds` sekund albo do wywołania stop(). Zwraca True, jeśli
+        przerwano przez stop()."""
+        return self._stop_event.wait(max(0.0, seconds))
 
     def pause(self) -> None:
         """Wstrzymuje klikanie/przeciąganie, ale wątek nadal robi
@@ -322,8 +445,6 @@ class DustMineBot:
         najbliższym przejściu pętli - nie wykonuje ADB bezpośrednio
         tutaj, żeby uniknąć wywołania z innego wątku (np. GUI)
         równolegle do screenshot()/tap() już trwających w pętli bota.
-        Działa niezależnie od tego, czy watchdog (game_package) jest
-        skonfigurowany.
         """
         self._manual_restart_requested = True
 
@@ -333,37 +454,27 @@ class DustMineBot:
         Losuje punkt w kole o danym promieniu wokół `center`, z
         rozkładem normalnym (gaussowskim) - punkty bliżej środka są
         znacznie bardziej prawdopodobne niż punkty przy samej krawędzi,
-        co przypomina naturalną niedokładność ludzkiego dotyku (rzadko
-        celuje się dokładnie w brzeg obszaru, który się widzi).
+        co przypomina naturalną niedokładność ludzkiego dotyku.
 
         Odległość od środka losowana z |N(0, radius/2.5)|, przycięta do
-        `radius` - odchylenie radius/2.5 dobrane tak, żeby ~99% próbek
-        mieściło się w promieniu (reguła 3-sigma), a jednocześnie
-        rozkład wyraźnie faworyzował okolice środka.
-        Kąt losowany równomiernie z [0, 2*pi).
+        `radius`. Kąt losowany równomiernie z [0, 2*pi).
         """
         if radius <= 0:
             return center
 
         sigma = radius / 2.5
         distance = min(abs(random.gauss(0.0, sigma)), radius)
-        angle = random.uniform(0.0, 2 * 3.141592653589793)
+        angle = random.uniform(0.0, 2 * np.pi)
 
         dx = distance * np.cos(angle)
         dy = distance * np.sin(angle)
-        # Zaokrąglamy dopiero na samym końcu (raz), więc błąd
-        # zaokrąglenia to maksymalnie ~0.71px (przekątna pół-piksela) -
-        # nieistotne dla klikania na ekranie telefonu, celowo nie
-        # kompensujemy tego dodatkowym przeskalowaniem, bo ono z kolei
-        # wprowadzałoby własny błąd zaokrąglenia.
         return (int(round(center[0] + dx)), int(round(center[1] + dy)))
 
     # ------------------------------------------------------------------ #
     def _is_within_schedule(self, now: dt.datetime | None = None) -> bool:
         """
         Czy w tej chwili bot POWINIEN pracować wg `config.schedule`.
-        Brak zdefiniowanego harmonogramu (pusta lista/None) oznacza
-        "zawsze" - pełna wsteczna kompatybilność.
+        Brak zdefiniowanego harmonogramu (pusta lista/None) oznacza "zawsze".
         """
         cfg = self.config
         if not cfg.schedule:
@@ -374,15 +485,10 @@ class DustMineBot:
 
     def _wait_for_schedule(self) -> None:
         """
-        Blokuje (w pętli, sprawdzając self._stop) dopóki nie wejdziemy
-        w okno harmonogramu. Loguje raz na wejście w stan oczekiwania
-        i potem okresowo, żeby było widać że bot żyje, tylko czeka na
-        swoją porę - a nie że się zawiesił.
-
+        Blokuje dopóki nie wejdziemy w okno harmonogramu (albo do stop()).
         Jeśli `close_game_during_break` jest włączone i mamy
         skonfigurowany game_package, gra jest zamykana (force-stop) na
-        czas przerwy i ponownie uruchamiana tuż przed powrotem do
-        normalnej pracy.
+        czas przerwy i ponownie uruchamiana tuż przed powrotem do pracy.
         """
         cfg = self.config
         if self._is_within_schedule():
@@ -399,22 +505,26 @@ class DustMineBot:
             except ADBError as e:
                 logger.warning("[%s] nie udało się zamknąć gry na przerwę: %s", cfg.name, e)
 
+        self._last_schedule_log = time.monotonic()
         while not self._stop and not self._is_within_schedule():
             now = time.monotonic()
             if now - self._last_schedule_log > 300:  # log co 5 minut, żeby nie zaśmiecać
                 logger.info("[%s] nadal poza harmonogramem, czekam...", cfg.name)
                 self._last_schedule_log = now
-            time.sleep(cfg.schedule_poll_interval)
+            self._sleep(cfg.schedule_poll_interval)
 
         if self._stop:
             return
 
         logger.info("[%s] wejście w okno harmonogramu - wznawiam pracę", cfg.name)
+        # Gra była celowo zamknięta - nie traktuj tego czasu jako "wypadnięcia".
+        self._game_away_since = None
+        self._black_screen_since = None
         if game_was_closed:
             try:
                 self.adb.start_app(cfg.game_package, cfg.game_activity)
                 logger.info("[%s] uruchomiono grę na start okna pracy", cfg.name)
-                time.sleep(cfg.restart_settle_delay)
+                self._sleep(cfg.restart_settle_delay)
             except ADBError as e:
                 logger.error("[%s] nie udało się uruchomić gry po przerwie: %s", cfg.name, e)
 
@@ -434,18 +544,19 @@ class DustMineBot:
             except ADBError as e:
                 logger.error("[%s] błąd ADB: %s", self.config.name, e)
                 self.stats.errors += 1
-                time.sleep(2.0)
+                self._sleep(2.0)
             except Exception:
                 logger.exception("[%s] nieoczekiwany błąd", self.config.name)
                 self.stats.errors += 1
-                time.sleep(2.0)
+                self._sleep(2.0)
+        logger.info("[%s] bot zatrzymany", self.config.name)
 
     # ------------------------------------------------------------------ #
     def _do_restart_app(self, reason: str) -> bool:
         """
         Wykonuje faktyczny restart gry przez ADB (force-stop + start) i
-        czyści stan watchdoga. Współdzielone przez auto-watchdog i
-        ręczne żądanie restartu z GUI. Zwraca True przy powodzeniu.
+        czyści stan watchdogów. Współdzielone przez watchdogi i ręczne
+        żądanie restartu z GUI. Zwraca True przy powodzeniu.
         """
         cfg = self.config
         if not cfg.game_package:
@@ -463,24 +574,43 @@ class DustMineBot:
             return False
 
         self._black_screen_since = None
+        self._game_away_since = None
         self.stats.restarts += 1
-        time.sleep(cfg.restart_settle_delay)
+        self._sleep(cfg.restart_settle_delay)
+        # po restarcie od razu sprawdź pierwszy plan przy kolejnej klatce
+        self._last_foreground_check = 0.0
         return True
 
     # ------------------------------------------------------------------ #
-    def _check_foreign_app_watchdog(self) -> bool:
+    def _check_watchdogs(self, frame: np.ndarray) -> bool:
         """
-        Sprawdza (co `foreground_check_interval` sekund), czy na
-        pierwszym planie jest inna aplikacja niż gra - np. Google Play
-        otwarty przez przypadkowe kliknięcie w reklamę. Jeśli tak,
-        restartuje grę NATYCHMIAST, bez odliczania (w odróżnieniu od
-        watchdoga czarnego ekranu) - tu nie ma niepewności, sygnał jest
-        jednoznaczny.
+        Obsługuje ręczne żądanie restartu i oba watchdogi. Zwraca True,
+        jeśli gra została zrestartowana (wywołujący powinien wtedy
+        porzucić bieżącą klatkę i zacząć od nowa).
+        """
+        if self._manual_restart_requested:
+            self._manual_restart_requested = False
+            if self._do_restart_app("ręczne żądanie z GUI"):
+                return True
+        if self._check_foreground_watchdog():
+            return True
+        return self._check_black_screen_watchdog(frame)
+
+    def _check_foreground_watchdog(self) -> bool:
+        """
+        Sprawdza (co `foreground_check_interval` sekund), czy gra jest na
+        pierwszym planie:
+          - jeśli na wierzchu jest aplikacja z `foreign_app_packages`
+            (np. Google Play po kliknięciu w reklamę) - restart NATYCHMIAST,
+          - jeśli na wierzchu jest cokolwiek innego niż gra (np. pulpit
+            Androida po crashu gry) nieprzerwanie dłużej niż
+            `foreground_lost_timeout` sekund - restart. Krótkie, przejściowe
+            ekrany nie wywołują restartu.
 
         Zwraca True, jeśli wykonano restart.
         """
         cfg = self.config
-        if not cfg.game_package or not cfg.foreign_app_packages:
+        if not cfg.game_package:
             return False
 
         now = time.monotonic()
@@ -498,7 +628,8 @@ class DustMineBot:
             return False
 
         if foreground == cfg.game_package:
-            return False  # wszystko w porządku, gra jest na pierwszym planie
+            self._game_away_since = None
+            return False
 
         if foreground in cfg.foreign_app_packages:
             logger.warning(
@@ -508,51 +639,47 @@ class DustMineBot:
             )
             return self._do_restart_app(f"wykryto {foreground} zamiast gry")
 
-        # inny pakiet, spoza znanej listy (np. launcher Androida w tle
-        # przez ułamek sekundy) - nie traktujemy tego jako problem,
-        # żeby uniknąć fałszywych restartów na nieznanych, neutralnych
-        # ekranach przejściowych
-        return False
+        if cfg.foreground_lost_timeout <= 0:
+            return False
+
+        if self._game_away_since is None:
+            self._game_away_since = now
+            logger.info("[%s] gra nie jest na pierwszym planie (%s) - restart za %.0fs, jeśli nie wróci",
+                        cfg.name, foreground, cfg.foreground_lost_timeout)
+            return False
+
+        away = now - self._game_away_since
+        if away < cfg.foreground_lost_timeout:
+            return False
+        return self._do_restart_app(f"gra poza pierwszym planem przez {away:.0f}s (na wierzchu: {foreground})")
 
     # ------------------------------------------------------------------ #
     def _check_black_screen_watchdog(self, frame: np.ndarray) -> bool:
         """
         Aktualizuje licznik czarnego ekranu na podstawie bieżącej klatki
-        i - jeśli przekroczono `black_screen_timeout` - restartuje grę
-        (force-stop + start) przez ADB.
-
-        Zwraca True, jeśli wykonano restart (żeby wywołujący mógł
-        przerwać bieżącą pętlę i zacząć od nowa od _idle_loop).
+        i - jeśli przekroczono `black_screen_timeout` - restartuje grę.
+        Zwraca True, jeśli wykonano restart.
         """
         cfg = self.config
-
-        # Ręczne żądanie restartu z GUI ma priorytet i działa
-        # niezależnie od tego, czy watchdog czarnego ekranu jest
-        # skonfigurowany (game_package) - liczy się jedynie fakt,
-        # że game_package w ogóle istnieje, żeby było co restartować.
-        if self._manual_restart_requested:
-            self._manual_restart_requested = False
-            return self._do_restart_app("ręczne żądanie z GUI")
 
         if not cfg.game_package:
             if not self._watchdog_disabled_logged:
                 logger.warning(
-                    "[%s] watchdog czarnego ekranu WYŁĄCZONY - brak 'game_package' w konfiguracji "
-                    "tej instancji. Ustaw pole game_package (np. w GUI albo w config.json), "
-                    "żeby auto-restart działał.",
+                    "[%s] watchdogi (czarny ekran / wypadnięcie z gry) WYŁĄCZONE - brak "
+                    "'game_package' w konfiguracji tej instancji. Ustaw go w GUI albo w config.json.",
                     cfg.name,
                 )
                 self._watchdog_disabled_logged = True
             return False
 
         # Sprawdzamy jasność TYLKO w obrębie board_region, jeśli jest
-        # ustawiony - a nie całej klatki. Cała klatka zwykle zawiera też
-        # pasek statusu / nawigację systemową Androida, które mogą być
-        # jasne nawet gdy sama plansza gry jest czarna (zawieszona),
-        # co zaniżałoby wykrywalność problemu.
+        # ustawiony - pasek statusu / nawigacja Androida mogą być jasne
+        # nawet gdy sama plansza gry jest czarna (zawieszona).
         if cfg.board_region is not None:
             x1, y1, x2, y2 = cfg.board_region
             region_frame = frame[y1:y2, x1:x2]
+            if region_frame.size == 0:
+                region_frame = frame
         else:
             region_frame = frame
 
@@ -563,6 +690,7 @@ class DustMineBot:
         now = time.monotonic()
         if self._black_screen_since is None:
             self._black_screen_since = now
+            self._last_black_log = now
             logger.info("[%s] wykryto czarny ekran, start odliczania watchdoga (limit %.0fs)",
                         cfg.name, cfg.black_screen_timeout)
             return False
@@ -570,7 +698,8 @@ class DustMineBot:
         elapsed = now - self._black_screen_since
         if elapsed < cfg.black_screen_timeout:
             # log co ~30s, żeby było widać że odliczanie faktycznie trwa
-            if int(elapsed) % 30 < 1:
+            if now - self._last_black_log >= 30:
+                self._last_black_log = now
                 logger.info("[%s] czarny ekran trwa %.0fs / %.0fs", cfg.name, elapsed, cfg.black_screen_timeout)
             return False
 
@@ -585,13 +714,9 @@ class DustMineBot:
         while not self._stop:
             frame = self.adb.screenshot()
 
-            if self._check_foreign_app_watchdog():
-                last_click = 0.0
-                continue
-
-            if self._check_black_screen_watchdog(frame):
-                # gra została zrestartowana - zacznij tę pętlę od nowa
-                # ze świeżym screenshotem zamiast działać na starej klatce
+            if self._check_watchdogs(frame):
+                # gra została zrestartowana - zacznij od nowa ze świeżym
+                # screenshotem zamiast działać na starej klatce
                 last_click = 0.0
                 continue
 
@@ -612,14 +737,27 @@ class DustMineBot:
                 last_click = now
                 next_click_delay = cfg.idle_click_interval.sample()
 
-            time.sleep(cfg.idle_poll_interval)
+            self._sleep(cfg.idle_poll_interval)
 
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _same_ball(a: vision.Circle, b: vision.Circle) -> bool:
+        return float(np.hypot(a.x - b.x, a.y - b.y)) < max(a.r, b.r)
+
     def _collect_loop(self) -> None:
         """Przeciąga kolejno wszystkie kulki do (aktualnej) pozycji DROP."""
         cfg = self.config
         start_time = time.monotonic()
         empty_count = 0
+
+        # Kulki, które mimo kilku prób nie dały się zebrać (fałszywe
+        # wykrycie, element UI itp.) - pomijane do końca tego ekranu gry.
+        skipped: list[vision.Circle] = []
+        last_target: vision.Circle | None = None
+        attempts = 0
+        # Liczba wykrytych kulek tuż przed ostatnim przeciągnięciem -
+        # służy do policzenia, ile kulek faktycznie zniknęło.
+        balls_before_drag: int | None = None
 
         while not self._stop:
             if time.monotonic() - start_time > cfg.max_seconds_per_game_screen:
@@ -628,13 +766,7 @@ class DustMineBot:
 
             frame = self.adb.screenshot()
 
-            if self._check_foreign_app_watchdog():
-                logger.info("[%s] restart gry przerwał zbieranie - wracam do idle", cfg.name)
-                return
-
-            if self._check_black_screen_watchdog(frame):
-                # gra została zrestartowana w trakcie zbierania kulek -
-                # wracamy do idle, żeby od nowa poczekać na ekran gry
+            if self._check_watchdogs(frame):
                 logger.info("[%s] restart gry przerwał zbieranie - wracam do idle", cfg.name)
                 return
 
@@ -643,29 +775,59 @@ class DustMineBot:
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "collecting")
 
-            if det.drop is None or len(det.balls) == 0:
+            if balls_before_drag is not None:
+                collected = balls_before_drag - len(det.balls)
+                if det.drop is None:
+                    # plansza zniknęła w całości - nie wiemy, ile kulek
+                    # zebrało ostatnie przeciągnięcie; liczymy najwyżej jedną
+                    collected = min(collected, 1)
+                if collected > 0:
+                    self.stats.balls_collected += collected
+                balls_before_drag = None
+
+            candidates = [b for b in det.balls if not any(self._same_ball(b, s) for s in skipped)]
+
+            if det.drop is None or not candidates:
                 empty_count += 1
                 if empty_count >= cfg.empty_detections_to_exit:
-                    logger.info("[%s] ekran gry zakończony (kulki zebrane)", cfg.name)
+                    if skipped and det.balls:
+                        logger.info("[%s] ekran gry zakończony - pominięto %d niezbieralnych kulek",
+                                    cfg.name, len(skipped))
+                    else:
+                        logger.info("[%s] ekran gry zakończony (kulki zebrane)", cfg.name)
                     return
-                time.sleep(0.3)
+                self._sleep(0.3)
                 continue
 
             empty_count = 0
 
             if self._paused:
-                time.sleep(0.3)
+                # czas pauzy nie liczy się do limitu max_seconds_per_game_screen
+                start_time = time.monotonic()
+                self._sleep(0.3)
                 continue
 
-            # Bierzemy pierwszą wykrytą kulkę (kolejność nieistotna
-            # dla wyniku, gra i tak liczy każdą tak samo).
-            ball = det.balls[0]
+            ball = candidates[0]
             drop = det.drop
+
+            if last_target is not None and self._same_ball(ball, last_target):
+                attempts += 1
+            else:
+                attempts = 1
+            if attempts > cfg.max_drag_attempts_per_ball:
+                logger.warning("[%s] kulka (%d,%d) nie znika po %d próbach - pomijam ją",
+                               cfg.name, ball.x, ball.y, cfg.max_drag_attempts_per_ball)
+                skipped.append(ball)
+                last_target = None
+                attempts = 0
+                continue
+            last_target = ball
 
             logger.debug("[%s] przeciągam kulkę (%d,%d) -> DROP (%d,%d)",
                          cfg.name, ball.x, ball.y, drop.x, drop.y)
 
             self.adb.swipe(ball.x, ball.y, drop.x, drop.y, duration_ms=int(cfg.drag_duration_ms.sample()))
-            self.stats.balls_collected += 1
+            self.stats.drags += 1
+            balls_before_drag = len(det.balls)
 
-            time.sleep(cfg.between_drags_delay.sample())
+            self._sleep(cfg.between_drags_delay.sample())
