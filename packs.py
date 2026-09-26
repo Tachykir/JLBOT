@@ -61,19 +61,23 @@ class PackOpener:
             return None
         self._size = (frame.shape[1], frame.shape[0])
 
+        # Wynik walki liczymy raz na ekran i tylko wtedy, gdy log kończy się
+        # napisem "Defeated." / "Victory." (sam szeroki przycisk na dole
+        # albo czerwony tekst w trakcie walki to jeszcze nie koniec).
         button = screens.find_wide_bottom_button(frame)
-        if button is not None:
-            if not self._on_result_screen:
-                if screens.has_defeat_text(frame, button):
-                    self.defeat_streak += 1
-                    self.bot.stats.defeats += 1
-                    logger.info("[%s] porażka w walce (%d z rzędu)", cfg.name, self.defeat_streak)
-                elif self.defeat_streak:
-                    logger.info("[%s] wygrana walka - zeruję licznik porażek", cfg.name)
-                    self.defeat_streak = 0
-            self._on_result_screen = True
-        else:
+        if button is None:
             self._on_result_screen = False
+        elif not self._on_result_screen:
+            if screens.has_defeat_text(frame, button):
+                self._on_result_screen = True
+                self.defeat_streak += 1
+                self.bot.stats.defeats += 1
+                logger.info("[%s] porażka w walce (%d z rzędu)", cfg.name, self.defeat_streak)
+            elif screens.has_victory_text(frame, button):
+                self._on_result_screen = True
+                if self.defeat_streak:
+                    logger.info("[%s] wygrana walka - zeruję licznik porażek", cfg.name)
+                self.defeat_streak = 0
 
         if self.defeat_streak >= cfg.packs_defeat_streak:
             return "defeats"

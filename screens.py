@@ -370,11 +370,27 @@ def find_wide_bottom_button(bgr: np.ndarray) -> Rect | None:
 
 def has_defeat_text(bgr: np.ndarray, button: Rect | None = None) -> bool:
     """
-    Czerwony napis "Defeated." w logu walki, nad przyciskiem PROCEED.
-    Szukamy rzędu >=5 czerwonych liter (pojedyncze czerwone kreski, np.
-    znacznik na pasku HP, się nie liczą). Bez przycisku PROCEED to nie
-    jest koniec walki (np. czerwony napis "Mythic" w profilu).
+    Czerwony napis "Defeated." kończący log walki, nad przyciskiem
+    PROCEED. W trakcie walki log też bywa czerwony (np. obrażenia), a na
+    dole może być szeroki przycisk, więc napis musi:
+      - być krótkim jednym słowem (5-11 liter, ~0.07-0.2 szerokości
+        ekranu) przy lewej krawędzi logu,
+      - być OSTATNIM wierszem logu - pod nim, aż do przycisku, nie ma
+        żadnego jasnego tekstu,
+      - leżeć tuż nad przyciskiem (do 0.1 wysokości ekranu).
+    Bez przycisku PROCEED to nie jest koniec walki (np. czerwony napis
+    "Mythic" w profilu).
     """
+    return _final_log_word(bgr, button, ((0, 140, 150), (8, 255, 255)), ((172, 140, 150), (180, 255, 255)))
+
+
+def has_victory_text(bgr: np.ndarray, button: Rect | None = None) -> bool:
+    """Zielony napis "Victory." kończący log walki (te same warunki co
+    przy "Defeated.")."""
+    return _final_log_word(bgr, button, ((45, 100, 150), (85, 255, 255)))
+
+
+def _final_log_word(bgr: np.ndarray, button: Rect | None, *ranges) -> bool:
     if button is None:
         button = find_wide_bottom_button(bgr)
     if button is None:
@@ -382,14 +398,30 @@ def has_defeat_text(bgr: np.ndarray, button: Rect | None = None) -> bool:
     H, W = bgr.shape[:2]
     y1 = max(0, int(button.y - 0.4 * H))
     hsv = cv2.cvtColor(bgr[y1:button.y], cv2.COLOR_BGR2HSV)
-    red = cv2.inRange(hsv, (0, 140, 150), (8, 255, 255)) | cv2.inRange(hsv, (172, 140, 150), (180, 255, 255))
-    letters = [(x, y, w, h) for x, y, w, h, area in _components(red)
+    color = np.zeros(hsv.shape[:2], np.uint8)
+    for lo, hi in ranges:
+        color |= cv2.inRange(hsv, lo, hi)
+    letters = [(x, y, w, h) for x, y, w, h, area in _components(color)
                if 0.006 * H <= h <= 0.03 * H and w <= 0.05 * W and area >= 8]
-    # >=5 liter w jednym wierszu
+    # jasny tekst dowolnego koloru (biały, zielony, żółty, czerwony...)
+    bright = (hsv[..., 2] >= 130).astype(np.uint8)
     for _x, y, _w, h in letters:
         row = [l for l in letters if abs((l[1] + l[3] / 2) - (y + h / 2)) < 0.5 * h]
-        if len(row) >= 5:
-            return True
+        if not (5 <= len(row) <= 11):
+            continue
+        x_min = min(l[0] for l in row)
+        x_max = max(l[0] + l[2] for l in row)
+        bottom = max(l[1] + l[3] for l in row)
+        if not (0.07 * W <= x_max - x_min <= 0.2 * W) or x_min > 0.15 * W:
+            continue
+        if (button.y - y1) - bottom > 0.1 * H:
+            continue
+        # pod napisem (bez obwódki logu i przycisku) nie może być tekstu
+        below = bright[bottom + int(0.006 * H):max(bottom + 1, (button.y - y1) - int(0.012 * H)),
+                       int(0.05 * W):int(0.95 * W)]
+        if below.size and int(below.sum()) > 0.002 * below.size + 10:
+            continue
+        return True
     return False
 
 

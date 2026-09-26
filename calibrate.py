@@ -126,6 +126,7 @@ def main() -> None:
     wide = screens.find_wide_bottom_button(img)
     print(f"Szeroki przycisk na dole (Next Card / PROCEED): {wide}")
     print(f"Porażka (Defeated.): {screens.has_defeat_text(img, wide)}")
+    print(f"Wygrana (Victory.): {screens.has_victory_text(img, wide)}")
     warning = screens.frontier_warning(img)
     print("Profile - wrogowie mają bonus: "
           + {True: "TAK (gear za słaby)", False: "nie (normal strength)", None: "nie znaleziono selektora głębokości"}[warning])
