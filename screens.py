@@ -165,6 +165,106 @@ def find_just_loot(bgr: np.ndarray) -> Circle | None:
 
 
 # --------------------------------------------------------------------- #
+# Po wygranej walce: odkrycie dropu ("?") i wybór (Keep Current itd.)
+# --------------------------------------------------------------------- #
+#
+# Panele w tym motywie są tylko odrobinę jaśniejsze od tła (szarość ~20
+# vs ~16), a ich obwódki / linie podziału to cienkie linie ~30-45.
+# Surowy zrzut ekranu jest bezstratny, więc takie linie da się pewnie
+# znaleźć: szukamy długich, ciągłych odcinków w poziomie.
+
+def _horizontal_lines(gray: np.ndarray, y1: int, y2: int, min_len: float,
+                      max_len: float | None = None) -> list[tuple[int, int, int]]:
+    """Cienkie, długie linie poziome w pasie [y1, y2): (y, x1, x2)."""
+    H, W = gray.shape
+    band = gray[y1:y2]
+    mask = (band >= 26) & (band <= 90)
+    rows = []
+    for i, row in enumerate(mask):
+        if row.sum() < min_len:
+            continue
+        # najdłuższy ciągły odcinek w wierszu
+        padded = np.concatenate(([0], row.astype(np.int8), [0]))
+        edges = np.flatnonzero(np.diff(padded))
+        starts, ends = edges[0::2], edges[1::2]
+        k = int(np.argmax(ends - starts))
+        length = int(ends[k] - starts[k])
+        if length >= min_len and (max_len is None or length <= max_len):
+            rows.append((y1 + i, int(starts[k]), int(ends[k])))
+    # sąsiednie wiersze (linia grubości 1-3 px) scal w jedną linię
+    lines: list[tuple[int, int, int]] = []
+    for y, a, b in rows:
+        if lines and y - lines[-1][0] <= 3:
+            continue
+        lines.append((y, a, b))
+    return lines
+
+
+def find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
+    """
+    Panel wyboru po wygranej walce (Replace / Equip & Salvage / Salvage /
+    Keep Current): >=4 długie linie poziome w równych odstępach w dolnej
+    połowie ekranu (obwódka panelu + linie między przyciskami). Zwraca
+    wiersze-przyciski od góry do dołu.
+    """
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    lines = _horizontal_lines(gray, int(0.5 * H), H, 0.6 * W)
+    best: list[tuple[int, int, int]] = []
+    for i in range(len(lines)):
+        chain = [lines[i]]
+        for ln in lines[i + 1:]:
+            prev = chain[-1]
+            same_x = abs(ln[1] - prev[1]) < 0.04 * W and abs(ln[2] - prev[2]) < 0.04 * W
+            gap = ln[0] - prev[0]
+            if not same_x or not (0.03 * H <= gap <= 0.09 * H):
+                continue
+            if len(chain) >= 2 and abs(gap - (chain[1][0] - chain[0][0])) > 0.3 * (chain[1][0] - chain[0][0]):
+                continue
+            chain.append(ln)
+        if len(chain) > len(best):
+            best = chain
+    if len(best) < 4:
+        return None
+    x1 = min(l[1] for l in best)
+    x2 = max(l[2] for l in best)
+    return [Rect(x1, a[0], x2 - x1, b[0] - a[0]) for a, b in zip(best, best[1:])]
+
+
+def find_reveal_card(bgr: np.ndarray) -> Rect | None:
+    """
+    Zakryta karta dropu ("?", "TAP ANYWHERE TO REVEAL"): prawie kwadratowa,
+    pusta w środku karta na środku ekranu (górna i dolna krawędź to długie
+    linie o tej samej szerokości).
+    """
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    lines = _horizontal_lines(gray, int(0.15 * H), int(0.85 * H), 0.35 * W, 0.85 * W)
+    for i, top in enumerate(lines):
+        for bottom in lines[i + 1:]:
+            if abs(top[1] - bottom[1]) > 0.03 * W or abs(top[2] - bottom[2]) > 0.03 * W:
+                continue
+            w = top[2] - top[1]
+            h = bottom[0] - top[0]
+            if not (0.8 <= h / w <= 1.25) or abs((top[1] + top[2]) / 2 - W / 2) > 0.1 * W:
+                continue
+            inner = gray[top[0] + 4:bottom[0] - 3, top[1] + 4:top[2] - 4]
+            if inner.size == 0:
+                continue
+            # pusta karta: jednolite wnętrze, jasny tylko mały znak "?" na
+            # środku (a nie tekst rozsiany po całej powierzchni)
+            ys, xs = np.nonzero(inner > 70)
+            if xs.size == 0 or xs.size > 0.05 * inner.size or float(np.median(inner)) >= 60:
+                continue
+            ih, iw = inner.shape
+            glyph_w, glyph_h = xs.max() - xs.min(), ys.max() - ys.min()
+            cx, cy = xs.mean() / iw, ys.mean() / ih
+            if glyph_w < 0.3 * iw and glyph_h < 0.3 * ih and abs(cx - 0.5) < 0.15 and abs(cy - 0.5) < 0.15:
+                return Rect(top[1], top[0], w, h)
+    return None
+
+
+# --------------------------------------------------------------------- #
 # Karty z paczek / koniec walki: szeroki przycisk przy dole
 # --------------------------------------------------------------------- #
 

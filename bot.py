@@ -66,6 +66,14 @@ POINT_DEFAULTS: dict[str, tuple[float, float, float]] = {
     "card_tap_anywhere": (0.5, 0.22, 0.08),
 }
 
+# Wybór na ekranie dropu: klucz -> (etykieta, numer wiersza w panelu od góry)
+DROP_CHOICES: dict[str, tuple[str, int]] = {
+    "keep": ("Keep Current", 3),
+    "replace": ("Replace", 0),
+    "equip_salvage": ("Equip & Salvage", 1),
+    "salvage": ("Salvage", 2),
+}
+
 # Ustawienia osobne dla każdej instancji - wszystkie pozostałe są w GUI
 # wspólne (zmiana na jednej instancji ustawia je na wszystkich).
 PER_INSTANCE_FIELDS = ("name", "schedule", "daily_limit_hours", "close_game_during_break",
@@ -95,6 +103,11 @@ class BotConfig:
     #                 idle_point,
     #   "fixed"     - zawsze idle_point (dawne zachowanie).
     idle_target: str = "just_loot"
+
+    # Co wybrać na ekranie dropu po wygranej walce (panel z przyciskami
+    # Replace / Equip & Salvage / Salvage / Keep Current):
+    # "keep" | "replace" | "equip_salvage" | "salvage".
+    drop_choice: str = "keep"
 
     # Jak często klikać punkt idle, gdy nie widać jeszcze ekranu gry.
     # Losowany zakres (s) zamiast stałej wartości - patrz RandomRange.
@@ -339,6 +352,10 @@ class BotConfig:
             if data["idle_target"] not in ("just_loot", "fixed"):
                 raise ValueError(f"[{d.name}] idle_target musi być 'just_loot' albo 'fixed': {data['idle_target']!r}")
             d.idle_target = data["idle_target"]
+        if data.get("drop_choice"):
+            if data["drop_choice"] not in DROP_CHOICES:
+                raise ValueError(f"[{d.name}] drop_choice musi być jednym z {list(DROP_CHOICES)}: {data['drop_choice']!r}")
+            d.drop_choice = data["drop_choice"]
         if data.get("drag_style"):
             if data["drag_style"] not in ("human", "straight"):
                 raise ValueError(f"[{d.name}] drag_style musi być 'human' albo 'straight': {data['drag_style']!r}")
@@ -365,6 +382,7 @@ class BotConfig:
             "idle_point": list(self.idle_point),
             "idle_point_radius": self.idle_point_radius,
             "idle_target": self.idle_target,
+            "drop_choice": self.drop_choice,
             "board_region": list(self.board_region) if self.board_region else None,
             "idle_click_interval": self.idle_click_interval.to_dict(),
             "drag_duration_ms": self.drag_duration_ms.to_dict(),
@@ -416,6 +434,7 @@ class BotStats:
     debris_games: int = 0
     fishing_skipped: int = 0
     defeats: int = 0
+    drops: int = 0
     pack_rounds: int = 0
 
 
@@ -439,6 +458,7 @@ class DustMineBot:
         # rozpoznać planszę, na której kulki mocno zasłaniają DROP
         self._last_drop: vision.Circle | None = None
         self._idle_point_warned = False
+        self._last_drop_choice = 0.0
         self._last_decision: Decision | None = None
 
         # Watchdog czarnego ekranu: znacznik czasu (time.monotonic()),
@@ -839,8 +859,30 @@ class DustMineBot:
         return random.random() < self.config.mistake_chance
 
     def _idle_click_point(self, frame: np.ndarray) -> tuple[int, int] | None:
-        """Punkt kliknięcia w trybie idle - patrz BotConfig.idle_target."""
+        """Punkt kliknięcia w trybie idle - patrz BotConfig.idle_target.
+        Ekrany dropu po wygranej walce są obsługiwane zawsze."""
         cfg = self.config
+
+        # wybór przedmiotu z dropu (Replace / ... / Keep Current)
+        rows = screens.find_drop_choice(frame)
+        if rows:
+            label, index = DROP_CHOICES.get(cfg.drop_choice, DROP_CHOICES["keep"])
+            if len(rows) != 4:
+                # nietypowy układ - bezpiecznie: ostatni wiersz = Keep Current
+                label, index = DROP_CHOICES["keep"][0], len(rows) - 1
+            row = rows[index]
+            now = time.monotonic()
+            if now - self._last_drop_choice > 5.0:  # licz raz na ekran, nie na każde ponowienie
+                self.stats.drops += 1
+                logger.info("[%s] drop po walce - wybieram: %s", cfg.name, label)
+            self._last_drop_choice = now
+            cx, cy = row.center
+            return humanize.random_point_in_circle(cx, cy, min(row.w, row.h) * 0.3)
+        # zakryta karta dropu - "tap anywhere to reveal"
+        card = screens.find_reveal_card(frame)
+        if card is not None:
+            cx, cy = card.center
+            return humanize.random_point_in_circle(cx, cy, min(card.w, card.h) * 0.3)
         if cfg.idle_target == "just_loot":
             button = screens.find_just_loot(frame)
             if button is not None:

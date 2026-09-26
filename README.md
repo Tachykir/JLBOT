@@ -126,6 +126,10 @@ instancji:
   znajduje na każdej klatce przycisk **JUST LOOT** (koło na dole ekranu,
   w dowolnym motywie i rozdzielczości) i klika w losowy punkt jego
   środka; po walce klika PROCEED. `"fixed"` = zawsze `idle_point`.
+- **Drop po wygranej walce** — zakrytą kartę („?”, „TAP ANYWHERE TO
+  REVEAL”) bot odkrywa sam, a na ekranie porównania przedmiotów klika
+  opcję z `drop_choice`: `"keep"` (Keep Current, domyślnie), `"replace"`,
+  `"equip_salvage"` albo `"salvage"` (GUI: zakładka Ogólne).
 - **`idle_point`** — [x, y] punktu awaryjnego (gdy nie widać ani JUST
   LOOT, ani PROCEED) albo stałego przy `idle_target: "fixed"`.
   Odczytaj współrzędne z `calibrate.py --grid`.

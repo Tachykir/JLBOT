@@ -31,10 +31,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QGridLayout,
     QListWidget, QListWidgetItem, QPushButton, QLabel, QLineEdit, QSpinBox,
     QDoubleSpinBox, QPlainTextEdit, QSplitter, QGroupBox, QMessageBox, QFileDialog,
-    QTimeEdit, QCheckBox, QDialog, QDialogButtonBox, QScrollArea, QFrame, QTabWidget,
+    QTimeEdit, QCheckBox, QDialog, QDialogButtonBox, QScrollArea, QFrame, QTabWidget, QComboBox,
 )
 
-from bot import BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS
+from bot import BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS, DROP_CHOICES
 from gui_worker import BotWorker, SnapshotWorker
 from preview_widget import PreviewWidget, EditMode
 from adb_controller import list_ldplayer_devices
@@ -75,7 +75,8 @@ _POINTS = [
 _STAT_FIELDS = [
     ("cycles", "Plansze"), ("balls_collected", "Kulki"), ("drags", "Przeciągnięcia"),
     ("debris_games", "Depth Collapse"), ("fishing_skipped", "Fishing pominięte"), ("defeats", "Porażki"),
-    ("pack_rounds", "Rundy paczek"), ("restarts", "Restarty gry"), ("errors", "Błędy"),
+    ("pack_rounds", "Rundy paczek"), ("drops", "Dropy po walce"), ("restarts", "Restarty gry"),
+    ("errors", "Błędy"),
 ]
 
 STATUS_LABELS_PL = {
@@ -668,6 +669,14 @@ class MainWindow(QMainWindow):
         self.field_idle_just_loot.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_idle_just_loot)
 
+        self.field_drop_choice = QComboBox()
+        for key, (label, _row) in DROP_CHOICES.items():
+            self.field_drop_choice.addItem(label, key)
+        self.field_drop_choice.currentIndexChanged.connect(self._apply_config_fields)
+        form.addRow("Drop po wygranej walce:", self.field_drop_choice)
+        form.addRow(self._hint("Na ekranie porównania przedmiotów bot klika wybraną opcję. Zakrytą "
+                               "kartę („tap anywhere to reveal”) odkrywa sam."))
+
         form.addRow(self._section("Obszar planszy"))
         form.addRow(self._hint("Gdzie szukać kulek. Wszystkie zera = cały ekran (zalecane - wykrywanie "
                                "działa na całym ekranie). Obszar ustawisz też przyciskiem pod podglądem."))
@@ -1001,7 +1010,7 @@ class MainWindow(QMainWindow):
 
     def _config_widgets(self) -> tuple:
         return (self.field_name, self.field_serial, self.field_game_package, self.field_game_activity,
-                self.field_idle_just_loot, self.field_idle_x, self.field_idle_y, self.field_idle_radius,
+                self.field_idle_just_loot, self.field_drop_choice, self.field_idle_x, self.field_idle_y, self.field_idle_radius,
                 self.field_region_x1, self.field_region_y1, self.field_region_x2, self.field_region_y2,
                 self.field_idle_interval_min, self.field_idle_interval_max,
                 self.field_drag_ms_min, self.field_drag_ms_max,
@@ -1028,6 +1037,7 @@ class MainWindow(QMainWindow):
             self.field_game_package.setCursorPosition(0)
             self.field_game_activity.setText(cfg.game_activity or "")
             self.field_idle_just_loot.setChecked(cfg.idle_target == "just_loot")
+            self.field_drop_choice.setCurrentIndex(max(0, self.field_drop_choice.findData(cfg.drop_choice)))
             self.field_idle_x.setValue(cfg.idle_point[0])
             self.field_idle_y.setValue(cfg.idle_point[1])
             self.field_idle_radius.setValue(cfg.idle_point_radius)
@@ -1145,6 +1155,7 @@ class MainWindow(QMainWindow):
         cfg.game_package = self.field_game_package.text().strip() or None
         cfg.game_activity = self.field_game_activity.text().strip() or None
         cfg.idle_target = "just_loot" if self.field_idle_just_loot.isChecked() else "fixed"
+        cfg.drop_choice = self.field_drop_choice.currentData() or "keep"
         cfg.idle_point = (self.field_idle_x.value(), self.field_idle_y.value())
         cfg.idle_point_radius = self.field_idle_radius.value()
         region = (self.field_region_x1.value(), self.field_region_y1.value(),
