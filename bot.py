@@ -79,8 +79,17 @@ DROP_CHOICES: dict[str, tuple[str, int]] = {
 
 # Ustawienia osobne dla każdej instancji - wszystkie pozostałe są w GUI
 # wspólne (zmiana na jednej instancji ustawia je na wszystkich).
+DEPTH_AUTO_MODES = ("max", "max_normal", "max_pct")
+DEPTH_MODES = {
+    "fixed": "Stała głębokość (wpisana)",
+    "max": "Maksymalna odblokowana",
+    "max_normal": "Maksymalna bez bonusu wrogów",
+    "max_pct": "Maksymalna minus X%",
+}
+
 PER_INSTANCE_FIELDS = ("name", "schedule", "daily_limit_hours", "close_game_during_break",
-                       "schedule_poll_interval", "farm_depth", "depth_mode")
+                       "schedule_poll_interval", "farm_depth", "depth_mode",
+                       "depth_below_max_pct")
 
 
 @dataclass
@@ -305,8 +314,10 @@ class BotConfig:
     farm_depth: int = 0
     # "fixed" - głębokość farm_depth; "max" - najwyższa odblokowana;
     # "max_normal" - najwyższa, na której wrogowie nie mają bonusu
-    # ("enemies at normal strength"). Dla "max*" farm_depth jest pomijane.
+    # ("enemies at normal strength"); "max_pct" - maksymalna odblokowana
+    # minus depth_below_max_pct procent. Dla "max*" farm_depth jest pomijane.
     depth_mode: str = "fixed"
+    depth_below_max_pct: float = 10.0
     depth_check_interval_min: float = 15.0
     # Punkty do klikania jako obszary: (x, y, promień) - x i promień jako
     # ułamek szerokości ekranu, y jako ułamek wysokości. Bot klika w losowe
@@ -325,7 +336,7 @@ class BotConfig:
     # ------------------------------------------------------------------ #
     @property
     def depth_enabled(self) -> bool:
-        return self.depth_mode in ("max", "max_normal") or self.farm_depth > 0
+        return self.depth_mode in DEPTH_AUTO_MODES or self.farm_depth > 0
 
     @classmethod
     def from_dict(cls, data: dict) -> "BotConfig":
@@ -378,6 +389,7 @@ class BotConfig:
             ("pack_plus_taps", int),
             ("farm_depth", int),
             ("depth_mode", str),
+            ("depth_below_max_pct", float),
             ("depth_check_interval_min", float),
         ):
             if key in data and data[key] is not None:
@@ -469,6 +481,7 @@ class BotConfig:
             "pack_plus_taps": self.pack_plus_taps,
             "farm_depth": self.farm_depth,
             "depth_mode": self.depth_mode,
+            "depth_below_max_pct": self.depth_below_max_pct,
             "depth_check_interval_min": self.depth_check_interval_min,
             "nav_profile": list(self.nav_profile),
             "nav_craft": list(self.nav_craft),
@@ -863,12 +876,15 @@ class DustMineBot:
                                   or screens.find_item_card(frame) or screens.find_center_button(frame)):
             return None
         kind = vision.screen_kind(det)
+        # plansza Dust Mine i minigry zajmują cały ekran - gdy widać pasek
+        # nawigacji z JUST LOOT (Profile, Craft, Inventory...), to nie jest
+        # żadna z nich, nawet jeśli coś na ekranie przypomina kulki / DROP
+        if kind is not None and frame is not None and screens.find_just_loot(frame) is not None:
+            return None
         if kind == "debris" and not self.config.play_debris:
             return None
         if kind == "fishing" and not self.config.skip_fishing:
             return None
-        if kind == "fishing" and frame is not None and screens.find_just_loot(frame) is not None:
-            return None  # Fishing Hole nie ma paska nawigacji (np. Profile z obramowaną kartą MAIN)
         return kind
 
     def _idle_loop(self) -> str | None:
@@ -1366,6 +1382,14 @@ class DustMineBot:
 
             if self._check_watchdogs(frame):
                 logger.info("[%s] restart gry przerwał zbieranie - wracam do idle", cfg.name)
+                return
+
+            if screens.find_just_loot(frame) is not None:
+                # widać pasek nawigacji - plansza się skończyła (z podpowiedzią
+                # położenia DROP detektor mógłby brać elementy UI za kulki)
+                if balls_before_drag is not None:
+                    self.stats.balls_collected += min(balls_before_drag, 1)  # jak przy zniknięciu planszy
+                logger.info("[%s] plansza zamknięta (widać pasek nawigacji) - wracam do idle", cfg.name)
                 return
 
             det = vision.detect(frame, region=cfg.board_region, drop_hint=last_drop)

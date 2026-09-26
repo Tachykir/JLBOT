@@ -203,6 +203,10 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   ustawienia i potem co `depth_check_interval_min` minut (domyślnie 15),
   zawsze tylko na ekranie z paskiem nawigacji (nie w trakcie walki).
   Gdy głębokość nie jest odblokowana, zostaje najbliższa możliwa.
+  Tryb `max_pct` — maksymalna odblokowana minus `depth_below_max_pct`
+  procent (np. 362 i 10% → 325); maksimum bot sprawdza raz na godzinę.
+  Na karcie „Wszystkie instancje” pole „Głębokość na wszystkich” ustawia
+  tryb (i liczbę) na każdej instancji naraz.
   Tryb (`depth_mode`): `fixed` — wpisana głębokość; `max` — maksymalna
   odblokowana (bot klika „›”, aż przestanie się dać albo strzałka
   zgaśnie); `max_normal` — najwyższa, na której gra pisze „enemies at

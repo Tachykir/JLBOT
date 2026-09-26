@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
 )
 
-from bot import (BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS, DROP_CHOICES,
+from bot import (BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS, DROP_CHOICES, DEPTH_MODES,
                  unknown_screens_dir)
 from gui_worker import BotWorker, SnapshotWorker
 from preview_widget import PreviewWidget, EditMode
@@ -493,6 +493,7 @@ class MainWindow(QMainWindow):
         self.dashboard = DashboardWidget()
         self.dashboard.card_action.connect(self._on_card_action)
         self.dashboard.global_action.connect(self._on_global_action)
+        self.dashboard.depth_all.connect(self._on_depth_all)
         self.main_tabs = QTabWidget()
         self.main_tabs.addTab(self.dashboard, "📋 Wszystkie instancje")
         self.main_tabs.addTab(top, "⚙ Szczegóły instancji")
@@ -842,14 +843,13 @@ class MainWindow(QMainWindow):
         w.setLayout(form)
         form.addRow(self._section("Farm na głębokości"))
         self.field_depth_mode = QComboBox()
-        for key, label in (("fixed", "Stała głębokość (wpisz poniżej)"),
-                           ("max", "Maksymalna odblokowana (automatycznie)"),
-                           ("max_normal", "Maksymalna bez bonusu wrogów (automatycznie)")):
+        for key, label in DEPTH_MODES.items():
             self.field_depth_mode.addItem(label, key)
         self.field_depth_mode.setToolTip(
             "Maksymalna odblokowana: bot klika „›”, aż przestanie się dać.\n"
             "Bez bonusu wrogów: najwyższa głębokość, na której gra pisze „enemies at normal "
-            "strength” (gear wystarcza) - rośnie sama, gdy gear się poprawi.")
+            "strength” (gear wystarcza) - rośnie sama, gdy gear się poprawi.\n"
+            "Maksymalna minus X%: np. maks. 362 i 10% -> 325.")
         self.field_depth_mode.currentIndexChanged.connect(self._apply_config_fields)
         form.addRow("Tryb:", self.field_depth_mode)
         self.field_farm_depth = QSpinBox(); self.field_farm_depth.setRange(0, 9999)
@@ -857,6 +857,10 @@ class MainWindow(QMainWindow):
         self.field_farm_depth.setToolTip("0 = bot nie rusza wyboru głębokości")
         self.field_farm_depth.valueChanged.connect(self._apply_config_fields)
         form.addRow("Farmij na głębokości:", self.field_farm_depth)
+        self.field_depth_pct = QSpinBox(); self.field_depth_pct.setRange(1, 90)
+        self.field_depth_pct.setSuffix(" % poniżej maks.")
+        self.field_depth_pct.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Maks. minus:", self.field_depth_pct)
         self.field_depth_interval = QSpinBox(); self.field_depth_interval.setRange(1, 1440)
         self.field_depth_interval.setSuffix(" min")
         self.field_depth_interval.valueChanged.connect(self._apply_config_fields)
@@ -1123,7 +1127,7 @@ class MainWindow(QMainWindow):
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake,
                 self.field_play_debris, self.field_skip_fishing,
-                self.field_depth_mode, self.field_farm_depth, self.field_depth_interval,
+                self.field_depth_mode, self.field_farm_depth, self.field_depth_pct, self.field_depth_interval,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
                 self.field_salvage_full, self.field_salvage_items, self.field_salvage_hold_min,
                 self.field_salvage_hold_max,
@@ -1170,6 +1174,7 @@ class MainWindow(QMainWindow):
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
             self.field_depth_mode.setCurrentIndex(max(0, self.field_depth_mode.findData(cfg.depth_mode)))
             self.field_farm_depth.setValue(max(0, cfg.farm_depth))
+            self.field_depth_pct.setValue(int(round(cfg.depth_below_max_pct)))
             self.field_depth_interval.setValue(max(1, int(cfg.depth_check_interval_min)))
             self.field_auto_packs.setChecked(cfg.auto_packs)
             self.field_packs_interval.setValue(int(cfg.packs_check_interval_min))
@@ -1211,6 +1216,7 @@ class MainWindow(QMainWindow):
             w.setEnabled(packs)
         fixed = self.field_depth_mode.currentData() in (None, "fixed")
         self.field_farm_depth.setEnabled(enabled and fixed)
+        self.field_depth_pct.setEnabled(enabled and self.field_depth_mode.currentData() == "max_pct")
         self.field_depth_interval.setEnabled(enabled and (not fixed or self.field_farm_depth.value() > 0))
         fallback = self.field_idle_fallback.isChecked() or not self.field_idle_just_loot.isChecked()
         self.idle_point_box.setVisible(fallback)
@@ -1312,6 +1318,7 @@ class MainWindow(QMainWindow):
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
         cfg.depth_mode = self.field_depth_mode.currentData() or "fixed"
         cfg.farm_depth = self.field_farm_depth.value()
+        cfg.depth_below_max_pct = float(self.field_depth_pct.value())
         cfg.depth_check_interval_min = float(self.field_depth_interval.value())
         cfg.auto_packs = self.field_auto_packs.isChecked()
         cfg.packs_check_interval_min = float(self.field_packs_interval.value())
@@ -1638,6 +1645,27 @@ class MainWindow(QMainWindow):
                 for e in running:
                     e.worker.request_restart_app()
                 self._log_local(f"Zlecono restart gry na {len(running)} instancjach")
+
+    def _on_depth_all(self, mode: str, value: int) -> None:
+        """Ustawienie głębokości z panelu "Wszystkie instancje" - na każdej
+        instancji (działające boty biorą je od razu przy najbliższym
+        ekranie z paskiem nawigacji)."""
+        for e in self.instances.values():
+            e.config.depth_mode = mode
+            if mode == "fixed":
+                e.config.farm_depth = value
+            elif mode == "max_pct":
+                e.config.depth_below_max_pct = float(value)
+        self._mark_dirty()
+        entry = self._current_entry()
+        if entry is not None:
+            self._load_fields_from_entry(entry)
+        desc = DEPTH_MODES.get(mode, mode)
+        if mode == "fixed":
+            desc = f"stała {value}" if value else "bez zmian (0)"
+        elif mode == "max_pct":
+            desc = f"maks. minus {value}%"
+        self._log_local(f"Głębokość na wszystkich instancjach: {desc} (zapisz config, żeby zachować)")
 
     def _update_dashboard(self, entry: InstanceEntry) -> None:
         card = self.dashboard.card(entry.config.name)

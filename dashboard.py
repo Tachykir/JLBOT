@@ -14,9 +14,11 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
-    QVBoxLayout, QWidget,
+    QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
+    QSpinBox, QVBoxLayout, QWidget,
 )
+
+from bot import DEPTH_MODES
 
 THUMB_W, THUMB_H = 150, 266
 SIDE_W = 215                      # szerokość kolumny z opisem i przyciskami
@@ -115,6 +117,7 @@ class InstanceCard(QFrame):
 class DashboardWidget(QWidget):
     card_action = Signal(str, str)   # (nazwa, akcja) - z kafelka
     global_action = Signal(str)      # start_all|pause_all|resume_all|stop_all|salvage_all|restart_all
+    depth_all = Signal(str, int)     # (tryb głębokości, liczba: głębokość albo procent)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -137,6 +140,27 @@ class DashboardWidget(QWidget):
         bar.addStretch(1)
         root.addLayout(bar)
 
+        # głębokość farmienia dla wszystkich instancji naraz
+        depth = QHBoxLayout()
+        depth.addWidget(QLabel("Głębokość na wszystkich:"))
+        self.depth_mode = QComboBox()
+        for key, label in DEPTH_MODES.items():
+            self.depth_mode.addItem(label, key)
+        self.depth_mode.setCurrentIndex(self.depth_mode.findData("max_pct"))
+        depth.addWidget(self.depth_mode)
+        self.depth_value = QSpinBox()
+        depth.addWidget(self.depth_value)
+        apply_btn = QPushButton("✔ Ustaw na wszystkich")
+        apply_btn.setToolTip("Ustawia tryb głębokości na każdej instancji; boty wybiorą ją w Profile "
+                             "przy najbliższym ekranie z paskiem nawigacji")
+        apply_btn.clicked.connect(lambda: self.depth_all.emit(self.depth_mode.currentData(),
+                                                              self.depth_value.value()))
+        depth.addWidget(apply_btn)
+        depth.addStretch(1)
+        root.addLayout(depth)
+        self.depth_mode.currentIndexChanged.connect(self._depth_mode_changed)
+        self._depth_mode_changed()
+
         self.summary = QLabel("")
         self.summary.setWordWrap(True)
         root.addWidget(self.summary)
@@ -153,6 +177,20 @@ class DashboardWidget(QWidget):
 
         self.cards: dict[str, InstanceCard] = {}
         self._order: list[str] = []
+
+    def _depth_mode_changed(self) -> None:
+        mode = self.depth_mode.currentData()
+        self.depth_value.setVisible(mode in ("fixed", "max_pct"))
+        if mode == "max_pct":
+            self.depth_value.setRange(1, 90)
+            self.depth_value.setSuffix(" % poniżej maks.")
+            self.depth_value.setSpecialValueText("")
+            self.depth_value.setValue(10)
+        elif mode == "fixed":
+            self.depth_value.setRange(0, 9999)
+            self.depth_value.setSuffix("")
+            self.depth_value.setSpecialValueText("nie zmieniaj")
+            self.depth_value.setValue(1)
 
     # ------------------------------------------------------------------ #
     def rebuild(self, instances: list[tuple[str, str]]) -> None:

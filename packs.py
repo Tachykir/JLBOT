@@ -49,7 +49,9 @@ class PackOpener:
         self._on_result_screen = False
         self._last_check: float | None = None
         self._last_depth_check: float | None = None
-        self._depth_target_seen: int | None = None  # zmiana celu = sprawdź od razu
+        self._depth_target_seen = None  # zmiana celu = sprawdź od razu
+        self._known_max: int | None = None        # maks. odblokowana (tryb max_pct)
+        self._known_max_time = 0.0
         self._size = (0, 0)  # (W, H) ostatniej klatki
 
     # ------------------------------------------------------------------ #
@@ -179,6 +181,8 @@ class PackOpener:
     def _depth_goal(self):
         """Cel ustawiania (zmiana = sprawdź od razu)."""
         cfg = self.bot.config
+        if cfg.depth_mode == "max_pct":
+            return ("max_pct", cfg.depth_below_max_pct)
         return cfg.depth_mode if cfg.depth_mode in ("max", "max_normal") else cfg.farm_depth
 
     def _read_depth(self):
@@ -218,6 +222,20 @@ class PackOpener:
             if final != start:
                 logger.info("[%s] głębokość: %s -> %s (maks. odblokowana)", cfg.name, start, final)
             return True
+        if cfg.depth_mode == "max_pct":
+            # maksimum rośnie tylko przy walce na samym maksimum, więc przy
+            # farmieniu niżej wystarczy je sprawdzać raz na godzinę
+            if self._known_max is None or time.monotonic() - self._known_max_time > 3600:
+                result, sel = self._move_depth(sel, None)
+                if result is None or sel is None or sel.current is None:
+                    return None
+                self._known_max, self._known_max_time = sel.current, time.monotonic()
+            target = max(1, int(self._known_max * (1 - cfg.depth_below_max_pct / 100.0)))
+            result, sel = self._move_depth(sel, target)
+            if result is True and start != target:
+                logger.info("[%s] głębokość: %s -> %d (maks. %d minus %.0f%%)", cfg.name, start, target,
+                            self._known_max, cfg.depth_below_max_pct)
+            return result
         if cfg.depth_mode == "max_normal":
             sel = self._climb_normal(sel)
             if sel is None:
