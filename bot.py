@@ -37,6 +37,7 @@ import numpy as np
 
 from adb_controller import ADBController, ADBError
 import humanize
+import screens
 import vision
 from packs import PackOpener
 # re-eksport dla zgodności (GUI i manager.py importują je z bot.py)
@@ -71,6 +72,14 @@ class BotConfig:
     # wzorcem), symuluje niedokładność ludzkiego dotyku. Domyślnie 50px
     # (czyli obszar o średnicy 100px, zgodnie z ustaleniami).
     idle_point_radius: float = 50.0
+
+    # Gdzie klikać w trybie idle:
+    #   "just_loot" - przycisk JUST LOOT wykrywany na każdej klatce (koło
+    #                 na dole ekranu, dowolny motyw/rozdzielczość); gdy go
+    #                 nie widać, a jest PROCEED - PROCEED; w ostateczności
+    #                 idle_point,
+    #   "fixed"     - zawsze idle_point (dawne zachowanie).
+    idle_target: str = "just_loot"
 
     # Jak często klikać punkt idle, gdy nie widać jeszcze ekranu gry.
     # Losowany zakres (s) zamiast stałej wartości - patrz RandomRange.
@@ -287,6 +296,10 @@ class BotConfig:
                 setattr(d, key, tuple(float(v) for v in data[key]))
         if "tile_tap_delay" in data:
             d.tile_tap_delay = RandomRange.from_value(data["tile_tap_delay"])
+        if data.get("idle_target"):
+            if data["idle_target"] not in ("just_loot", "fixed"):
+                raise ValueError(f"[{d.name}] idle_target musi być 'just_loot' albo 'fixed': {data['idle_target']!r}")
+            d.idle_target = data["idle_target"]
         if data.get("drag_style"):
             if data["drag_style"] not in ("human", "straight"):
                 raise ValueError(f"[{d.name}] drag_style musi być 'human' albo 'straight': {data['drag_style']!r}")
@@ -304,6 +317,7 @@ class BotConfig:
             "name": self.name,
             "idle_point": list(self.idle_point),
             "idle_point_radius": self.idle_point_radius,
+            "idle_target": self.idle_target,
             "board_region": list(self.board_region) if self.board_region else None,
             "idle_click_interval": self.idle_click_interval.to_dict(),
             "drag_duration_ms": self.drag_duration_ms.to_dict(),
@@ -742,13 +756,25 @@ class DustMineBot:
 
             now = time.monotonic()
             if not self._paused and now - last_click >= next_click_delay:
-                click_point = self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
-                self.adb.tap(*click_point)
+                self.adb.tap(*self._idle_click_point(frame))
                 last_click = now
                 next_click_delay = cfg.idle_click_interval.sample()
 
             self._sleep(cfg.idle_poll_interval)
         return None
+
+    def _idle_click_point(self, frame: np.ndarray) -> tuple[int, int]:
+        """Punkt kliknięcia w trybie idle - patrz BotConfig.idle_target."""
+        cfg = self.config
+        if cfg.idle_target == "just_loot":
+            button = screens.find_just_loot(frame)
+            if button is not None:
+                return humanize.random_point_in_circle(button.x, button.y, button.r * 0.45)
+            proceed = screens.find_wide_bottom_button(frame)
+            if proceed is not None:
+                cx, cy = proceed.center
+                return humanize.random_point_in_circle(cx, cy, min(proceed.w, proceed.h) * 0.3)
+        return self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
 
     # ------------------------------------------------------------------ #
     @staticmethod

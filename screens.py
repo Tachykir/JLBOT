@@ -23,7 +23,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from vision import Rect
+from vision import Circle, Rect
 
 
 def _components(mask: np.ndarray):
@@ -132,6 +132,39 @@ def find_open_dialog(bgr: np.ndarray) -> Dialog | None:
 
 
 # --------------------------------------------------------------------- #
+# Pasek nawigacji: okrągły przycisk JUST LOOT
+# --------------------------------------------------------------------- #
+
+def find_just_loot(bgr: np.ndarray) -> Circle | None:
+    """
+    Duży, pełny, okrągły przycisk JUST LOOT na środku paska nawigacji
+    (kolor zależy od motywu). Napis w środku robi dziury w masce - liczymy
+    wypełnienie po obrysie.
+    """
+    H, W = bgr.shape[:2]
+    y0 = int(0.7 * H)
+    hsv = cv2.cvtColor(bgr[y0:], cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 100, 150), (180, 255, 255))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    for c in contours:
+        x, y, w, h = cv2.boundingRect(c)
+        if not (0.09 * W <= w <= 0.4 * W and 0.85 <= w / h <= 1.18):
+            continue
+        r = (w + h) / 4
+        if cv2.contourArea(c) < 0.85 * np.pi * r * r:
+            continue
+        cx, cy = x + w / 2, y0 + y + h / 2
+        # przycisk siedzi w pasku nawigacji na samym dole (91-96% wysokości
+        # na zmierzonych ekranach) - wyżej bywają np. kulki Dust Mine
+        if abs(cx - W / 2) > 0.12 * W or cy < 0.86 * H:
+            continue
+        if best is None or r > best.r:
+            best = Circle(int(cx), int(cy), int(r))
+    return best
+
+
+# --------------------------------------------------------------------- #
 # Karty z paczek / koniec walki: szeroki przycisk przy dole
 # --------------------------------------------------------------------- #
 
@@ -197,17 +230,21 @@ def frontier_warning(bgr: np.ndarray) -> bool | None:
     H, W = bgr.shape[:2]
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
 
-    # 1) duża biała liczba głębokości: rząd >=3 wysokich, białych znaków
+    # 1) duża biała liczba głębokości: wysokie, białe cyfry na środku ekranu
     white = cv2.inRange(hsv, (0, 0, 200), (180, 50, 255))
     tall = [(x, y, w, h) for x, y, w, h, area in _components(white)
             if 0.05 * W <= h <= 0.15 * W and w <= 0.12 * W]
     number = None
     for _x, y, _w, h in tall:
         row = [t for t in tall if abs(t[1] - y) < 0.3 * h and abs(t[3] - h) < 0.3 * h]
-        if len(row) >= 3:
+        # głębokość ma 2+ cyfry (np. "87" albo "59.584"), wyśrodkowana;
+        # pojedynczy wysoki element to np. wskaźnik w Fishing Hole
+        if len(row) >= 2:
             x1 = min(t[0] for t in row)
             x2 = max(t[0] + t[2] for t in row)
             y2 = max(t[1] + t[3] for t in row)
+            if abs((x1 + x2) / 2 - W / 2) > 0.15 * W:
+                continue
             cand = (x1, y, x2 - x1, y2 - y)
             if number is None or cand[3] > number[3]:
                 number = cand

@@ -539,6 +539,15 @@ class MainWindow(QMainWindow):
         self.field_idle_radius.valueChanged.connect(self._apply_config_fields)
         form.addRow("idle_point_radius (px):", self.field_idle_radius)
 
+        self.field_idle_just_loot = QCheckBox("klikaj JUST LOOT (wykrywany sam)")
+        self.field_idle_just_loot.setToolTip(
+            "Zaznaczone: bot sam znajduje przycisk JUST LOOT na dole ekranu (a po\n"
+            "walce PROCEED); idle_point tylko awaryjnie, gdy nic nie widać.\n"
+            "Odznaczone: zawsze klika idle_point."
+        )
+        self.field_idle_just_loot.toggled.connect(self._apply_config_fields)
+        form.addRow("Klikanie idle:", self.field_idle_just_loot)
+
         self.field_region_x1 = QSpinBox(); self.field_region_x1.setRange(0, 9999)
         self.field_region_y1 = QSpinBox(); self.field_region_y1.setRange(0, 9999)
         self.field_region_x2 = QSpinBox(); self.field_region_x2.setRange(0, 9999)
@@ -773,7 +782,7 @@ class MainWindow(QMainWindow):
         # wartościami domyślnymi z widgetu, zanim zdążymy wczytać prawdziwe dane.
         fields = (self.field_name, self.field_serial, self.field_game_package,
                   self.field_game_activity, self.field_idle_x, self.field_idle_y,
-                  self.field_idle_radius,
+                  self.field_idle_radius, self.field_idle_just_loot,
                   self.field_region_x1, self.field_region_y1, self.field_region_x2,
                   self.field_region_y2,
                   self.field_idle_interval_min, self.field_idle_interval_max,
@@ -791,6 +800,7 @@ class MainWindow(QMainWindow):
             self.field_idle_x.setValue(cfg.idle_point[0])
             self.field_idle_y.setValue(cfg.idle_point[1])
             self.field_idle_radius.setValue(cfg.idle_point_radius)
+            self.field_idle_just_loot.setChecked(cfg.idle_target == "just_loot")
             if cfg.board_region:
                 self.field_region_x1.setValue(cfg.board_region[0])
                 self.field_region_y1.setValue(cfg.board_region[1])
@@ -874,7 +884,7 @@ class MainWindow(QMainWindow):
     def _set_config_form_enabled(self, enabled: bool) -> None:
         for w in (self.field_name, self.field_serial, self.field_game_package,
                   self.field_game_activity, self.field_idle_x, self.field_idle_y,
-                  self.field_idle_radius,
+                  self.field_idle_radius, self.field_idle_just_loot,
                   self.field_region_x1, self.field_region_y1, self.field_region_x2,
                   self.field_region_y2,
                   self.field_idle_interval_min, self.field_idle_interval_max,
@@ -901,6 +911,7 @@ class MainWindow(QMainWindow):
         cfg.game_activity = self.field_game_activity.text().strip() or None
         cfg.idle_point = (self.field_idle_x.value(), self.field_idle_y.value())
         cfg.idle_point_radius = self.field_idle_radius.value()
+        cfg.idle_target = "just_loot" if self.field_idle_just_loot.isChecked() else "fixed"
         region = (self.field_region_x1.value(), self.field_region_y1.value(),
                   self.field_region_x2.value(), self.field_region_y2.value())
         cfg.board_region = region if any(region) else None

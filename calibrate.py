@@ -112,6 +112,7 @@ def main() -> None:
 
     print(f"Rozpoznany ekran: {vision.screen_kind(det) or '(żaden)'}")
     # ekrany paczek / profilu / walki (screens.py) - na pełnym obrazie
+    print(f"Przycisk JUST LOOT: {screens.find_just_loot(img)}")
     buy = screens.find_buy_button(img)
     print(f"Craft - przycisk z ceną: {buy}")
     if buy is not None:

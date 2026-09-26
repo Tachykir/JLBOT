@@ -122,8 +122,12 @@ instancji:
 - **`serial`** — z `adb devices`. Adresy sieciowe (`127.0.0.1:5555`)
   bot łączy przez `adb connect`; seriale lokalnych emulatorów
   (`emulator-5556`) są tylko sprawdzane na liście `adb devices`.
-- **`idle_point`** — [x, y] punktu, w który bot klika, czekając na
-  pojawienie się ekranu z kulkami (np. przycisk otwierający "eksplozję").
+- **`idle_target`** (domyślnie `"just_loot"`) — w trybie idle bot sam
+  znajduje na każdej klatce przycisk **JUST LOOT** (koło na dole ekranu,
+  w dowolnym motywie i rozdzielczości) i klika w losowy punkt jego
+  środka; po walce klika PROCEED. `"fixed"` = zawsze `idle_point`.
+- **`idle_point`** — [x, y] punktu awaryjnego (gdy nie widać ani JUST
+  LOOT, ani PROCEED) albo stałego przy `idle_target: "fixed"`.
   Odczytaj współrzędne z `calibrate.py --grid`.
 - **`board_region`** — [x1, y1, x2, y2] obszaru planszy gry, żeby
   ograniczyć wykrywanie i uniknąć fałszywych trafień w innych elementach
