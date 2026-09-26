@@ -227,6 +227,16 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   jaśniejszym pionowym pasku karty, więc działa też przy stosach kopii
   legendary/mythic („MYTHIC 2× · …”), gdzie karty są węższe, a przycisk
   jest na środku ekranu.
+- **Wydajność** (GUI: zakładka Tempo → Wydajność, `processing_width`,
+  domyślnie 540) — zrzut ekranu jest przed analizą pomniejszany do tej
+  szerokości (1080×1920 → 540×960): ok. 3× mniej CPU na klatkę, a
+  rozpoznawanie działa tak samo (sprawdzone na wszystkich zrzutach).
+  Kliknięcia są przeliczane na pełną rozdzielczość; `idle_point` i
+  `board_region` zostają w pikselach urządzenia. 0 = pełna rozdzielczość.
+  OpenCV działa w jednym wątku na instancję, a podgląd w GUI odświeża się
+  tylko na widocznej karcie (szczegóły ~5×/s, miniatury 2×/s).
+  Najwięcej daje jednak sam emulator: niższa rozdzielczość (np. 540×960)
+  i FPS (np. 30) w ustawieniach LDPlayera.
 - **Ekran „Pack Opened”** — przycisk „Done” po kartach z paczki jest
   klikany w procedurze paczek i w zwykłym trybie.
 - **Szybkie klikanie kart** — seria kliknięć „+” i przeklikiwanie kart z

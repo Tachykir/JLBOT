@@ -88,6 +88,7 @@ class BotWorker(QThread):
         # nazwa zapamiętana przy starcie - GUI nie pozwala zmienić nazwy
         # działającej instancji, a sygnały muszą trafiać pod stały klucz
         self.name = config.name
+        self.scale = 1.0  # piksele urządzenia na piksel klatki (pomniejszanie zrzutów)
         self._bot: DustMineBot | None = None
         self._stop_requested = threading.Event()
         self._last_status: str | None = None
@@ -142,6 +143,7 @@ class BotWorker(QThread):
             return
 
         self._set_status("paused" if self._bot.is_paused else mode)
+        self.scale = getattr(self._bot.adb, "scale", 1.0)
         self.frame_ready.emit(self.name, frame, det, mode)
         self.stats_updated.emit(self.name, self._bot.stats)
 

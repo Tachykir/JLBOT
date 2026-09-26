@@ -99,7 +99,12 @@ class PreviewWidget(QLabel):
         self._redraw()
 
     # ------------------------------------------------------------------ #
-    def update_frame(self, frame_bgr: np.ndarray, det: vision.DetectionResult | None) -> None:
+    def update_frame(self, frame_bgr: np.ndarray, det: vision.DetectionResult | None,
+                     scale: float = 1.0) -> None:
+        # scale: ile pikseli urządzenia na piksel klatki (bot pracuje na
+        # pomniejszonych zrzutach); idle_point / board_region są w pikselach
+        # urządzenia
+        self._scale = scale or 1.0
         self._last_frame = frame_bgr
         self._last_det = det
         self._src_size = (frame_bgr.shape[1], frame_bgr.shape[0])
@@ -127,8 +132,9 @@ class PreviewWidget(QLabel):
             if cast is not None:
                 cv2.rectangle(vis, (cast.x, cast.y), (cast.x + cast.w, cast.y + cast.h), (255, 255, 0), 3)
 
+        k = getattr(self, "_scale", 1.0)
         if self._idle_point is not None:
-            x, y = self._idle_point
+            x, y = int(self._idle_point[0] / k), int(self._idle_point[1] / k)
             cv2.drawMarker(vis, (x, y), (255, 0, 255), markerType=cv2.MARKER_CROSS,
                             markerSize=24, thickness=2)
             cv2.circle(vis, (x, y), 12, (255, 0, 255), 2)
@@ -136,13 +142,13 @@ class PreviewWidget(QLabel):
                 # obszar losowania klikania - okrąg przerywany (rysowany
                 # jako seria krótkich łuków), żeby odróżnić go wizualnie
                 # od twardych granic (board_region, DROP, kulki)
-                radius = int(self._idle_point_radius)
+                radius = int(self._idle_point_radius / k)
                 for start_deg in range(0, 360, 20):
                     cv2.ellipse(vis, (x, y), (radius, radius), 0,
                                 start_deg, start_deg + 10, (255, 0, 255), 1)
 
         if self._board_region is not None:
-            x1, y1, x2, y2 = self._board_region
+            x1, y1, x2, y2 = (int(v / k) for v in self._board_region)
             cv2.rectangle(vis, (x1, y1), (x2, y2), (255, 255, 0), 2)
 
         h, w = vis.shape[:2]
@@ -218,6 +224,8 @@ class PreviewWidget(QLabel):
             return
 
         if self._edit_mode == EditMode.SET_IDLE_POINT:
+            k = getattr(self, "_scale", 1.0)
+            src = (int(round(src[0] * k)), int(round(src[1] * k)))
             self._idle_point = src
             self.idle_point_picked.emit(*src)
             self._redraw()
@@ -249,7 +257,8 @@ class PreviewWidget(QLabel):
             if start_src is not None and end_src is not None:
                 x1, y1 = start_src
                 x2, y2 = end_src
-                region = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+                k = getattr(self, "_scale", 1.0)
+                region = tuple(int(round(v * k)) for v in (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)))
                 if region[2] - region[0] > 10 and region[3] - region[1] > 10:
                     self._board_region = region
                     self.board_region_picked.emit(*region)

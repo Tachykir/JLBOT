@@ -99,12 +99,20 @@ class ADBController:
     serial: np. "127.0.0.1:5555" - identyfikator urządzenia w `adb devices`
     """
 
+    max_width = 0     # domyślnie pełna rozdzielczość (patrz __init__)
+    scale = 1.0
+
     def __init__(self, serial: str, adb_path: str | None = None, connect_timeout: float = 10.0):
         self.serial = serial
         self.adb_path = adb_path if adb_path is not None else default_adb_path()
         # Surowy screencap (bez PNG) jest dużo szybszy; wyłączany na stałe
         # dla tej instancji, jeśli urządzenie zwróci nieobsługiwany format.
         self._raw_screencap_ok = True
+        # Oszczędzanie CPU: zrzuty szersze niż max_width są pomniejszane
+        # (0 = pełna rozdzielczość). Bot pracuje na pomniejszonym obrazie,
+        # a współrzędne kliknięć są tu przeliczane z powrotem (scale).
+        self.max_width = 0
+        self.scale = 1.0
         # Czy `input motionevent` jest dostępne (None = jeszcze nie sprawdzono).
         self._motionevent_ok: bool | None = None
         # Szacowany czas jednego wywołania `input ...` po stronie Androida
@@ -205,8 +213,12 @@ class ADBController:
     # ------------------------------------------------------------------ #
     # Wejście: tap / swipe
     # ------------------------------------------------------------------ #
+    def _s(self, v: float) -> int:
+        """Współrzędna z (pomniejszonego) zrzutu -> piksel urządzenia."""
+        return int(round(v * self.scale))
+
     def tap(self, x: int, y: int) -> None:
-        self._run(["shell", "input", "tap", str(int(x)), str(int(y))])
+        self._run(["shell", "input", "tap", str(self._s(x)), str(self._s(y))])
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 400) -> None:
         """
@@ -217,7 +229,7 @@ class ADBController:
         """
         self._run([
             "shell", "input", "swipe",
-            str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)),
+            str(self._s(x1)), str(self._s(y1)), str(self._s(x2)), str(self._s(y2)),
             str(int(duration_ms)),
         ])
 
@@ -235,7 +247,8 @@ class ADBController:
             if i and i - 1 < len(gaps_s) and gaps_s[i - 1] > 0:
                 parts.append(f"sleep {gaps_s[i - 1]:.3f}")
             dx, dy = random.randint(-1, 1), random.randint(-1, 1)
-            parts.append(f"input swipe {int(x)} {int(y)} {int(x) + dx} {int(y) + dy} {max(1, int(hold))}")
+            x, y = self._s(x), self._s(y)
+            parts.append(f"input swipe {x} {y} {x + dx} {y + dy} {max(1, int(hold))}")
         total = sum(gaps_s) + len(taps) * 0.5
         self._run(["shell", "; ".join(parts)], timeout=10 + total)
 
@@ -283,12 +296,12 @@ class ADBController:
             sleep_s = 0.0
 
         x, y = points[0]
-        parts = [f"input motionevent DOWN {int(x)} {int(y)}"]
+        parts = [f"input motionevent DOWN {self._s(x)} {self._s(y)}"]
         for x, y in moves:
             if sleep_s:
                 parts.append(f"sleep {sleep_s:.3f}")
-            parts.append(f"input motionevent MOVE {int(x)} {int(y)}")
-        parts.append(f"input motionevent UP {int(x)} {int(y)}")
+            parts.append(f"input motionevent MOVE {self._s(x)} {self._s(y)}")
+        parts.append(f"input motionevent UP {self._s(x)} {self._s(y)}")
 
         start = time.monotonic()
         self._run(["shell", "; ".join(parts)], timeout=15 + 3 * duration_ms / 1000.0)
@@ -314,8 +327,13 @@ class ADBController:
         """
         if self._raw_screencap_ok:
             data = self._exec_out(["screencap"])
-            img = decode_raw_screencap(data)
-            if img is not None:
+            res = decode_raw_screencap(data, self.max_width)
+            if res is not None:
+                if isinstance(res, tuple):
+                    img, full_w = res
+                else:
+                    img, full_w = res, res.shape[1]
+                self.scale = full_w / img.shape[1]
                 return img
             self._raw_screencap_ok = False
             logger.info("[%s] surowy screencap nieobsługiwany (%d B) - przełączam na PNG",
@@ -325,7 +343,9 @@ class ADBController:
         img = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             raise ADBError(f"Nie udało się zdekodować screenshotu z {self.serial}")
-        return img
+        small = _shrink(img, self.max_width)
+        self.scale = img.shape[1] / small.shape[1]
+        return small
 
     def _exec_out(self, args: list[str]) -> bytes:
         cmd = [self.adb_path, "-s", self.serial, "exec-out"] + args
@@ -439,7 +459,14 @@ _RAW_FORMATS = {
 }
 
 
-def decode_raw_screencap(data: bytes) -> np.ndarray | None:
+def _shrink(img: np.ndarray, max_width: int) -> np.ndarray:
+    h, w = img.shape[:2]
+    if not max_width or w <= max_width * 1.05:
+        return img
+    return cv2.resize(img, (max_width, int(round(h * max_width / w))), interpolation=cv2.INTER_AREA)
+
+
+def decode_raw_screencap(data: bytes, max_width: int = 0):
     """
     Dekoduje wynik `screencap` bez `-p`: nagłówek (szerokość, wysokość,
     format jako uint32 little-endian, na Androidzie 9+ dodatkowo 4 bajty
@@ -455,7 +482,10 @@ def decode_raw_screencap(data: bytes) -> np.ndarray | None:
     if header not in (12, 16):
         return None
     pixels = np.frombuffer(data, dtype=np.uint8, offset=header).reshape(h, w, 4)
-    return cv2.cvtColor(pixels, _RAW_FORMATS[fmt])
+    if not max_width:
+        return cv2.cvtColor(pixels, _RAW_FORMATS[fmt])
+    # pomniejszenie przed konwersją kolorów - mniej pracy
+    return cv2.cvtColor(_shrink(pixels, max_width), _RAW_FORMATS[fmt]), w
 
 
 def list_ldplayer_devices(adb_path: str | None = None) -> list[str]:

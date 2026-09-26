@@ -36,6 +36,10 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import cv2
+# Kilka instancji bota działa równolegle w wątkach - wewnętrzna
+# wielowątkowość OpenCV tylko by się z nimi przepychała (więcej CPU na
+# synchronizację niż zysku); jeden wątek na wywołanie wystarcza.
+cv2.setNumThreads(1)
 import numpy as np
 
 from adb_controller import ADBController, ADBError
@@ -151,6 +155,11 @@ class BotConfig:
     # przeszukiwany jest cały ekran (domyślnie - wykrywanie działa na
     # całym ekranie i nie zależy od rozdzielczości).
     board_region: tuple[int, int, int, int] | None = None
+    # Oszczędzanie CPU: zrzuty ekranu szersze niż tyle pikseli są przed
+    # analizą pomniejszane (np. 1080x1920 -> 540x960, ~3x mniej pracy);
+    # kliknięcia są przeliczane z powrotem na pełną rozdzielczość.
+    # 0 = pełna rozdzielczość.
+    processing_width: int = 540
 
     # Czas trwania gestu przeciągania kulki (ms). Losowany zakres.
     drag_duration_ms: RandomRange = field(default_factory=lambda: RandomRange(800, 1300))
@@ -389,6 +398,7 @@ class BotConfig:
             ("pack_plus_taps", int),
             ("farm_depth", int),
             ("depth_mode", str),
+            ("processing_width", int),
             ("depth_below_max_pct", float),
             ("depth_check_interval_min", float),
         ):
@@ -481,6 +491,7 @@ class BotConfig:
             "pack_plus_taps": self.pack_plus_taps,
             "farm_depth": self.farm_depth,
             "depth_mode": self.depth_mode,
+            "processing_width": self.processing_width,
             "depth_below_max_pct": self.depth_below_max_pct,
             "depth_check_interval_min": self.depth_check_interval_min,
             "nav_profile": list(self.nav_profile),
@@ -531,6 +542,7 @@ class DustMineBot:
         self._planner = SchedulePlanner(config)
         self._packs = PackOpener(self)
         self._fishing_frames = 0
+        self._apply_performance()
         # ostatnia znana pozycja DROP (z poprzednich plansz) - pomaga
         # rozpoznać planszę, na której kulki mocno zasłaniają DROP
         self._last_drop: vision.Circle | None = None
@@ -832,7 +844,7 @@ class DustMineBot:
         # ustawiony - pasek statusu / nawigacja Androida mogą być jasne
         # nawet gdy sama plansza gry jest czarna (zawieszona).
         if cfg.board_region is not None:
-            x1, y1, x2, y2 = cfg.board_region
+            x1, y1, x2, y2 = self._region()
             region_frame = frame[y1:y2, x1:x2]
             if region_frame.size == 0:
                 region_frame = frame
@@ -892,6 +904,7 @@ class DustMineBot:
         ekranu ("dust" | "debris" | "fishing"), albo None przy stop()
         albo gdy harmonogram każe skończyć sesję."""
         cfg = self.config
+        self._apply_performance()  # zmiana ustawienia w GUI działa od następnej pętli
         last_click = 0.0
         next_click_delay = humanize.human_delay(cfg.idle_click_interval.min, cfg.idle_click_interval.max)
         while not self._stop:
@@ -932,7 +945,7 @@ class DustMineBot:
                 self._sleep(humanize.human_delay(0.15, 0.45))
                 continue
 
-            det = vision.detect_all(frame, region=cfg.board_region, drop_hint=self._last_drop)
+            det = vision.detect_all(frame, region=self._region(), drop_hint=self._last_drop)
 
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "idle")
@@ -976,6 +989,18 @@ class DustMineBot:
 
             self._sleep(cfg.idle_poll_interval)
         return None
+
+    def _region(self) -> tuple[int, int, int, int] | None:
+        """board_region (piksele urządzenia) w układzie pomniejszonego zrzutu."""
+        r = self.config.board_region
+        scale = getattr(self.adb, "scale", 1.0) or 1.0
+        if r is None or scale == 1.0:
+            return r
+        return tuple(int(round(v / scale)) for v in r)
+
+    def _apply_performance(self) -> None:
+        if hasattr(self.adb, "max_width"):
+            self.adb.max_width = max(0, int(self.config.processing_width))
 
     def _tap(self, x: int, y: int) -> None:
         """Tapnięcie "jak palcem": dotyk trwa tap_hold_ms i lekko się
@@ -1178,7 +1203,8 @@ class DustMineBot:
             self._note_unknown(frame)
             if not cfg.idle_fallback_enabled:
                 return None
-        x, y = self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
+        k = getattr(self.adb, "scale", 1.0) or 1.0   # idle_point jest w pikselach urządzenia
+        x, y = self._random_point_near((cfg.idle_point[0] / k, cfg.idle_point[1] / k), cfg.idle_point_radius / k)
         h, w = frame.shape[:2]
         if not (0 <= x < w and 0 <= y < h):
             # punkt z configu dla innej rozdzielczości - nie klikaj w próżnię
@@ -1220,7 +1246,7 @@ class DustMineBot:
             frame = self.adb.screenshot()
             if self._check_watchdogs(frame):
                 return
-            det = vision.detect_all(frame, region=cfg.board_region, in_debris_game=True)
+            det = vision.detect_all(frame, region=self._region(), in_debris_game=True)
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "debris")
 
@@ -1266,7 +1292,7 @@ class DustMineBot:
         co kończy minigrę."""
         cfg = self.config
         frame = self.adb.screenshot()
-        det = vision.detect_all(frame, region=cfg.board_region)
+        det = vision.detect_all(frame, region=self._region())
         if det.cast_button is None or self._paused or screens.find_just_loot(frame) is not None:
             return
         if self._on_frame is not None:
@@ -1392,7 +1418,7 @@ class DustMineBot:
                 logger.info("[%s] plansza zamknięta (widać pasek nawigacji) - wracam do idle", cfg.name)
                 return
 
-            det = vision.detect(frame, region=cfg.board_region, drop_hint=last_drop)
+            det = vision.detect(frame, region=self._region(), drop_hint=last_drop)
             if det.drop is not None:
                 last_drop = det.drop
                 self._last_drop = det.drop

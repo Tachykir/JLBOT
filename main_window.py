@@ -110,6 +110,8 @@ class InstanceEntry:
         self.last_det: vision.DetectionResult | None = None
         self.last_stats: BotStats | None = None
         self.last_thumb: float = 0.0
+        self.last_preview: float = 0.0
+        self.last_scale: float = 1.0   # piksele urządzenia na piksel last_frame
         self.schedule_text: str = ""
         self.list_item: QListWidgetItem | None = None
         self.snapshot_worker: SnapshotWorker | None = None
@@ -820,6 +822,19 @@ class MainWindow(QMainWindow):
         form.addRow(self._hint("Palec jedzie po losowej krzywej, przyspiesza i zwalnia, łapie kulkę w "
                                "losowym miejscu, a kulki zbiera w losowej kolejności. Wyłączone: "
                                "prosta linia środek–środek, kulki po kolei."))
+
+        form.addRow(self._section("Wydajność"))
+        self.field_proc_width = QSpinBox(); self.field_proc_width.setRange(0, 2160)
+        self.field_proc_width.setSingleStep(60)
+        self.field_proc_width.setSuffix(" px szerokości")
+        self.field_proc_width.setSpecialValueText("pełna rozdzielczość")
+        self.field_proc_width.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Analizuj zrzut w:", self.field_proc_width)
+        form.addRow(self._hint("Zrzut ekranu jest przed analizą pomniejszany do tej szerokości - przy "
+                               "1080×1920 i 540 px bot zużywa ok. 3× mniej CPU, a rozpoznawanie działa "
+                               "tak samo. Kliknięcia trafiają w pełnej rozdzielczości. Jeszcze mniej "
+                               "obciążenia: niższa rozdzielczość (np. 540×960) i FPS (np. 30) w "
+                               "ustawieniach LDPlayera."))
         return w
 
     def _tab_minigames(self) -> QWidget:
@@ -1112,7 +1127,7 @@ class MainWindow(QMainWindow):
         self._set_config_form_enabled(True)
 
         if entry.last_frame is not None:
-            self.preview.update_frame(entry.last_frame, entry.last_det)
+            self.preview.update_frame(entry.last_frame, entry.last_det, entry.last_scale)
         self.preview.set_known_config(self._shown_idle_point(entry.config), entry.config.board_region,
                                       entry.config.idle_point_radius)
         self._update_preview_points()
@@ -1125,7 +1140,7 @@ class MainWindow(QMainWindow):
                 self.field_drag_ms_min, self.field_drag_ms_max,
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
-                self.field_mistake,
+                self.field_mistake, self.field_proc_width,
                 self.field_play_debris, self.field_skip_fishing,
                 self.field_depth_mode, self.field_farm_depth, self.field_depth_pct, self.field_depth_interval,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
@@ -1170,6 +1185,7 @@ class MainWindow(QMainWindow):
             self.field_hold_min.setValue(cfg.tap_hold_ms.min)
             self.field_hold_max.setValue(cfg.tap_hold_ms.max)
             self.field_mistake.setValue(cfg.mistake_chance * 100)
+            self.field_proc_width.setValue(max(0, cfg.processing_width))
             self.field_play_debris.setChecked(cfg.play_debris)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
             self.field_depth_mode.setCurrentIndex(max(0, self.field_depth_mode.findData(cfg.depth_mode)))
@@ -1314,6 +1330,7 @@ class MainWindow(QMainWindow):
         cfg.tap_hold_ms = RandomRange(
             self.field_hold_min.value(), max(self.field_hold_min.value(), self.field_hold_max.value()))
         cfg.mistake_chance = self.field_mistake.value() / 100.0
+        cfg.processing_width = self.field_proc_width.value()
         cfg.play_debris = self.field_play_debris.isChecked()
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
         cfg.depth_mode = self.field_depth_mode.currentData() or "fixed"
@@ -1517,8 +1534,9 @@ class MainWindow(QMainWindow):
             return
         entry.last_frame = frame
         entry.last_det = det
+        entry.last_scale = 1.0  # ręczny podgląd jest w pełnej rozdzielczości
         if name == self.selected_name:
-            self.preview.update_frame(frame, det)
+            self.preview.update_frame(frame, det, 1.0)
         self._log_local(f"[{name}] odświeżono podgląd ręcznie "
                          f"(DROP={'tak' if det.drop else 'nie'}, kulki={len(det.balls)})")
 
@@ -1746,10 +1764,14 @@ class MainWindow(QMainWindow):
             return
         entry.last_frame = frame
         entry.last_det = det
-        if name == self.selected_name:
-            self.preview.update_frame(frame, det)
-        # miniatury w przeglądzie - najwyżej 2 razy na sekundę na instancję
+        entry.last_scale = getattr(entry.worker, "scale", 1.0) if entry.worker is not None else 1.0
+        # podgląd tylko gdy widać kartę szczegółów i najwyżej ~5 razy na sekundę
         now = time.monotonic()
+        if (name == self.selected_name and self.main_tabs.currentIndex() == 1
+                and now - entry.last_preview >= 0.2):
+            entry.last_preview = now
+            self.preview.update_frame(frame, det, entry.last_scale)
+        # miniatury w przeglądzie - najwyżej 2 razy na sekundę na instancję
         if now - entry.last_thumb >= 0.5 and self.main_tabs.currentIndex() == 0:
             entry.last_thumb = now
             card = self.dashboard.card(name)
