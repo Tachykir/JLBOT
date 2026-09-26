@@ -517,6 +517,7 @@ class DustMineBot:
         self._on_schedule = on_schedule
         self._planner = SchedulePlanner(config)
         self._packs = PackOpener(self)
+        self._fishing_frames = 0
         # ostatnia znana pozycja DROP (z poprzednich plansz) - pomaga
         # rozpoznać planszę, na której kulki mocno zasłaniają DROP
         self._last_drop: vision.Circle | None = None
@@ -860,6 +861,8 @@ class DustMineBot:
             return None
         if kind == "fishing" and not self.config.skip_fishing:
             return None
+        if kind == "fishing" and frame is not None and screens.find_just_loot(frame) is not None:
+            return None  # Fishing Hole nie ma paska nawigacji (np. Profile z obramowaną kartą MAIN)
         return kind
 
     def _idle_loop(self) -> str | None:
@@ -922,8 +925,15 @@ class DustMineBot:
                 logger.info("[%s] wykryto minigrę Depth Collapse: %d kafelków", cfg.name, len(det.tile_taps))
                 return kind
             if kind == "fishing":
-                logger.info("[%s] wykryto minigrę Fishing Hole - pomijam (CAST)", cfg.name)
-                return kind
+                # potwierdzenie na drugiej klatce - pojedyncza klatka walki
+                # (animacje, obramowane przyciski) nie uruchomi minigry
+                self._fishing_frames += 1
+                if self._fishing_frames >= 2:
+                    self._fishing_frames = 0
+                    logger.info("[%s] wykryto minigrę Fishing Hole - pomijam (CAST)", cfg.name)
+                    return kind
+                continue
+            self._fishing_frames = 0
 
             now = time.monotonic()
             if not self._paused and now - last_click >= next_click_delay:
@@ -1226,7 +1236,7 @@ class DustMineBot:
         cfg = self.config
         frame = self.adb.screenshot()
         det = vision.detect_all(frame, region=cfg.board_region)
-        if det.cast_button is None or self._paused:
+        if det.cast_button is None or self._paused or screens.find_just_loot(frame) is not None:
             return
         if self._on_frame is not None:
             self._on_frame(cfg.name, frame, det, "fishing")

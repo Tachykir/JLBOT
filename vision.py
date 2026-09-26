@@ -438,9 +438,60 @@ def _find_cast_button(bgr: np.ndarray) -> Rect | None:
             continue
         if area / (bw * bh) > 0.35:  # ramka, a nie pełny prostokąt
             continue
+        rect = Rect(int(x), int(y), int(bw), int(bh))
+        if not _cast_context(hsv, mask, rect):
+            continue
         if best is None or bw * bh > best.w * best.h:
-            best = Rect(int(x), int(y), int(bw), int(bh))
+            best = rect
     return best
+
+
+def _cast_context(hsv: np.ndarray, mask: np.ndarray, r: Rect) -> bool:
+    """
+    Dodatkowe warunki, żeby ekran walki (obramowane przyciski, paski)
+    nie udawał Fishing Hole:
+      - ramka zamknięta: wszystkie 4 boki obrysowane,
+      - w środku krótki napis (3-6 liter "CAST") na środku ramki,
+      - nad przyciskiem tor ze wskaźnikiem: pionowa, wypełniona
+        "pigułka" (cyjan albo biel) o proporcjach ~1:3.
+    """
+    h, w = mask.shape[:2]
+    # po kompresji ramka potrafi się rozpaść na dwie części - oceniaj
+    # całą maskę w lekko powiększonym prostokącie, a nie jedną składową
+    pad = max(2, r.h // 6)
+    x1, y1 = max(0, r.x - pad), max(0, r.y - pad)
+    x2, y2 = min(w, r.x + r.w + pad), min(h, r.y + r.h + pad)
+    frame = mask[y1:y2, x1:x2] > 0
+    rows, cols = np.nonzero(frame)
+    if rows.size == 0:
+        return False
+    frame = frame[rows.min():rows.max() + 1, cols.min():cols.max() + 1]
+    r = Rect(x1 + int(cols.min()), y1 + int(rows.min()), frame.shape[1], frame.shape[0])
+    t = max(2, r.h // 12)
+    sides = (frame[:t].any(axis=0).mean(), frame[-t:].any(axis=0).mean(),
+             frame[:, :t].any(axis=1).mean(), frame[:, -t:].any(axis=1).mean())
+    if min(sides) < 0.6:
+        return False
+    m = max(t * 2, r.h // 5)
+    inner = frame[m:r.h - m, m:r.w - m].astype(np.uint8)
+    n, _l, st, _c = cv2.connectedComponentsWithStats(inner)
+    letters = [st[i] for i in range(1, n) if st[i][4] >= 4 and st[i][3] >= 0.2 * inner.shape[0]]
+    if not (3 <= len(letters) <= 6):
+        return False
+    lx1 = min(l[0] for l in letters)
+    lx2 = max(l[0] + l[2] for l in letters)
+    if abs((lx1 + lx2) / 2 - inner.shape[1] / 2) > 0.15 * inner.shape[1] or lx2 - lx1 > 0.7 * inner.shape[1]:
+        return False
+    # wskaźnik w torze nad przyciskiem
+    y1 = max(0, int(r.y - 0.3 * w))
+    band = hsv[y1:r.y]
+    pill = mask[y1:r.y] | cv2.inRange(band, (0, 0, 200), (180, 60, 255))
+    n, _l, st, _c = cv2.connectedComponentsWithStats(pill)
+    for i in range(1, n):
+        _x, _y, pw, ph, area = st[i]
+        if 0.04 * w <= ph <= 0.15 * w and 2.0 <= ph / max(pw, 1) <= 5.0 and area >= 0.5 * pw * ph:
+            return True
+    return False
 
 
 def detect_all(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,

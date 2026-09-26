@@ -211,6 +211,10 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   kolejnych sprawdzeniach. Uwaga: przy `max_normal` sprawdzanie Profile
   nie otworzy paczek (wrogowie nigdy nie mają bonusu) — paczki otworzą
   się po serii porażek.
+- **Fishing Hole — bez fałszywych trafień**: CAST musi mieć zamkniętą
+  ramkę z krótkim napisem na środku i wskaźnik w torze nad sobą, ekran
+  nie może mieć paska nawigacji (JUST LOOT), a minigra musi być widoczna
+  na dwóch klatkach z rzędu.
 - **Ekran „Pack Opened”** — przycisk „Done” po kartach z paczki jest
   klikany w procedurze paczek i w zwykłym trybie.
 - **Szybkie klikanie kart** — seria kliknięć „+” i przeklikiwanie kart z
