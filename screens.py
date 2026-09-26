@@ -245,6 +245,16 @@ def find_reveal_card(bgr: np.ndarray) -> Rect | None:
     H, W = bgr.shape[:2]
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     lines = _horizontal_lines(gray, int(0.15 * H), int(0.85 * H), 0.35 * W, 0.85 * W)
+    # jednolicie wypełniony panel (np. odkryta karta z paczki) daje
+    # "linię" co 4 wiersze - z takiego bloku zostaw tylko górną i dolną
+    # krawędź, inaczej par do sprawdzenia są dziesiątki tysięcy
+    edges: list[tuple[int, int, int]] = []
+    for k, line in enumerate(lines):
+        joined_prev = k > 0 and line[0] - lines[k - 1][0] <= 4
+        joined_next = k + 1 < len(lines) and lines[k + 1][0] - line[0] <= 4
+        if not (joined_prev and joined_next):
+            edges.append(line)
+    lines = edges
     for i, top in enumerate(lines):
         for bottom in lines[i + 1:]:
             if abs(top[1] - bottom[1]) > 0.03 * W or abs(top[2] - bottom[2]) > 0.03 * W:
@@ -266,6 +276,40 @@ def find_reveal_card(bgr: np.ndarray) -> Rect | None:
             cx, cy = xs.mean() / iw, ys.mean() / ih
             if glyph_w < 0.3 * iw and glyph_h < 0.3 * ih and abs(cx - 0.5) < 0.15 and abs(cy - 0.5) < 0.15:
                 return Rect(top[1], top[0], w, h)
+    return None
+
+
+def find_item_card(bgr: np.ndarray) -> Rect | None:
+    """
+    Odkryta karta przedmiotu z paczki ("TAP ANYWHERE TO CONTINUE"):
+    pionowa karta, odrobinę jaśniejsza od ciemnego tła, na środku
+    ekranu, z tekstem w środku, bez paska nawigacji (JUST LOOT). Obwódka
+    ma kolor rzadkości (szara, niebieska, fioletowa...), więc szukamy
+    wypełnionego prostokąta karty, a nie jego linii.
+    """
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    edges = np.concatenate((gray[:int(0.12 * H)].ravel(), gray[int(0.88 * H):].ravel()))
+    bg = float(np.median(edges))
+    if bg > 40:
+        return None
+    mask = (cv2.medianBlur(gray, 5) > bg + 5).astype(np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    for x, y, w, h, area in _components(mask):
+        if not (0.4 * W <= w <= 0.75 * W and 1.0 <= h / w <= 1.8):
+            continue
+        if abs(x + w / 2 - W / 2) > 0.05 * W or area < 0.85 * w * h:
+            continue
+        inner = gray[y + 8:y + h - 8, x + 8:x + w - 8]
+        if inner.size == 0 or not (0.01 <= float((inner > 120).mean()) <= 0.15):
+            continue  # pusta karta (np. zakryta "?") albo jasny panel
+        # poza kartą ciemne tło (tylko nagłówek paczki i napis pod kartą)
+        sides = np.concatenate((gray[y:y + h, :max(1, x - 5)].ravel(), gray[y:y + h, x + w + 5:].ravel()))
+        if float((sides > bg + 25).mean()) > 0.02:
+            continue
+        if find_just_loot(bgr) is not None:
+            return None  # ekran z paskiem nawigacji (np. Loot Packs)
+        return Rect(int(x), int(y), int(w), int(h))
     return None
 
 

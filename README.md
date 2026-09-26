@@ -191,6 +191,9 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   `nav_craft`, `craft_loot_packs_tab`) są względne (ułamek ekranu).
   Rozpoznawanie ekranów sprawdzisz na zrzucie: `python calibrate.py
   --image zrzut.png` wypisuje, co bot na nim widzi.
+  Karta z paczki, która zostanie na ekranie (np. przerwane otwieranie
+  albo paczki otwarte ręcznie), jest rozpoznawana także w zwykłym
+  trybie — bot klika obok karty, aż wróci ekran główny.
 - **Zachowanie jak człowiek** (GUI: zakładka Tempo):
   - `reaction_delay` (domyślnie 0.4–1.8 s) — chwila na „zauważenie”
     nowej planszy / minigry przed pierwszym ruchem,

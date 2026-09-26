@@ -199,13 +199,13 @@ class PackOpener:
         cards = 0
         unchanged = 0
         prev = None
-        deadline = time.monotonic() + 600
+        deadline = time.monotonic() + 1800
         while time.monotonic() < deadline and not self._abort():
             frame = self._frame()
             if screens.find_buy_button(frame) is not None and screens.find_open_dialog(frame) is None:
                 logger.info("[%s] otwarto paczki (%d kart)", cfg.name, cards)
                 return True
-            if cards >= 250:
+            if cards >= 1000:
                 logger.warning("[%s] ponad %d kart - przerywam", cfg.name, cards)
                 return True
             # zabezpieczenie: obraz przestał się zmieniać mimo klikania

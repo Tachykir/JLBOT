@@ -833,7 +833,8 @@ class DustMineBot:
         # ekrany dropu po walce mają pierwszeństwo - obsługuje je zwykłe
         # klikanie idle (Keep Current / odkrycie karty), a ich elementy
         # (np. zakładki RING, tekst przedmiotu) nie mogą udawać minigry
-        if frame is not None and (screens.find_drop_choice(frame) or screens.find_reveal_card(frame)):
+        if frame is not None and (screens.find_drop_choice(frame) or screens.find_reveal_card(frame)
+                                  or screens.find_item_card(frame)):
             return None
         kind = vision.screen_kind(det)
         if kind == "debris" and not self.config.play_debris:
@@ -1063,6 +1064,17 @@ class DustMineBot:
         if card is not None:
             cx, cy = card.center
             return humanize.random_point_in_circle(cx, cy, min(card.w, card.h) * 0.3)
+        # odkryta karta z paczki - "tap anywhere to continue" (np. gdy
+        # otwieranie paczek zostało przerwane albo paczki otwarto ręcznie)
+        item = screens.find_item_card(frame)
+        if item is not None:
+            h, w = frame.shape[:2]
+            px, py, pr = cfg.card_tap_anywhere
+            x, y = humanize.random_point_in_circle(px * w, py * h, pr * w)
+            if item.x <= x <= item.x + item.w and item.y <= y <= item.y + item.h:
+                # punkt wypadł na karcie - kliknij nad nią
+                x, y = humanize.random_point_in_circle(w / 2, item.y / 2, 0.08 * w)
+            return x, y
         if cfg.idle_target == "just_loot":
             button = screens.find_just_loot(frame)
             if button is not None:
