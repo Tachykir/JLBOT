@@ -224,34 +224,26 @@ uruchomieniu aplikacji liczy od zera.
 python main_window.py
 ```
 
-Okno pozwala na:
+Okno:
 
-- **Dodawanie instancji** przyciskiem "+ Dodaj" albo automatyczne
-  wykrycie wszystkich podłączonych urządzeń ADB przyciskiem
-  "🔍 Auto-wykryj z adb devices".
-- **Podgląd na żywo** wybranej instancji — po starcie bota obraz
-  odświeża się automatycznie z nałożoną wizualizacją detekcji
-  (zielone obwódki = wykryte kulki, czerwona = punkt DROP). Możesz też
-  pobrać pojedynczy zrzut ręcznie przyciskiem "⟳ Odśwież teraz"
-  (przydatne, gdy bot jest jeszcze zatrzymany).
-- **Ustawianie `idle_point` klikiem** — wciśnij "🎯 Kliknij: ustaw
-  idle_point", potem kliknij bezpośrednio na obrazie w miejscu, gdzie
-  bot ma klikać czekając na grę.
-- **Ustawianie `board_region` przeciągnięciem** — wciśnij
-  "▭ Przeciągnij: ustaw board_region", potem przeciągnij prostokąt na
-  obrazie obejmujący całą planszę gry.
-- **Edycję pozostałych parametrów** (drag_duration_ms, interwały itd.)
-  w panelu po prawej — zmiany stosują się natychmiast, także do już
-  uruchomionej instancji.
-- **Start / Stop / Pauza** dla pojedynczej instancji albo wszystkich
-  naraz.
-- **Zapis / wczytanie configu** do/z pliku JSON. Przy starcie GUI
-  automatycznie wczytuje `config.json` leżący obok aplikacji (albo obok
-  `main_window.py`), jeśli istnieje (ten sam format co
-  `config.example.json`, więc GUI i CLI (`manager.py`) są w pełni
-  kompatybilne — możesz skonfigurować w GUI, zapisać, i potem odpalać
-  bez GUI przez `manager.py`, albo odwrotnie).
-- **Logi na żywo** wszystkich instancji na dole okna.
+- **Pasek narzędzi** (u góry): wczytaj / zapisz konfigurację (Ctrl+O,
+  Ctrl+S), wykryj emulatory z `adb devices`, dodaj / usuń instancję,
+  start / stop wszystkich. Niezapisane zmiany oznacza gwiazdka w tytule,
+  a przy zamykaniu okno pyta o zapis. Przy starcie wczytuje się
+  `config.json` leżący obok programu.
+- **Instancje** (po lewej): lista ze statusem w kolorze (czekanie,
+  zbieranie, minigra, przerwa w harmonogramie…), a pod nią Start / Pauza /
+  Stop / Restart gry dla zaznaczonej instancji.
+- **Podgląd** (środek): obraz na żywo z zaznaczonym tym, co bot widzi
+  (legenda nad obrazem). Przyciski pod spodem: wskazanie punktu
+  awaryjnego klikiem, zaznaczenie obszaru planszy przeciągnięciem,
+  „Cały ekran” (zalecane), odświeżenie podglądu, gdy bot stoi.
+- **Ustawienia** (po prawej), w zakładkach z opisami pod polami:
+  Ogólne (urządzenie, pakiet gry, klikanie JUST LOOT, obszar planszy),
+  Tempo (zakresy losowania, ludzki ruch), Minigry, Paczki, Plan
+  (harmonogram) i Ochrona (automatyczne restarty gry). Zmiany działają
+  od razu, także na uruchomionym bocie. Pod zakładkami — statystyki.
+- **Logi** (na dole): z przełącznikiem auto-przewijania i czyszczeniem.
 
 Każda instancja działa we własnym wątku wewnątrz jednego procesu GUI
 (a nie osobnym procesie jak w `manager.py`) — to celowe uproszczenie,

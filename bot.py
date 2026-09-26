@@ -88,9 +88,9 @@ class BotConfig:
     # Region (x1, y1, x2, y2) planszy gry na ekranie - ogranicza
     # wykrywanie do obszaru czarnego prostokąta z kulkami, żeby
     # uniknąć fałszywych trafień gdzie indziej w UI. Jeśli None,
-    # przeszukiwany jest cały ekran.
-    # Domyślna wartość skalibrowana dla Just Loot.
-    board_region: tuple[int, int, int, int] | None = (29, 333, 861, 1466)
+    # przeszukiwany jest cały ekran (domyślnie - wykrywanie działa na
+    # całym ekranie i nie zależy od rozdzielczości).
+    board_region: tuple[int, int, int, int] | None = None
 
     # Czas trwania gestu przeciągania kulki (ms). Losowany zakres.
     drag_duration_ms: RandomRange = field(default_factory=lambda: RandomRange(800, 1300))
@@ -391,6 +391,7 @@ class DustMineBot:
         # ostatnia znana pozycja DROP (z poprzednich plansz) - pomaga
         # rozpoznać planszę, na której kulki mocno zasłaniają DROP
         self._last_drop: vision.Circle | None = None
+        self._idle_point_warned = False
         self._last_decision: Decision | None = None
 
         # Watchdog czarnego ekranu: znacznik czasu (time.monotonic()),
@@ -760,14 +761,16 @@ class DustMineBot:
 
             now = time.monotonic()
             if not self._paused and now - last_click >= next_click_delay:
-                self.adb.tap(*self._idle_click_point(frame))
+                point = self._idle_click_point(frame)
+                if point is not None:
+                    self.adb.tap(*point)
                 last_click = now
                 next_click_delay = cfg.idle_click_interval.sample()
 
             self._sleep(cfg.idle_poll_interval)
         return None
 
-    def _idle_click_point(self, frame: np.ndarray) -> tuple[int, int]:
+    def _idle_click_point(self, frame: np.ndarray) -> tuple[int, int] | None:
         """Punkt kliknięcia w trybie idle - patrz BotConfig.idle_target."""
         cfg = self.config
         if cfg.idle_target == "just_loot":
@@ -778,7 +781,16 @@ class DustMineBot:
             if proceed is not None:
                 cx, cy = proceed.center
                 return humanize.random_point_in_circle(cx, cy, min(proceed.w, proceed.h) * 0.3)
-        return self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
+        x, y = self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
+        h, w = frame.shape[:2]
+        if not (0 <= x < w and 0 <= y < h):
+            # punkt z configu dla innej rozdzielczości - nie klikaj w próżnię
+            if not self._idle_point_warned:
+                logger.warning("[%s] punkt awaryjny (%d,%d) leży poza ekranem %dx%d - ustaw go na podglądzie",
+                               cfg.name, cfg.idle_point[0], cfg.idle_point[1], w, h)
+                self._idle_point_warned = True
+            return None
+        return x, y
 
     # ------------------------------------------------------------------ #
     @staticmethod

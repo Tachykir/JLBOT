@@ -26,12 +26,12 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, Slot, QTime
-from PySide6.QtGui import QColor, QTextCursor
+from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout,
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QGridLayout,
     QListWidget, QListWidgetItem, QPushButton, QLabel, QLineEdit, QSpinBox,
-    QDoubleSpinBox, QTextEdit, QSplitter, QGroupBox, QMessageBox, QFileDialog,
-    QTimeEdit, QCheckBox, QDialog, QDialogButtonBox,
+    QDoubleSpinBox, QPlainTextEdit, QSplitter, QGroupBox, QMessageBox, QFileDialog,
+    QTimeEdit, QCheckBox, QDialog, QDialogButtonBox, QScrollArea, QFrame, QTabWidget,
 )
 
 from bot import BotConfig, BotStats, RandomRange, ScheduleWindow
@@ -62,6 +62,13 @@ STATUS_COLORS = {
     "stopped": "#777777",
     "error": "#d9534f",
 }
+
+# (pole BotStats, etykieta) - panel statystyk
+_STAT_FIELDS = [
+    ("cycles", "Plansze"), ("balls_collected", "Kulki"), ("drags", "Przeciągnięcia"),
+    ("debris_games", "Depth Collapse"), ("fishing_skipped", "Fishing pominięte"), ("defeats", "Porażki"),
+    ("pack_rounds", "Rundy paczek"), ("restarts", "Restarty gry"), ("errors", "Błędy"),
+]
 
 STATUS_LABELS_PL = {
     "connecting": "łączenie...",
@@ -131,6 +138,7 @@ class ScheduleEditorDialog(QDialog):
         body.addLayout(left, stretch=1)
 
         self.list_widget = QListWidget()
+        self.list_widget.setWordWrap(True)
         self.list_widget.currentRowChanged.connect(self._on_row_changed)
         left.addWidget(self.list_widget)
 
@@ -183,9 +191,9 @@ class ScheduleEditorDialog(QDialog):
         session_form = QFormLayout()
         right.addLayout(session_form)
         self.field_session_min, self.field_session_max, session_row = self._minmax_row(5, 720, 5, 0)
-        session_form.addRow("Sesja (min):", session_row)
+        session_form.addRow("Długość sesji:", session_row)
         self.field_break_min, self.field_break_max, break_row = self._minmax_row(1, 720, 5, 0)
-        session_form.addRow("Przerwa (min):", break_row)
+        session_form.addRow("Długość przerwy:", break_row)
 
         self.field_jitter = QSpinBox()
         self.field_jitter.setRange(0, 120)
@@ -201,7 +209,7 @@ class ScheduleEditorDialog(QDialog):
 
         # --- ustawienia wspólne dla instancji --- #
         limit_row = QHBoxLayout()
-        self.check_daily_limit = QCheckBox("Limit dzienny (godz.):")
+        self.check_daily_limit = QCheckBox("Limit gry dziennie:")
         self.check_daily_limit.setToolTip("Losowany raz na dzień z zakresu. Po wyczerpaniu\n"
                                           "bot jest offline do północy.")
         self.field_limit_min = QDoubleSpinBox(); self.field_limit_min.setRange(0.5, 24.0); self.field_limit_min.setSingleStep(0.5)
@@ -212,8 +220,9 @@ class ScheduleEditorDialog(QDialog):
         self.check_daily_limit.setChecked(daily_limit_hours is not None)
         self.check_daily_limit.toggled.connect(self._update_limit_enabled)
         limit_row.addWidget(self.check_daily_limit)
-        limit_row.addWidget(QLabel("min")); limit_row.addWidget(self.field_limit_min)
-        limit_row.addWidget(QLabel("max")); limit_row.addWidget(self.field_limit_max)
+        self.field_limit_min.setSuffix(" h"); self.field_limit_max.setSuffix(" h")
+        limit_row.addWidget(QLabel("od")); limit_row.addWidget(self.field_limit_min)
+        limit_row.addWidget(QLabel("do")); limit_row.addWidget(self.field_limit_max)
         limit_row.addStretch(1)
         root.addLayout(limit_row)
         self._update_limit_enabled()
@@ -239,12 +248,13 @@ class ScheduleEditorDialog(QDialog):
         spin_min = QDoubleSpinBox(); spin_min.setRange(minimum, maximum); spin_min.setSingleStep(step)
         spin_max = QDoubleSpinBox(); spin_max.setRange(minimum, maximum); spin_max.setSingleStep(step)
         spin_min.setDecimals(decimals); spin_max.setDecimals(decimals)
+        spin_min.setSuffix(" min"); spin_max.setSuffix(" min")
         spin_min.valueChanged.connect(self._apply_current_window)
         spin_max.valueChanged.connect(self._apply_current_window)
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(QLabel("min")); row.addWidget(spin_min)
-        row.addWidget(QLabel("max")); row.addWidget(spin_max)
+        row.addWidget(QLabel("od")); row.addWidget(spin_min, 1)
+        row.addWidget(QLabel("do")); row.addWidget(spin_max, 1)
         container = QWidget(); container.setLayout(row)
         return spin_min, spin_max, container
 
@@ -385,297 +395,428 @@ class ScheduleEditorDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Dust Mine Bot")
         self.resize(1280, 820)
+        self.setMinimumSize(1000, 640)
 
         self.instances: dict[str, InstanceEntry] = {}
         self.selected_name: str | None = None
         self._config_path: Path | None = None
+        self._dirty = False
 
         self._build_ui()
+        self._update_title()
 
         path = default_config_path()
         if path.exists():
             self._load_config_file(path)
 
     # ------------------------------------------------------------------ #
+    # Budowa interfejsu
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _hint(text: str) -> QLabel:
+        """Szary, zawijany opis pod polami - tłumaczy, co robi ustawienie."""
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setStyleSheet("color: #888; font-size: 11px;")
+        return label
+
+    @staticmethod
+    def _form() -> QFormLayout:
+        form = QFormLayout()
+        # długie etykiety przechodzą nad pole zamiast się ucinać
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignLeft)
+        return form
+
+    def _scroll_tab(self, content: QWidget) -> QScrollArea:
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        area.setWidget(content)
+        return area
+
+    def _range_row(self, minimum, maximum, step, suffix, decimals=2):
+        """Pole zakresu "od ... do ..." - bot losuje wartość z przedziału."""
+        spin_min = QDoubleSpinBox(); spin_max = QDoubleSpinBox()
+        for spin in (spin_min, spin_max):
+            spin.setRange(minimum, maximum)
+            spin.setSingleStep(step)
+            spin.setDecimals(decimals)
+            spin.setSuffix(suffix)
+            spin.valueChanged.connect(self._apply_config_fields)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("od")); row.addWidget(spin_min, 1)
+        row.addWidget(QLabel("do")); row.addWidget(spin_max, 1)
+        container = QWidget(); container.setLayout(row)
+        return spin_min, spin_max, container
+
     def _build_ui(self) -> None:
+        self._build_toolbar()
+
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
+        root.setContentsMargins(6, 6, 6, 6)
 
-        top_split = QSplitter(Qt.Horizontal)
-        root.addWidget(top_split, stretch=4)
+        vsplit = QSplitter(Qt.Vertical)
+        root.addWidget(vsplit)
 
-        # --- lewa kolumna: lista instancji + przyciski globalne ---
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(4, 4, 4, 4)
+        top = QSplitter(Qt.Horizontal)
+        top.addWidget(self._build_instances_panel())
+        top.addWidget(self._build_preview_panel())
+        top.addWidget(self._build_settings_panel())
+        top.setStretchFactor(0, 0)
+        top.setStretchFactor(1, 1)
+        top.setStretchFactor(2, 0)
+        top.setSizes([250, 520, 440])
+        vsplit.addWidget(top)
+        vsplit.addWidget(self._build_log_panel())
+        vsplit.setStretchFactor(0, 4)
+        vsplit.setStretchFactor(1, 1)
+        vsplit.setSizes([620, 160])
 
-        left_layout.addWidget(QLabel("<b>Instancje</b>"))
+        self.statusBar().showMessage("Wybierz instancję z listy albo wykryj emulatory przyciskiem na pasku narzędzi.")
+        self._set_config_form_enabled(False)
+
+    def _build_toolbar(self) -> None:
+        tb = self.addToolBar("Główne")
+        tb.setMovable(False)
+        tb.setToolButtonStyle(Qt.ToolButtonTextOnly)
+
+        def action(text, slot, tip, shortcut=None):
+            act = QAction(text, self)
+            act.setToolTip(tip)
+            act.setStatusTip(tip)
+            act.triggered.connect(slot)
+            if shortcut:
+                act.setShortcut(QKeySequence(shortcut))
+            tb.addAction(act)
+            return act
+
+        action("📂 Wczytaj", self._load_config_dialog, "Wczytaj konfigurację z pliku JSON", "Ctrl+O")
+        action("💾 Zapisz", self._save_config, "Zapisz konfigurację (Ctrl+S)", "Ctrl+S")
+        action("Zapisz jako…", self._save_config_dialog, "Zapisz konfigurację do wybranego pliku")
+        tb.addSeparator()
+        action("🔍 Wykryj emulatory", self._autodetect_instances,
+               "Dodaj instancje dla wszystkich urządzeń widocznych w `adb devices`")
+        action("➕ Dodaj", self._add_instance_dialog, "Dodaj pustą instancję (ADB serial ustawisz w zakładce Ogólne)")
+        action("🗑 Usuń", self._remove_selected_instance, "Usuń zaznaczoną instancję")
+        tb.addSeparator()
+        action("▶▶ Start wszystkich", self._start_all, "Uruchom bota na wszystkich instancjach")
+        action("■■ Stop wszystkich", self._stop_all, "Zatrzymaj bota na wszystkich instancjach")
+
+    def _build_instances_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setMinimumWidth(220)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        layout.addWidget(QLabel("<b>Instancje</b>"))
         self.instance_list = QListWidget()
+        self.instance_list.setWordWrap(True)
+        self.instance_list.setSpacing(2)
+        self.instance_list.setStyleSheet("QListWidget::item { padding: 4px; }")
         self.instance_list.currentItemChanged.connect(self._on_selection_changed)
-        left_layout.addWidget(self.instance_list, stretch=1)
+        layout.addWidget(self.instance_list, stretch=1)
 
-        btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("+ Dodaj")
-        self.btn_add.clicked.connect(self._add_instance_dialog)
-        self.btn_remove = QPushButton("- Usuń")
-        self.btn_remove.clicked.connect(self._remove_selected_instance)
-        btn_row.addWidget(self.btn_add)
-        btn_row.addWidget(self.btn_remove)
-        left_layout.addLayout(btn_row)
-
-        self.btn_autodetect = QPushButton("🔍 Auto-wykryj z adb devices")
-        self.btn_autodetect.clicked.connect(self._autodetect_instances)
-        left_layout.addWidget(self.btn_autodetect)
-
-        start_stop_row = QHBoxLayout()
+        box = QGroupBox("Wybrana instancja")
+        grid = QGridLayout(box)
         self.btn_start = QPushButton("▶ Start")
+        self.btn_start.setToolTip("Uruchom bota na tej instancji")
         self.btn_start.clicked.connect(self._start_selected)
-        self.btn_stop = QPushButton("■ Stop")
-        self.btn_stop.clicked.connect(self._stop_selected)
         self.btn_pause = QPushButton("⏸ Pauza")
+        self.btn_pause.setToolTip("Wstrzymaj/wznów klikanie (podgląd dalej się odświeża)")
         self.btn_pause.clicked.connect(self._toggle_pause_selected)
+        self.btn_stop = QPushButton("■ Stop")
+        self.btn_stop.setToolTip("Zatrzymaj bota na tej instancji")
+        self.btn_stop.clicked.connect(self._stop_selected)
         self.btn_restart_app = QPushButton("🔄 Restart gry")
+        self.btn_restart_app.setToolTip("Zamknij i uruchom grę ponownie (wymaga pakietu gry)")
         self.btn_restart_app.clicked.connect(self._restart_app_selected)
-        start_stop_row.addWidget(self.btn_start)
-        start_stop_row.addWidget(self.btn_pause)
-        start_stop_row.addWidget(self.btn_stop)
-        start_stop_row.addWidget(self.btn_restart_app)
-        left_layout.addLayout(start_stop_row)
+        for i, b in enumerate((self.btn_start, self.btn_pause, self.btn_stop, self.btn_restart_app)):
+            b.setMinimumHeight(30)
+            grid.addWidget(b, i // 2, i % 2)
+        layout.addWidget(box)
+        return panel
 
-        global_row = QHBoxLayout()
-        self.btn_start_all = QPushButton("▶▶ Start wszystkie")
-        self.btn_start_all.clicked.connect(self._start_all)
-        self.btn_stop_all = QPushButton("■■ Stop wszystkie")
-        self.btn_stop_all.clicked.connect(self._stop_all)
-        global_row.addWidget(self.btn_start_all)
-        global_row.addWidget(self.btn_stop_all)
-        left_layout.addLayout(global_row)
+    def _build_preview_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 4, 4, 4)
 
-        file_row = QHBoxLayout()
-        self.btn_load = QPushButton("Wczytaj config")
-        self.btn_load.clicked.connect(self._load_config_dialog)
-        self.btn_save = QPushButton("Zapisz config")
-        self.btn_save.clicked.connect(self._save_config_dialog)
-        file_row.addWidget(self.btn_load)
-        file_row.addWidget(self.btn_save)
-        left_layout.addLayout(file_row)
-
-        top_split.addWidget(left)
-
-        # --- środek: podgląd na żywo ---
-        mid = QWidget()
-        mid_layout = QVBoxLayout(mid)
-        mid_layout.setContentsMargins(4, 4, 4, 4)
-
-        preview_header = QHBoxLayout()
-        self.preview_title = QLabel("<b>Podgląd</b> - brak wybranej instancji")
-        preview_header.addWidget(self.preview_title, stretch=1)
-        mid_layout.addLayout(preview_header)
+        self.preview_title = QLabel("<b>Podgląd</b> – wybierz instancję")
+        layout.addWidget(self.preview_title)
+        legend = QLabel(
+            "<span style='color:#e33'>●</span> DROP &nbsp; "
+            "<span style='color:#3c3'>●</span> kulki &nbsp; "
+            "<span style='color:#f90'>●</span> kafelki &nbsp; "
+            "<span style='color:#0cf'>●</span> CAST &nbsp; "
+            "<span style='color:#f0f'>●</span> punkt awaryjny &nbsp; "
+            "<span style='color:#dd0'>●</span> obszar planszy"
+        )
+        legend.setWordWrap(True)
+        legend.setStyleSheet("font-size: 11px;")
+        layout.addWidget(legend)
 
         self.preview = PreviewWidget()
         self.preview.idle_point_picked.connect(self._on_idle_point_picked)
         self.preview.board_region_picked.connect(self._on_board_region_picked)
-        mid_layout.addWidget(self.preview, stretch=1)
+        layout.addWidget(self.preview, stretch=1)
 
-        edit_row = QHBoxLayout()
-        self.btn_edit_idle = QPushButton("🎯 Kliknij: ustaw idle_point")
+        grid = QGridLayout()
+        self.btn_edit_idle = QPushButton("🎯 Wskaż punkt awaryjny")
+        self.btn_edit_idle.setToolTip("Kliknij potem na podglądzie - tam bot kliknie, gdy nie widzi JUST LOOT")
         self.btn_edit_idle.setCheckable(True)
         self.btn_edit_idle.clicked.connect(self._toggle_edit_idle)
-        self.btn_edit_region = QPushButton("▭ Przeciągnij: ustaw board_region")
+        self.btn_edit_region = QPushButton("▭ Zaznacz obszar planszy")
+        self.btn_edit_region.setToolTip("Przeciągnij potem prostokąt na podglądzie - tylko tam bot szuka kulek")
         self.btn_edit_region.setCheckable(True)
         self.btn_edit_region.clicked.connect(self._toggle_edit_region)
-        self.btn_refresh_preview = QPushButton("⟳ Odśwież teraz")
+        self.btn_clear_region = QPushButton("⤢ Cały ekran")
+        self.btn_clear_region.setToolTip("Usuń obszar planszy - bot szuka na całym ekranie (zalecane)")
+        self.btn_clear_region.clicked.connect(self._clear_board_region)
+        self.btn_refresh_preview = QPushButton("⟳ Odśwież podgląd")
+        self.btn_refresh_preview.setToolTip("Pobierz jeden zrzut ekranu (gdy bot jest zatrzymany)")
         self.btn_refresh_preview.clicked.connect(self._refresh_preview_once)
-        edit_row.addWidget(self.btn_edit_idle)
-        edit_row.addWidget(self.btn_edit_region)
-        edit_row.addWidget(self.btn_refresh_preview)
-        mid_layout.addLayout(edit_row)
+        grid.addWidget(self.btn_edit_idle, 0, 0)
+        grid.addWidget(self.btn_edit_region, 0, 1)
+        grid.addWidget(self.btn_clear_region, 1, 0)
+        grid.addWidget(self.btn_refresh_preview, 1, 1)
+        layout.addLayout(grid)
+        return panel
 
-        top_split.addWidget(mid)
+    def _build_settings_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setMinimumWidth(380)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.addWidget(QLabel("<b>Ustawienia wybranej instancji</b>"))
 
-        # --- prawa kolumna: panel konfiguracji instancji ---
-        right = QGroupBox("Konfiguracja instancji")
-        form = QFormLayout(right)
+        self.tabs = QTabWidget()
+        self.tabs.setUsesScrollButtons(False)  # wszystkie zakładki zawsze widoczne
+        self.tabs.addTab(self._scroll_tab(self._tab_general()), "Ogólne")
+        self.tabs.addTab(self._scroll_tab(self._tab_tempo()), "Tempo")
+        self.tabs.addTab(self._scroll_tab(self._tab_minigames()), "Minigry")
+        self.tabs.addTab(self._scroll_tab(self._tab_packs()), "Paczki")
+        self.tabs.addTab(self._scroll_tab(self._tab_schedule()), "Plan")
+        self.tabs.addTab(self._scroll_tab(self._tab_protection()), "Ochrona")
+        self.tabs.setTabToolTip(4, "Harmonogram: okna gry, sesje, przerwy, limit dzienny")
+        self.tabs.setTabToolTip(5, "Automatyczny restart gry przy problemach")
+        layout.addWidget(self.tabs, stretch=1)
+
+        stats_box = QGroupBox("Statystyki")
+        grid = QGridLayout(stats_box)
+        self.stat_labels: dict[str, QLabel] = {}
+        for i, (key, title) in enumerate(_STAT_FIELDS):
+            name = QLabel(title + ":")
+            name.setStyleSheet("color: #888;")
+            value = QLabel("0")
+            value.setStyleSheet("font-weight: bold;")
+            grid.addWidget(name, i // 3, (i % 3) * 2)
+            grid.addWidget(value, i // 3, (i % 3) * 2 + 1)
+            self.stat_labels[key] = value
+        layout.addWidget(stats_box)
+        return panel
+
+    def _tab_general(self) -> QWidget:
+        w = QWidget()
+        form = self._form()
+        w.setLayout(form)
 
         self.field_name = QLineEdit()
+        self.field_name.setToolTip("Nazwa widoczna na liście i w logach")
         self.field_name.editingFinished.connect(self._apply_config_fields)
         form.addRow("Nazwa:", self.field_name)
 
         self.field_serial = QLineEdit()
+        self.field_serial.setPlaceholderText("np. emulator-5554 albo 127.0.0.1:5555")
+        self.field_serial.setToolTip("Identyfikator urządzenia z `adb devices`")
         self.field_serial.editingFinished.connect(self._apply_config_fields)
-        form.addRow("ADB serial:", self.field_serial)
+        form.addRow("Urządzenie (ADB):", self.field_serial)
 
         self.field_game_package = QLineEdit()
-        self.field_game_package.setPlaceholderText("np. com.timhilgenstoehlerexpo.justlootapp")
-        self.field_game_package.setToolTip(
-            "Nazwa pakietu gry - potrzebna do restartu gry, watchdogów\n"
-            "(czarny ekran, wypadnięcie z gry) i zamykania gry na przerwę.\n"
-            "Puste = te funkcje są wyłączone."
-        )
+        self.field_game_package.setPlaceholderText("com.timhilgenstoehlerexpo.justlootapp")
+        self.field_game_package.setToolTip("Nazwa pakietu gry - potrzebna do restartu gry i ochrony (zakładka Ochrona)")
         self.field_game_package.editingFinished.connect(self._apply_config_fields)
-        form.addRow("game_package:", self.field_game_package)
+        form.addRow("Pakiet gry:", self.field_game_package)
 
         self.field_game_activity = QLineEdit()
-        self.field_game_activity.setPlaceholderText("opcjonalnie, np. pakiet/.MainActivity")
+        self.field_game_activity.setPlaceholderText("zwykle puste")
+        self.field_game_activity.setToolTip("Opcjonalna activity do uruchamiania gry, np. pakiet/.MainActivity")
         self.field_game_activity.editingFinished.connect(self._apply_config_fields)
-        form.addRow("game_activity:", self.field_game_activity)
+        form.addRow("Activity (opcjonalnie):", self.field_game_activity)
 
-        self.field_idle_x = QSpinBox(); self.field_idle_x.setRange(0, 9999)
-        self.field_idle_y = QSpinBox(); self.field_idle_y.setRange(0, 9999)
-        self.field_idle_x.valueChanged.connect(self._apply_config_fields)
-        self.field_idle_y.valueChanged.connect(self._apply_config_fields)
-        idle_row = QHBoxLayout()
-        idle_row.addWidget(self.field_idle_x)
-        idle_row.addWidget(self.field_idle_y)
-        idle_container = QWidget(); idle_container.setLayout(idle_row)
-        form.addRow("idle_point (x, y):", idle_container)
+        form.addRow(self._section("Klikanie w trybie czekania"))
+        self.field_idle_just_loot = QCheckBox("Klikaj JUST LOOT (bot sam go znajduje)")
+        self.field_idle_just_loot.setToolTip(
+            "Bot na każdej klatce szuka przycisku JUST LOOT, a po walce PROCEED.\n"
+            "Punkt awaryjny jest używany tylko, gdy nie widać żadnego z nich.")
+        self.field_idle_just_loot.toggled.connect(self._apply_config_fields)
+        form.addRow(self.field_idle_just_loot)
+
+        self.field_idle_x = QSpinBox(); self.field_idle_x.setRange(0, 9999); self.field_idle_x.setPrefix("x ")
+        self.field_idle_y = QSpinBox(); self.field_idle_y.setRange(0, 9999); self.field_idle_y.setPrefix("y ")
+        for f in (self.field_idle_x, self.field_idle_y):
+            f.valueChanged.connect(self._apply_config_fields)
+        row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.field_idle_x, 1); row.addWidget(self.field_idle_y, 1)
+        box = QWidget(); box.setLayout(row)
+        form.addRow("Punkt awaryjny:", box)
 
         self.field_idle_radius = QDoubleSpinBox()
         self.field_idle_radius.setRange(0.0, 300.0)
         self.field_idle_radius.setSingleStep(5.0)
+        self.field_idle_radius.setSuffix(" px")
+        self.field_idle_radius.setToolTip("Punkt awaryjny jest losowany w kole o tym promieniu")
         self.field_idle_radius.valueChanged.connect(self._apply_config_fields)
-        form.addRow("idle_point_radius (px):", self.field_idle_radius)
+        form.addRow("Rozrzut punktu awaryjnego:", self.field_idle_radius)
 
-        self.field_idle_just_loot = QCheckBox("klikaj JUST LOOT (wykrywany sam)")
-        self.field_idle_just_loot.setToolTip(
-            "Zaznaczone: bot sam znajduje przycisk JUST LOOT na dole ekranu (a po\n"
-            "walce PROCEED); idle_point tylko awaryjnie, gdy nic nie widać.\n"
-            "Odznaczone: zawsze klika idle_point."
-        )
-        self.field_idle_just_loot.toggled.connect(self._apply_config_fields)
-        form.addRow("Klikanie idle:", self.field_idle_just_loot)
-
-        self.field_region_x1 = QSpinBox(); self.field_region_x1.setRange(0, 9999)
-        self.field_region_y1 = QSpinBox(); self.field_region_y1.setRange(0, 9999)
-        self.field_region_x2 = QSpinBox(); self.field_region_x2.setRange(0, 9999)
-        self.field_region_y2 = QSpinBox(); self.field_region_y2.setRange(0, 9999)
-        for f in (self.field_region_x1, self.field_region_y1,
-                  self.field_region_x2, self.field_region_y2):
+        form.addRow(self._section("Obszar planszy"))
+        form.addRow(self._hint("Gdzie szukać kulek. Wszystkie zera = cały ekran (zalecane - wykrywanie "
+                               "działa na całym ekranie). Obszar ustawisz też przyciskiem pod podglądem."))
+        self.field_region_x1 = QSpinBox(); self.field_region_y1 = QSpinBox()
+        self.field_region_x2 = QSpinBox(); self.field_region_y2 = QSpinBox()
+        grid = QGridLayout(); grid.setContentsMargins(0, 0, 0, 0)
+        for i, (label, f) in enumerate((("lewo", self.field_region_x1), ("góra", self.field_region_y1),
+                                         ("prawo", self.field_region_x2), ("dół", self.field_region_y2))):
+            f.setRange(0, 9999)
             f.valueChanged.connect(self._apply_config_fields)
-        region_row1 = QHBoxLayout()
-        region_row1.addWidget(QLabel("x1")); region_row1.addWidget(self.field_region_x1)
-        region_row1.addWidget(QLabel("y1")); region_row1.addWidget(self.field_region_y1)
-        region_row2 = QHBoxLayout()
-        region_row2.addWidget(QLabel("x2")); region_row2.addWidget(self.field_region_x2)
-        region_row2.addWidget(QLabel("y2")); region_row2.addWidget(self.field_region_y2)
-        region_container = QWidget()
-        region_v = QVBoxLayout(region_container)
-        region_v.setContentsMargins(0, 0, 0, 0)
-        region_v.addLayout(region_row1)
-        region_v.addLayout(region_row2)
-        form.addRow("board_region:", region_container)
+            grid.addWidget(QLabel(label), i // 2, (i % 2) * 2)
+            grid.addWidget(f, i // 2, (i % 2) * 2 + 1)
+        box = QWidget(); box.setLayout(grid)
+        form.addRow(box)
+        return w
 
-        # --- Pola zakresów (min/max) zamiast pojedynczych wartości -
-        # bot losuje z tego przedziału za każdym razem, żeby uniknąć
-        # mechanicznego, identycznego rytmu klikania/przeciągania. ---
-        def _make_range_row(minimum, maximum, step, decimals=None):
-            spin_min = QDoubleSpinBox(); spin_min.setRange(minimum, maximum); spin_min.setSingleStep(step)
-            spin_max = QDoubleSpinBox(); spin_max.setRange(minimum, maximum); spin_max.setSingleStep(step)
-            if decimals is not None:
-                spin_min.setDecimals(decimals)
-                spin_max.setDecimals(decimals)
-            spin_min.valueChanged.connect(self._apply_config_fields)
-            spin_max.valueChanged.connect(self._apply_config_fields)
-            row = QHBoxLayout()
-            row.addWidget(QLabel("min")); row.addWidget(spin_min)
-            row.addWidget(QLabel("max")); row.addWidget(spin_max)
-            container = QWidget(); container.setLayout(row)
-            return spin_min, spin_max, container
+    def _tab_tempo(self) -> QWidget:
+        w = QWidget()
+        form = self._form()
+        w.setLayout(form)
+        form.addRow(self._hint("Każda wartość jest losowana z zakresu \"od–do\", żeby rytm nie był "
+                               "mechaniczny. Takie same \"od\" i \"do\" = stała wartość."))
 
-        self.field_idle_interval_min, self.field_idle_interval_max, idle_interval_container = \
-            _make_range_row(0.1, 30.0, 0.1)
-        form.addRow("idle_click_interval (s):", idle_interval_container)
+        self.field_idle_interval_min, self.field_idle_interval_max, box = self._range_row(0.1, 30.0, 0.1, " s")
+        form.addRow("Odstęp między kliknięciami:", box)
+        self.field_drag_ms_min, self.field_drag_ms_max, box = self._range_row(50, 5000, 50, " ms", decimals=0)
+        form.addRow("Czas przeciągania kulki:", box)
+        self.field_between_drags_min, self.field_between_drags_max, box = self._range_row(0.0, 10.0, 0.1, " s")
+        form.addRow("Przerwa między przeciągnięciami:", box)
 
-        self.field_drag_ms_min, self.field_drag_ms_max, drag_ms_container = \
-            _make_range_row(50, 5000, 50, decimals=0)
-        form.addRow("drag_duration_ms:", drag_ms_container)
-
-        self.field_human_drag = QCheckBox("ludzki ruch (krzywa, losowy chwyt i kolejność)")
-        self.field_human_drag.setToolTip(
-            "Zaznaczone: przeciąganie po losowej krzywej z przyspieszaniem i zwalnianiem,\n"
-            "łapanie kulki w losowym miejscu i losowa kolejność zbierania.\n"
-            "Odznaczone: prosta linia środek-środek, kulki po kolei."
-        )
+        form.addRow(self._section("Styl ruchu"))
+        self.field_human_drag = QCheckBox("Ludzki ruch przy przeciąganiu")
         self.field_human_drag.toggled.connect(self._apply_config_fields)
-        form.addRow("Przeciąganie:", self.field_human_drag)
+        form.addRow(self.field_human_drag)
+        form.addRow(self._hint("Palec jedzie po losowej krzywej, przyspiesza i zwalnia, łapie kulkę w "
+                               "losowym miejscu, a kulki zbiera w losowej kolejności. Wyłączone: "
+                               "prosta linia środek–środek, kulki po kolei."))
+        return w
 
-        self.field_play_debris = QCheckBox("Depth Collapse: klikaj kafelki")
+    def _tab_minigames(self) -> QWidget:
+        w = QWidget()
+        form = self._form()
+        w.setLayout(form)
+
+        self.field_play_debris = QCheckBox("Depth Collapse – klikaj wszystkie kafelki")
         self.field_play_debris.toggled.connect(self._apply_config_fields)
-        self.field_skip_fishing = QCheckBox("Fishing Hole: od razu CAST (pomiń)")
+        form.addRow(self.field_play_debris)
+        form.addRow(self._hint("Brązowe kafelki „TAP” - bot klika wszystkie przed końcem czasu."))
+        self.field_skip_fishing = QCheckBox("Fishing Hole – od razu CAST (pomiń minigrę)")
         self.field_skip_fishing.toggled.connect(self._apply_config_fields)
-        minigames = QWidget()
-        minigames_layout = QVBoxLayout(minigames)
-        minigames_layout.setContentsMargins(0, 0, 0, 0)
-        minigames_layout.addWidget(self.field_play_debris)
-        minigames_layout.addWidget(self.field_skip_fishing)
-        form.addRow("Minigry:", minigames)
+        form.addRow(self.field_skip_fishing)
+        form.addRow(self._hint("Bot nie celuje wskaźnikiem, tylko od razu klika CAST, co kończy minigrę."))
+        return w
 
-        self.field_auto_packs = QCheckBox("otwieraj paczki, gdy gear za słaby")
-        self.field_auto_packs.setToolTip(
-            "Co N minut sprawdza w Profile, czy wrogowie mają bonus (gear za słaby\n"
-            "na wybraną głębokość), albo po serii porażek - wtedy w Craft otwiera\n"
-            "maksymalną liczbę paczek, aż gear wystarczy albo skończy się pył."
-        )
+    def _tab_packs(self) -> QWidget:
+        w = QWidget()
+        form = self._form()
+        w.setLayout(form)
+        self.field_auto_packs = QCheckBox("Otwieraj paczki, gdy gear jest za słaby")
         self.field_auto_packs.toggled.connect(self._apply_config_fields)
-        self.field_packs_defeats = QSpinBox(); self.field_packs_defeats.setRange(1, 50)
-        self.field_packs_defeats.setSuffix(" porażek z rzędu")
-        self.field_packs_defeats.valueChanged.connect(self._apply_config_fields)
+        form.addRow(self.field_auto_packs)
+        form.addRow(self._hint("Bot sprawdza w Profile, czy wrogowie są „stronger” (gear za słaby na "
+                               "głębokość), albo reaguje na serię porażek - wtedy w Craft otwiera "
+                               "maksymalną liczbę paczek, aż gear wystarczy albo skończy się pył."))
         self.field_packs_interval = QSpinBox(); self.field_packs_interval.setRange(1, 1440)
-        self.field_packs_interval.setPrefix("sprawdzaj co "); self.field_packs_interval.setSuffix(" min")
+        self.field_packs_interval.setSuffix(" min")
         self.field_packs_interval.valueChanged.connect(self._apply_config_fields)
-        packs_box = QWidget()
-        packs_layout = QVBoxLayout(packs_box)
-        packs_layout.setContentsMargins(0, 0, 0, 0)
-        packs_layout.addWidget(self.field_auto_packs)
-        packs_row = QHBoxLayout()
-        packs_row.addWidget(self.field_packs_interval)
-        packs_row.addWidget(self.field_packs_defeats)
-        packs_layout.addLayout(packs_row)
-        form.addRow("Paczki:", packs_box)
+        form.addRow("Sprawdzaj Profile co:", self.field_packs_interval)
+        self.field_packs_defeats = QSpinBox(); self.field_packs_defeats.setRange(1, 50)
+        self.field_packs_defeats.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Po tylu porażkach z rzędu:", self.field_packs_defeats)
+        self.field_packs_rounds = QSpinBox(); self.field_packs_rounds.setRange(1, 100)
+        self.field_packs_rounds.setToolTip("Jedna runda = maksymalna liczba paczek + przejrzenie kart")
+        self.field_packs_rounds.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Maks. rund za jednym razem:", self.field_packs_rounds)
+        return w
 
-        self.field_between_drags_min, self.field_between_drags_max, between_drags_container = \
-            _make_range_row(0.0, 10.0, 0.1)
-        form.addRow("between_drags_delay (s):", between_drags_container)
-
-        self.btn_edit_schedule = QPushButton("📅 Edytuj harmonogram")
-        self.btn_edit_schedule.clicked.connect(self._open_schedule_editor)
+    def _tab_schedule(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.addWidget(self._hint("Okna czasowe, w których bot gra, losowe sesje i przerwy w oknach "
+                                    "oraz dzienny limit czasu gry."))
         self.schedule_summary_label = QLabel("brak okien (działa zawsze)")
         self.schedule_summary_label.setWordWrap(True)
-        self.schedule_summary_label.setStyleSheet("color: #888; font-size: 11px;")
-        schedule_row = QVBoxLayout()
-        schedule_row.setContentsMargins(0, 0, 0, 0)
-        schedule_row.addWidget(self.btn_edit_schedule)
-        schedule_row.addWidget(self.schedule_summary_label)
-        schedule_container = QWidget(); schedule_container.setLayout(schedule_row)
-        form.addRow("Harmonogram:", schedule_container)
+        layout.addWidget(self.schedule_summary_label)
+        self.btn_edit_schedule = QPushButton("📅 Edytuj harmonogram…")
+        self.btn_edit_schedule.setMinimumHeight(30)
+        self.btn_edit_schedule.clicked.connect(self._open_schedule_editor)
+        layout.addWidget(self.btn_edit_schedule)
+        layout.addStretch(1)
+        return w
 
-        self.stats_label = QLabel(self._format_stats(None))
-        form.addRow("Statystyki:", self.stats_label)
+    def _tab_protection(self) -> QWidget:
+        w = QWidget()
+        form = self._form()
+        w.setLayout(form)
+        form.addRow(self._hint("Automatyczny restart gry, gdy coś pójdzie nie tak. Wymaga pakietu gry "
+                               "(zakładka Ogólne)."))
+        self.field_black_timeout = QDoubleSpinBox(); self.field_black_timeout.setRange(5, 600)
+        self.field_black_timeout.setSuffix(" s"); self.field_black_timeout.setDecimals(0)
+        self.field_black_timeout.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Restart po czarnym ekranie trwającym:", self.field_black_timeout)
+        self.field_fg_lost = QDoubleSpinBox(); self.field_fg_lost.setRange(0, 600)
+        self.field_fg_lost.setSuffix(" s"); self.field_fg_lost.setDecimals(0)
+        self.field_fg_lost.setSpecialValueText("wyłączone")
+        self.field_fg_lost.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Restart, gdy gry nie ma na ekranie dłużej niż:", self.field_fg_lost)
+        form.addRow(self._hint("Np. gra wysypała się do pulpitu Androida. Sklep Google Play i przeglądarka "
+                               "(kliknięta reklama) powodują restart od razu."))
+        self.field_settle = QDoubleSpinBox(); self.field_settle.setRange(0, 120)
+        self.field_settle.setSuffix(" s"); self.field_settle.setDecimals(0)
+        self.field_settle.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Czas na załadowanie gry po restarcie:", self.field_settle)
+        return w
 
-        note = QLabel("Wskazówka: zmiany w polach idle_point / board_region\n"
-                       "są też ustawiane klikaniem na podglądzie po lewej.\n"
-                       "Pola min/max to zakres losowania - min == max wyłącza\n"
-                       "losowość dla danego parametru.")
-        note.setStyleSheet("color: #888; font-size: 11px;")
-        form.addRow(note)
+    @staticmethod
+    def _section(title: str) -> QLabel:
+        label = QLabel(f"<b>{title}</b>")
+        label.setContentsMargins(0, 8, 0, 0)
+        return label
 
-        top_split.addWidget(right)
-        top_split.setSizes([260, 640, 340])
-
-        # --- dół: logi ---
-        log_group = QGroupBox("Logi")
-        log_layout = QVBoxLayout(log_group)
-        self.log_view = QTextEdit()
+    def _build_log_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 0, 4, 0)
+        header = QHBoxLayout()
+        header.addWidget(QLabel("<b>Logi</b>"))
+        header.addStretch(1)
+        self.log_autoscroll = QCheckBox("Przewijaj automatycznie")
+        self.log_autoscroll.setChecked(True)
+        header.addWidget(self.log_autoscroll)
+        clear = QPushButton("Wyczyść")
+        header.addWidget(clear)
+        layout.addLayout(header)
+        self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(5000)
         self.log_view.setStyleSheet("background-color: #1a1a1a; color: #ddd; "
-                                     "font-family: Consolas, monospace; font-size: 11px;")
-        log_layout.addWidget(self.log_view)
-        root.addWidget(log_group, stretch=1)
-
-        self._set_config_form_enabled(False)
+                                    "font-family: Consolas, 'DejaVu Sans Mono', monospace; font-size: 11px;")
+        clear.clicked.connect(self.log_view.clear)
+        layout.addWidget(self.log_view)
+        return panel
 
     # ------------------------------------------------------------------ #
     # Zarządzanie instancjami
@@ -688,8 +829,11 @@ class MainWindow(QMainWindow):
             name = f"instance-{idx}"
 
         config = BotConfig(name=name)
-        entry = InstanceEntry(config=config, serial="127.0.0.1:5555")
+        entry = InstanceEntry(config=config, serial="")
         self._register_instance(entry)
+        self._mark_dirty()
+        self.tabs.setCurrentIndex(0)
+        self.field_serial.setFocus()
 
     def _autodetect_instances(self) -> None:
         try:
@@ -718,15 +862,18 @@ class MainWindow(QMainWindow):
             entry = InstanceEntry(config=config, serial=serial)
             self._register_instance(entry)
             added += 1
+        if added:
+            self._mark_dirty()
 
         self._log_local(f"Auto-wykrywanie: znaleziono {len(serials)} urządzeń, dodano {added} nowych.")
 
     def _register_instance(self, entry: InstanceEntry) -> None:
-        item = QListWidgetItem(self._format_list_label(entry))
+        item = QListWidgetItem()
         item.setData(Qt.UserRole, entry.config.name)
         self.instances[entry.config.name] = entry
         entry.list_item = item
         self.instance_list.addItem(item)
+        self._refresh_list_item(entry)
         self.instance_list.setCurrentItem(item)
 
     def _format_list_label(self, entry: InstanceEntry) -> str:
@@ -734,8 +881,17 @@ class MainWindow(QMainWindow):
         if entry.status in ("break", "offline") and entry.schedule_text:
             status_pl = entry.schedule_text
         elif entry.status in ("idle", "collecting", "debris", "fishing", "paused") and entry.schedule_text:
-            status_pl += f", {entry.schedule_text}"
-        return f"{entry.config.name}  [{status_pl}]"
+            status_pl += f" · {entry.schedule_text}"
+        return f"● {entry.config.name}\n    {status_pl}"
+
+    def _refresh_list_item(self, entry: InstanceEntry) -> None:
+        if entry.list_item is None:
+            return
+        entry.list_item.setText(self._format_list_label(entry))
+        entry.list_item.setForeground(QColor(STATUS_COLORS.get(entry.status, "#ddd")))
+        entry.list_item.setToolTip(f"{entry.config.name} ({entry.serial})")
+        if entry.config.name == self.selected_name:
+            self.btn_pause.setText("▶ Wznów" if entry.status == "paused" else "⏸ Pauza")
 
     def _remove_selected_instance(self) -> None:
         entry = self._current_entry()
@@ -748,7 +904,10 @@ class MainWindow(QMainWindow):
         row = self.instance_list.row(entry.list_item)
         self.instance_list.takeItem(row)
         del self.instances[entry.config.name]
-        self._set_config_form_enabled(False)
+        self._mark_dirty()
+        if not self.instances:
+            self.selected_name = None
+            self._set_config_form_enabled(False)
 
     def _current_entry(self) -> InstanceEntry | None:
         if self.selected_name is None:
@@ -774,93 +933,97 @@ class MainWindow(QMainWindow):
             self.preview.update_frame(entry.last_frame, entry.last_det)
         self.preview.set_known_config(entry.config.idle_point, entry.config.board_region, entry.config.idle_point_radius)
 
+    def _config_widgets(self) -> tuple:
+        return (self.field_name, self.field_serial, self.field_game_package, self.field_game_activity,
+                self.field_idle_just_loot, self.field_idle_x, self.field_idle_y, self.field_idle_radius,
+                self.field_region_x1, self.field_region_y1, self.field_region_x2, self.field_region_y2,
+                self.field_idle_interval_min, self.field_idle_interval_max,
+                self.field_drag_ms_min, self.field_drag_ms_max,
+                self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
+                self.field_play_debris, self.field_skip_fishing,
+                self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
+                self.field_black_timeout, self.field_fg_lost, self.field_settle)
+
     def _load_fields_from_entry(self, entry: InstanceEntry) -> None:
         cfg = entry.config
         # Blokujemy sygnały na czas wypełniania pól - inaczej samo ustawienie
-        # wartości w QSpinBox/QDoubleSpinBox wywołuje valueChanged/editingFinished,
-        # które od razu (przedwcześnie) nadpisują config innej/nowej instancji
-        # wartościami domyślnymi z widgetu, zanim zdążymy wczytać prawdziwe dane.
-        fields = (self.field_name, self.field_serial, self.field_game_package,
-                  self.field_game_activity, self.field_idle_x, self.field_idle_y,
-                  self.field_idle_radius, self.field_idle_just_loot,
-                  self.field_region_x1, self.field_region_y1, self.field_region_x2,
-                  self.field_region_y2,
-                  self.field_idle_interval_min, self.field_idle_interval_max,
-                  self.field_drag_ms_min, self.field_drag_ms_max, self.field_human_drag,
-                  self.field_play_debris, self.field_skip_fishing,
-                  self.field_auto_packs, self.field_packs_defeats, self.field_packs_interval,
-                  self.field_between_drags_min, self.field_between_drags_max)
+        # wartości wywołuje _apply_config_fields i nadpisuje config wartościami
+        # z formularza, zanim zdążymy wczytać prawdziwe dane.
+        fields = self._config_widgets()
         for w in fields:
             w.blockSignals(True)
         try:
             self.field_name.setText(cfg.name)
             self.field_serial.setText(entry.serial)
             self.field_game_package.setText(cfg.game_package or "")
+            self.field_game_package.setCursorPosition(0)
             self.field_game_activity.setText(cfg.game_activity or "")
+            self.field_idle_just_loot.setChecked(cfg.idle_target == "just_loot")
             self.field_idle_x.setValue(cfg.idle_point[0])
             self.field_idle_y.setValue(cfg.idle_point[1])
             self.field_idle_radius.setValue(cfg.idle_point_radius)
-            self.field_idle_just_loot.setChecked(cfg.idle_target == "just_loot")
-            if cfg.board_region:
-                self.field_region_x1.setValue(cfg.board_region[0])
-                self.field_region_y1.setValue(cfg.board_region[1])
-                self.field_region_x2.setValue(cfg.board_region[2])
-                self.field_region_y2.setValue(cfg.board_region[3])
-            else:
-                for f in (self.field_region_x1, self.field_region_y1,
-                          self.field_region_x2, self.field_region_y2):
-                    f.setValue(0)
+            region = cfg.board_region or (0, 0, 0, 0)
+            for f, v in zip((self.field_region_x1, self.field_region_y1,
+                             self.field_region_x2, self.field_region_y2), region):
+                f.setValue(v)
             self.field_idle_interval_min.setValue(cfg.idle_click_interval.min)
             self.field_idle_interval_max.setValue(cfg.idle_click_interval.max)
             self.field_drag_ms_min.setValue(cfg.drag_duration_ms.min)
             self.field_drag_ms_max.setValue(cfg.drag_duration_ms.max)
+            self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
+            self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
             self.field_human_drag.setChecked(cfg.drag_style == "human")
             self.field_play_debris.setChecked(cfg.play_debris)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
             self.field_auto_packs.setChecked(cfg.auto_packs)
-            self.field_packs_defeats.setValue(cfg.packs_defeat_streak)
             self.field_packs_interval.setValue(int(cfg.packs_check_interval_min))
-            self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
-            self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
+            self.field_packs_defeats.setValue(cfg.packs_defeat_streak)
+            self.field_packs_rounds.setValue(cfg.packs_max_rounds)
+            self.field_black_timeout.setValue(cfg.black_screen_timeout)
+            self.field_fg_lost.setValue(cfg.foreground_lost_timeout)
+            self.field_settle.setValue(cfg.restart_settle_delay)
         finally:
             for w in fields:
                 w.blockSignals(False)
+        self._update_dependent_enabled()
         self.schedule_summary_label.setText(self._schedule_summary_text(cfg))
-        self.stats_label.setText(self._format_stats(entry.last_stats))
+        self._show_stats(entry.last_stats)
 
-    @staticmethod
-    def _format_stats(stats: BotStats | None) -> str:
-        if stats is None:
-            return ("Cykle: 0   Kulki: 0   Przeciągnięcia: 0\n"
-                    "Depth Collapse: 0   Fishing pominięte: 0   Porażki: 0   Rundy paczek: 0\n"
-                    "Błędy: 0   Restarty: 0")
-        return (f"Cykle: {stats.cycles}   Kulki: {stats.balls_collected}   Przeciągnięcia: {stats.drags}\n"
-                f"Depth Collapse: {stats.debris_games}   Fishing pominięte: {stats.fishing_skipped}   "
-                f"Porażki: {stats.defeats}   Rundy paczek: {stats.pack_rounds}\n"
-                f"Błędy: {stats.errors}   Restarty: {stats.restarts}")
+    def _show_stats(self, stats: BotStats | None) -> None:
+        for key, _title in _STAT_FIELDS:
+            self.stat_labels[key].setText(str(getattr(stats, key, 0) if stats is not None else 0))
+
+    def _update_dependent_enabled(self) -> None:
+        """Wyszarza pola, które przy obecnych ustawieniach nic nie robią."""
+        enabled = self.field_name.isEnabled()
+        packs = enabled and self.field_auto_packs.isChecked()
+        for w in (self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds):
+            w.setEnabled(packs)
+        protection = enabled and bool(self.field_game_package.text().strip())
+        for w in (self.field_black_timeout, self.field_fg_lost, self.field_settle):
+            w.setEnabled(protection)
 
     def _schedule_summary_text(self, cfg: BotConfig) -> str:
         schedule = cfg.schedule
         if not schedule:
-            text = "brak okien (działa zawsze)"
-        elif len(schedule) == 1:
-            text = f"1 okno: {self._format_window(schedule[0])}"
+            text = "Brak okien – bot gra bez ograniczeń godzinowych."
         else:
-            text = f"{len(schedule)} okna/okien: " + "; ".join(self._format_window(w) for w in schedule)
+            text = "\n".join("• " + self._format_window(w) for w in schedule)
         if cfg.daily_limit_hours is not None:
             lim = cfg.daily_limit_hours
-            text += f"; limit dzienny {lim.min:g}-{lim.max:g} h"
+            text += f"\nLimit dzienny: {lim.min:g}–{lim.max:g} h"
+        text += "\nZamykanie gry na przerwach: " + ("tak" if cfg.close_game_during_break else "nie")
         return text
 
     def _format_window(self, w: ScheduleWindow) -> str:
-        text = f"{w.start}-{w.end}"
-        if w.days is not None:
-            text += " (" + ",".join(_DAY_LABELS[d] for d in sorted(w.days)) + ")"
+        text = f"{w.start}–{w.end}"
+        text += " (" + (",".join(_DAY_LABELS[d] for d in sorted(w.days)) if w.days is not None else "codziennie") + ")"
         if w.session_minutes is not None:
-            text += " z przerwami"
+            s = w.session_minutes
+            text += f", sesje {s.min:.0f}–{s.max:.0f} min"
         return text
 
-    def _open_schedule_editor(self) -> None:
+    def _open_schedule_editor(self) -> None:  # noqa: C901
         entry = self._current_entry()
         if entry is None:
             return
@@ -875,27 +1038,19 @@ class MainWindow(QMainWindow):
             entry.config.close_game_during_break = dialog.result_close_game_during_break()
             entry.config.daily_limit_hours = dialog.result_daily_limit_hours()
             self.schedule_summary_label.setText(self._schedule_summary_text(entry.config))
-            self._log_local(
-                f"[{entry.config.name}] zaktualizowano harmonogram: "
-                f"{self._schedule_summary_text(entry.config)} "
-                f"(zamykanie gry na przerwie: {'tak' if entry.config.close_game_during_break else 'nie'})"
-            )
+            self._mark_dirty()
+            self._log_local(f"[{entry.config.name}] zaktualizowano harmonogram")
 
     def _set_config_form_enabled(self, enabled: bool) -> None:
-        for w in (self.field_name, self.field_serial, self.field_game_package,
-                  self.field_game_activity, self.field_idle_x, self.field_idle_y,
-                  self.field_idle_radius, self.field_idle_just_loot,
-                  self.field_region_x1, self.field_region_y1, self.field_region_x2,
-                  self.field_region_y2,
-                  self.field_idle_interval_min, self.field_idle_interval_max,
-                  self.field_drag_ms_min, self.field_drag_ms_max, self.field_human_drag,
-                  self.field_play_debris, self.field_skip_fishing,
-                  self.field_auto_packs, self.field_packs_defeats, self.field_packs_interval,
-                  self.field_between_drags_min, self.field_between_drags_max,
-                  self.btn_edit_schedule):
+        for w in self._config_widgets() + (self.btn_edit_schedule, self.btn_edit_idle, self.btn_edit_region,
+                                           self.btn_clear_region, self.btn_refresh_preview, self.btn_start,
+                                           self.btn_pause, self.btn_stop, self.btn_restart_app):
             w.setEnabled(enabled)
         if not enabled:
-            self.schedule_summary_label.setText("brak okien (działa zawsze)")
+            self.schedule_summary_label.setText("—")
+            self.preview_title.setText("<b>Podgląd</b> – wybierz instancję")
+            self._show_stats(None)
+        self._update_dependent_enabled()
 
     def _apply_config_fields(self) -> None:
         entry = self._current_entry()
@@ -909,37 +1064,54 @@ class MainWindow(QMainWindow):
 
         cfg.game_package = self.field_game_package.text().strip() or None
         cfg.game_activity = self.field_game_activity.text().strip() or None
+        cfg.idle_target = "just_loot" if self.field_idle_just_loot.isChecked() else "fixed"
         cfg.idle_point = (self.field_idle_x.value(), self.field_idle_y.value())
         cfg.idle_point_radius = self.field_idle_radius.value()
-        cfg.idle_target = "just_loot" if self.field_idle_just_loot.isChecked() else "fixed"
         region = (self.field_region_x1.value(), self.field_region_y1.value(),
                   self.field_region_x2.value(), self.field_region_y2.value())
-        cfg.board_region = region if any(region) else None
-        # min/max: jeśli użytkownik wpisze max < min, przycinamy max do min
-        # zamiast pozwolić na nonsensowny/ujemny zakres.
+        # niepełny / odwrócony prostokąt = cały ekran
+        cfg.board_region = region if region[2] > region[0] and region[3] > region[1] else None
+        # "do" mniejsze niż "od" przycinamy do "od"
         cfg.idle_click_interval = RandomRange(
             self.field_idle_interval_min.value(),
-            max(self.field_idle_interval_min.value(), self.field_idle_interval_max.value()),
-        )
+            max(self.field_idle_interval_min.value(), self.field_idle_interval_max.value()))
         cfg.drag_duration_ms = RandomRange(
-            self.field_drag_ms_min.value(),
-            max(self.field_drag_ms_min.value(), self.field_drag_ms_max.value()),
-        )
+            self.field_drag_ms_min.value(), max(self.field_drag_ms_min.value(), self.field_drag_ms_max.value()))
+        cfg.between_drags_delay = RandomRange(
+            self.field_between_drags_min.value(),
+            max(self.field_between_drags_min.value(), self.field_between_drags_max.value()))
         cfg.drag_style = "human" if self.field_human_drag.isChecked() else "straight"
         cfg.play_debris = self.field_play_debris.isChecked()
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
         cfg.auto_packs = self.field_auto_packs.isChecked()
-        cfg.packs_defeat_streak = self.field_packs_defeats.value()
         cfg.packs_check_interval_min = float(self.field_packs_interval.value())
-        cfg.between_drags_delay = RandomRange(
-            self.field_between_drags_min.value(),
-            max(self.field_between_drags_min.value(), self.field_between_drags_max.value()),
-        )
+        cfg.packs_defeat_streak = self.field_packs_defeats.value()
+        cfg.packs_max_rounds = self.field_packs_rounds.value()
+        cfg.black_screen_timeout = self.field_black_timeout.value()
+        cfg.foreground_lost_timeout = self.field_fg_lost.value()
+        cfg.restart_settle_delay = self.field_settle.value()
         entry.serial = self.field_serial.text().strip()
 
+        self._update_dependent_enabled()
+        self._mark_dirty()
         # Działający bot trzyma ten sam obiekt BotConfig, więc zmiany
         # działają od razu, bez restartu wątku.
         self.preview.set_known_config(cfg.idle_point, cfg.board_region, cfg.idle_point_radius)
+
+    def _clear_board_region(self) -> None:
+        for f in (self.field_region_x1, self.field_region_y1, self.field_region_x2, self.field_region_y2):
+            f.blockSignals(True); f.setValue(0); f.blockSignals(False)
+        self._apply_config_fields()
+        self._log_local("Obszar planszy: cały ekran")
+
+    def _mark_dirty(self) -> None:
+        if not self._dirty:
+            self._dirty = True
+            self._update_title()
+
+    def _update_title(self) -> None:
+        name = self._config_path.name if self._config_path else "nowa konfiguracja"
+        self.setWindowTitle(f"Dust Mine Bot – {name}{' *' if self._dirty else ''}")
 
     def _rename_entry(self, entry: InstanceEntry, new_name: str) -> None:
         old_name = entry.config.name
@@ -1080,9 +1252,11 @@ class MainWindow(QMainWindow):
             return
         if entry.status == "paused":
             entry.worker.request_resume()
+            self.btn_pause.setText("⏸ Pauza")
             self._log_local(f"[{entry.config.name}] wznowiono")
         else:
             entry.worker.request_pause()
+            self.btn_pause.setText("▶ Wznów")
             self._log_local(f"[{entry.config.name}] wstrzymano")
 
     def _restart_app_selected(self) -> None:
@@ -1144,13 +1318,17 @@ class MainWindow(QMainWindow):
 
     @Slot(str, str)
     def _on_log_message(self, name: str, line: str) -> None:
-        self.log_view.append(f"[{name}] {line}")
-        self.log_view.moveCursor(QTextCursor.End)
+        self._append_log(f"[{name}] {line}")
 
     def _log_local(self, text: str) -> None:
-        ts = time.strftime("%H:%M:%S")
-        self.log_view.append(f"{ts} [GUI] {text}")
-        self.log_view.moveCursor(QTextCursor.End)
+        self._append_log(f"{time.strftime('%H:%M:%S')} [GUI] {text}")
+        self.statusBar().showMessage(text, 8000)
+
+    def _append_log(self, line: str) -> None:
+        bar = self.log_view.verticalScrollBar()
+        self.log_view.appendPlainText(line)
+        if self.log_autoscroll.isChecked():
+            bar.setValue(bar.maximum())
 
     @Slot(str, str)
     def _on_status_changed(self, name: str, status: str) -> None:
@@ -1158,10 +1336,7 @@ class MainWindow(QMainWindow):
         if entry is None:
             return
         entry.status = status
-        if entry.list_item is not None:
-            entry.list_item.setText(self._format_list_label(entry))
-            color = STATUS_COLORS.get(status, "#fff")
-            entry.list_item.setForeground(QColor(color))
+        self._refresh_list_item(entry)
 
     @Slot(str, str)
     def _on_schedule_changed(self, name: str, text: str) -> None:
@@ -1169,8 +1344,7 @@ class MainWindow(QMainWindow):
         if entry is None:
             return
         entry.schedule_text = text
-        if entry.list_item is not None:
-            entry.list_item.setText(self._format_list_label(entry))
+        self._refresh_list_item(entry)
 
     @Slot(str, object)
     def _on_stats_updated(self, name: str, stats: object) -> None:
@@ -1179,7 +1353,7 @@ class MainWindow(QMainWindow):
             return
         entry.last_stats = stats
         if name == self.selected_name:
-            self.stats_label.setText(self._format_stats(stats))
+            self._show_stats(stats)
 
     @Slot(str, str)
     def _on_connection_failed(self, name: str, message: str) -> None:
@@ -1223,31 +1397,49 @@ class MainWindow(QMainWindow):
             self._register_instance(InstanceEntry(config=cfg, serial=serial))
 
         self._config_path = path
+        self._dirty = False
+        self._update_title()
         self._log_local(f"Wczytano config: {path} ({len(self.instances)} instancji)")
 
-    def _save_config_dialog(self) -> None:
+    def _save_config(self) -> bool:
+        """Zapis do bieżącego pliku (Ctrl+S); przy nowej konfiguracji pyta o plik."""
+        if self._config_path is None:
+            return self._save_config_dialog()
+        return self._write_config(self._config_path)
+
+    def _save_config_dialog(self) -> bool:
         default = str(self._config_path or default_config_path())
         path, _ = QFileDialog.getSaveFileName(self, "Zapisz config", default, "JSON (*.json)")
         if not path:
-            return
+            return False
+        return self._write_config(Path(path))
 
+    def _write_config(self, path: Path) -> bool:
         data = {"instances": [
             {"serial": entry.serial, **entry.config.to_dict()}
             for entry in self.instances.values()
         ]}
-
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             QMessageBox.critical(self, "Błąd zapisu", str(e))
-            return
-
-        self._config_path = Path(path)
+            return False
+        self._config_path = path
+        self._dirty = False
+        self._update_title()
         self._log_local(f"Zapisano config: {path}")
+        return True
 
     # ------------------------------------------------------------------ #
     def closeEvent(self, event) -> None:
+        if self._dirty:
+            reply = QMessageBox.question(
+                self, "Niezapisane zmiany", "Zapisać zmiany w konfiguracji przed zamknięciem?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save)
+            if reply == QMessageBox.Cancel or (reply == QMessageBox.Save and not self._save_config()):
+                event.ignore()
+                return
         threads = []
         for entry in self.instances.values():
             if entry.worker is not None and entry.worker.isRunning():

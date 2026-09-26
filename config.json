@@ -7,12 +7,7 @@
         436,
         1488
       ],
-      "board_region": [
-        29,
-        333,
-        861,
-        1466
-      ],
+      "board_region": null,
       "idle_click_interval": {
         "min": 0.8,
         "max": 1.4
@@ -51,12 +46,7 @@
         436,
         1488
       ],
-      "board_region": [
-        29,
-        333,
-        861,
-        1466
-      ],
+      "board_region": null,
       "idle_click_interval": {
         "min": 0.8,
         "max": 1.4
@@ -95,12 +85,7 @@
         436,
         1488
       ],
-      "board_region": [
-        29,
-        333,
-        861,
-        1466
-      ],
+      "board_region": null,
       "idle_click_interval": {
         "min": 0.8,
         "max": 1.4
@@ -139,12 +124,7 @@
         436,
         1488
       ],
-      "board_region": [
-        29,
-        333,
-        861,
-        1466
-      ],
+      "board_region": null,
       "idle_click_interval": {
         "min": 0.8,
         "max": 1.4
@@ -183,12 +163,7 @@
         436,
         1488
       ],
-      "board_region": [
-        29,
-        333,
-        861,
-        1466
-      ],
+      "board_region": null,
       "idle_click_interval": {
         "min": 0.8,
         "max": 1.4
