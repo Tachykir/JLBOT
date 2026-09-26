@@ -184,9 +184,17 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   - opóźnienia (odstępy klikania, między przeciągnięciami, między
     kafelkami) są losowane częściej bliżej dolnej granicy zakresu,
     czasem dłużej — jak u człowieka — zamiast równomiernie.
-- **Zakładki PROFILE / CRAFT** — szerokość z ułamka ekranu (`nav_profile`,
-  `nav_craft`), a wysokość od wykrytego przycisku JUST LOOT (leży w tym
-  samym pasku), więc kliknięcie trafia przy dowolnych proporcjach ekranu.
+- **Punkty do klikania** (GUI: zakładka Punkty) — punkt awaryjny,
+  zakładki PROFILE / CRAFT / LOOT PACKS i miejsce kliknięcia karty bez
+  przycisku. Każdy to obszar `(x, y, promień)` (ułamki ekranu), a bot
+  klika w losowe miejsce wewnątrz koła. Ustawiasz je przyciskiem „Wskaż”
+  i kliknięciem na podglądzie; obszary są wtedy narysowane na podglądzie.
+  Dla domyślnych (niekalibrowanych) zakładek PROFILE / CRAFT wysokość
+  jest brana od wykrytego przycisku JUST LOOT, więc trafiają przy
+  dowolnych proporcjach ekranu.
+- **Ustawienia wspólne** — w GUI zmiana ustawienia na jednej instancji
+  ustawia je na wszystkich. Osobne są tylko nazwa, urządzenie ADB i
+  harmonogram (okna, limit dzienny, zamykanie gry na przerwach).
 - **`max_drag_attempts_per_ball`** (domyślnie 3) — po tylu nieudanych
   przeciągnięciach tej samej kulki bot uznaje ją za niezbieralną i
   pomija do końca bieżącego ekranu gry.

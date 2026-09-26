@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QTimeEdit, QCheckBox, QDialog, QDialogButtonBox, QScrollArea, QFrame, QTabWidget,
 )
 
-from bot import BotConfig, BotStats, RandomRange, ScheduleWindow
+from bot import BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS
 from gui_worker import BotWorker, SnapshotWorker
 from preview_widget import PreviewWidget, EditMode
 from adb_controller import list_ldplayer_devices
@@ -62,6 +62,14 @@ STATUS_COLORS = {
     "stopped": "#777777",
     "error": "#d9534f",
 }
+
+# Punkty do klikania w zakładce "Punkty": (klucz BotConfig, etykieta, kolor BGR na podglądzie)
+_POINTS = [
+    ("nav_profile", "Zakładka PROFILE", (255, 200, 0)),
+    ("nav_craft", "Zakładka CRAFT", (0, 200, 255)),
+    ("craft_loot_packs_tab", "Zakładka LOOT PACKS (w Craft)", (120, 255, 120)),
+    ("card_tap_anywhere", "Karta bez przycisku („tap anywhere”)", (255, 120, 255)),
+]
 
 # (pole BotStats, etykieta) - panel statystyk
 _STAT_FIELDS = [
@@ -472,7 +480,7 @@ class MainWindow(QMainWindow):
         top.setStretchFactor(0, 0)
         top.setStretchFactor(1, 1)
         top.setStretchFactor(2, 0)
-        top.setSizes([250, 520, 440])
+        top.setSizes([230, 510, 520])
         vsplit.addWidget(top)
         vsplit.addWidget(self._build_log_panel())
         vsplit.setStretchFactor(0, 4)
@@ -511,7 +519,7 @@ class MainWindow(QMainWindow):
 
     def _build_instances_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setMinimumWidth(220)
+        panel.setMinimumWidth(200)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(4, 4, 4, 4)
 
@@ -565,13 +573,10 @@ class MainWindow(QMainWindow):
         self.preview = PreviewWidget()
         self.preview.idle_point_picked.connect(self._on_idle_point_picked)
         self.preview.board_region_picked.connect(self._on_board_region_picked)
+        self.preview.named_point_picked.connect(self._on_named_point_picked)
         layout.addWidget(self.preview, stretch=1)
 
         grid = QGridLayout()
-        self.btn_edit_idle = QPushButton("🎯 Wskaż punkt awaryjny")
-        self.btn_edit_idle.setToolTip("Kliknij potem na podglądzie - tam bot kliknie, gdy nie widzi JUST LOOT")
-        self.btn_edit_idle.setCheckable(True)
-        self.btn_edit_idle.clicked.connect(self._toggle_edit_idle)
         self.btn_edit_region = QPushButton("▭ Zaznacz obszar planszy")
         self.btn_edit_region.setToolTip("Przeciągnij potem prostokąt na podglądzie - tylko tam bot szuka kulek")
         self.btn_edit_region.setCheckable(True)
@@ -582,16 +587,15 @@ class MainWindow(QMainWindow):
         self.btn_refresh_preview = QPushButton("⟳ Odśwież podgląd")
         self.btn_refresh_preview.setToolTip("Pobierz jeden zrzut ekranu (gdy bot jest zatrzymany)")
         self.btn_refresh_preview.clicked.connect(self._refresh_preview_once)
-        grid.addWidget(self.btn_edit_idle, 0, 0)
-        grid.addWidget(self.btn_edit_region, 0, 1)
-        grid.addWidget(self.btn_clear_region, 1, 0)
-        grid.addWidget(self.btn_refresh_preview, 1, 1)
+        grid.addWidget(self.btn_edit_region, 0, 0)
+        grid.addWidget(self.btn_clear_region, 0, 1)
+        grid.addWidget(self.btn_refresh_preview, 0, 2)
         layout.addLayout(grid)
         return panel
 
     def _build_settings_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setMinimumWidth(380)
+        panel.setMinimumWidth(500)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(QLabel("<b>Ustawienia wybranej instancji</b>"))
@@ -599,13 +603,19 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setUsesScrollButtons(False)  # wszystkie zakładki zawsze widoczne
         self.tabs.addTab(self._scroll_tab(self._tab_general()), "Ogólne")
+        self.tabs.addTab(self._scroll_tab(self._tab_points()), "Punkty")
         self.tabs.addTab(self._scroll_tab(self._tab_tempo()), "Tempo")
         self.tabs.addTab(self._scroll_tab(self._tab_minigames()), "Minigry")
         self.tabs.addTab(self._scroll_tab(self._tab_packs()), "Paczki")
         self.tabs.addTab(self._scroll_tab(self._tab_schedule()), "Plan")
         self.tabs.addTab(self._scroll_tab(self._tab_protection()), "Ochrona")
-        self.tabs.setTabToolTip(4, "Harmonogram: okna gry, sesje, przerwy, limit dzienny")
-        self.tabs.setTabToolTip(5, "Automatyczny restart gry przy problemach")
+        self.tabs.setTabToolTip(1, "Obszary kliknięć: punkt awaryjny, zakładki, karty")
+        self.tabs.setTabToolTip(5, "Harmonogram (osobny dla każdej instancji)")
+        self.tabs.setTabToolTip(6, "Automatyczny restart gry przy problemach")
+        self.tabs.currentChanged.connect(lambda _i: self._update_preview_points())
+        layout.addWidget(self._hint("Ustawienia są wspólne dla wszystkich instancji - zmiana tutaj "
+                                    "ustawia je na każdej. Osobne są tylko nazwa, urządzenie ADB "
+                                    "i harmonogram (zakładka Plan)."))
         layout.addWidget(self.tabs, stretch=1)
 
         stats_box = QGroupBox("Statystyki")
@@ -654,26 +664,9 @@ class MainWindow(QMainWindow):
         self.field_idle_just_loot = QCheckBox("Klikaj JUST LOOT (bot sam go znajduje)")
         self.field_idle_just_loot.setToolTip(
             "Bot na każdej klatce szuka przycisku JUST LOOT, a po walce PROCEED.\n"
-            "Punkt awaryjny jest używany tylko, gdy nie widać żadnego z nich.")
+            "Punkt awaryjny (zakładka Punkty) jest używany tylko, gdy nie widać żadnego z nich.")
         self.field_idle_just_loot.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_idle_just_loot)
-
-        self.field_idle_x = QSpinBox(); self.field_idle_x.setRange(0, 9999); self.field_idle_x.setPrefix("x ")
-        self.field_idle_y = QSpinBox(); self.field_idle_y.setRange(0, 9999); self.field_idle_y.setPrefix("y ")
-        for f in (self.field_idle_x, self.field_idle_y):
-            f.valueChanged.connect(self._apply_config_fields)
-        row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(self.field_idle_x, 1); row.addWidget(self.field_idle_y, 1)
-        box = QWidget(); box.setLayout(row)
-        form.addRow("Punkt awaryjny:", box)
-
-        self.field_idle_radius = QDoubleSpinBox()
-        self.field_idle_radius.setRange(0.0, 300.0)
-        self.field_idle_radius.setSingleStep(5.0)
-        self.field_idle_radius.setSuffix(" px")
-        self.field_idle_radius.setToolTip("Punkt awaryjny jest losowany w kole o tym promieniu")
-        self.field_idle_radius.valueChanged.connect(self._apply_config_fields)
-        form.addRow("Rozrzut punktu awaryjnego:", self.field_idle_radius)
 
         form.addRow(self._section("Obszar planszy"))
         form.addRow(self._hint("Gdzie szukać kulek. Wszystkie zera = cały ekran (zalecane - wykrywanie "
@@ -689,6 +682,58 @@ class MainWindow(QMainWindow):
             grid.addWidget(f, i // 2, (i % 2) * 2 + 1)
         box = QWidget(); box.setLayout(grid)
         form.addRow(box)
+        return w
+
+    def _tab_points(self) -> QWidget:
+        w = QWidget()
+        form = self._form()
+        w.setLayout(form)
+        form.addRow(self._hint("Każdy punkt to obszar - bot klika w losowe miejsce wewnątrz koła. "
+                               "„Wskaż” i kliknij na podglądzie (podgląd musi mieć obraz - uruchom "
+                               "bota albo „Odśwież podgląd”). Obszary są narysowane na podglądzie, "
+                               "gdy ta zakładka jest otwarta."))
+
+        form.addRow(self._section("Punkt awaryjny"))
+        form.addRow(self._hint("Gdy w trybie czekania nie widać ani JUST LOOT, ani PROCEED."))
+        self.field_idle_x = QSpinBox(); self.field_idle_x.setRange(0, 9999); self.field_idle_x.setPrefix("x ")
+        self.field_idle_y = QSpinBox(); self.field_idle_y.setRange(0, 9999); self.field_idle_y.setPrefix("y ")
+        for f in (self.field_idle_x, self.field_idle_y):
+            f.valueChanged.connect(self._apply_config_fields)
+        self.field_idle_radius = QDoubleSpinBox()
+        self.field_idle_radius.setRange(0.0, 300.0); self.field_idle_radius.setSingleStep(5.0)
+        self.field_idle_radius.setSuffix(" px"); self.field_idle_radius.setPrefix("promień ")
+        self.field_idle_radius.valueChanged.connect(self._apply_config_fields)
+        self.btn_edit_idle = QPushButton("🎯 Wskaż")
+        self.btn_edit_idle.setCheckable(True)
+        self.btn_edit_idle.clicked.connect(self._toggle_edit_idle)
+        row = QGridLayout(); row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.field_idle_x, 0, 0); row.addWidget(self.field_idle_y, 0, 1)
+        row.addWidget(self.field_idle_radius, 1, 0); row.addWidget(self.btn_edit_idle, 1, 1)
+        box = QWidget(); box.setLayout(row)
+        form.addRow(box)
+
+        form.addRow(self._section("Nawigacja i paczki"))
+        self.point_widgets: dict[str, tuple[QLabel, QDoubleSpinBox, QPushButton, QPushButton]] = {}
+        for key, label, _color in _POINTS:
+            value = QLabel("—")
+            value.setStyleSheet("color: #888;")
+            radius = QDoubleSpinBox(); radius.setRange(0.5, 25.0); radius.setSingleStep(0.5); radius.setDecimals(1)
+            radius.setPrefix("promień "); radius.setSuffix(" % szer.")
+            radius.valueChanged.connect(self._apply_config_fields)
+            pick = QPushButton("🎯 Wskaż")
+            pick.clicked.connect(lambda _=False, k=key: self._pick_point(k))
+            reset = QPushButton("↺ Domyślny")
+            reset.setToolTip("Przywróć wartość zmierzoną na LDPlayer")
+            reset.clicked.connect(lambda _=False, k=key: self._reset_point(k))
+            grid = QGridLayout(); grid.setContentsMargins(0, 0, 0, 6)
+            title = QLabel(f"<b>{label}</b>"); title.setWordWrap(True)
+            grid.addWidget(title, 0, 0, 1, 2)
+            grid.addWidget(value, 1, 0, 1, 2)
+            grid.addWidget(radius, 2, 0, 1, 2)
+            grid.addWidget(pick, 3, 0); grid.addWidget(reset, 3, 1)
+            box = QWidget(); box.setLayout(grid)
+            form.addRow(box)
+            self.point_widgets[key] = (value, radius, pick, reset)
         return w
 
     def _tab_tempo(self) -> QWidget:
@@ -771,7 +816,8 @@ class MainWindow(QMainWindow):
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.addWidget(self._hint("Okna czasowe, w których bot gra, losowe sesje i przerwy w oknach "
-                                    "oraz dzienny limit czasu gry."))
+                                    "oraz dzienny limit czasu gry. Harmonogram jest osobny dla każdej "
+                                    "instancji."))
         self.schedule_summary_label = QLabel("brak okien (działa zawsze)")
         self.schedule_summary_label.setWordWrap(True)
         layout.addWidget(self.schedule_summary_label)
@@ -844,6 +890,8 @@ class MainWindow(QMainWindow):
             name = f"instance-{idx}"
 
         config = BotConfig(name=name)
+        if self.instances:
+            config.copy_shared_from(next(iter(self.instances.values())).config)
         entry = InstanceEntry(config=config, serial="")
         self._register_instance(entry)
         self._mark_dirty()
@@ -874,6 +922,8 @@ class MainWindow(QMainWindow):
                 idx += 1
                 name = f"instance-{idx}"
             config = BotConfig(name=name)
+            if self.instances:
+                config.copy_shared_from(next(iter(self.instances.values())).config)
             entry = InstanceEntry(config=config, serial=serial)
             self._register_instance(entry)
             added += 1
@@ -947,6 +997,7 @@ class MainWindow(QMainWindow):
         if entry.last_frame is not None:
             self.preview.update_frame(entry.last_frame, entry.last_det)
         self.preview.set_known_config(entry.config.idle_point, entry.config.board_region, entry.config.idle_point_radius)
+        self._update_preview_points()
 
     def _config_widgets(self) -> tuple:
         return (self.field_name, self.field_serial, self.field_game_package, self.field_game_activity,
@@ -959,7 +1010,8 @@ class MainWindow(QMainWindow):
                 self.field_mistake,
                 self.field_play_debris, self.field_skip_fishing,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
-                self.field_black_timeout, self.field_fg_lost, self.field_settle)
+                self.field_black_timeout, self.field_fg_lost, self.field_settle,
+                *[pw[1] for pw in self.point_widgets.values()])
 
     def _load_fields_from_entry(self, entry: InstanceEntry) -> None:
         cfg = entry.config
@@ -1004,6 +1056,11 @@ class MainWindow(QMainWindow):
             self.field_black_timeout.setValue(cfg.black_screen_timeout)
             self.field_fg_lost.setValue(cfg.foreground_lost_timeout)
             self.field_settle.setValue(cfg.restart_settle_delay)
+            for key, (value, radius, _pick, _reset) in self.point_widgets.items():
+                x, y, r = getattr(cfg, key)
+                value.setText(f"x {x * 100:.1f}% · y {y * 100:.1f}% ekranu"
+                              + ("  (domyślny)" if (x, y, r) == POINT_DEFAULTS[key] else ""))
+                radius.setValue(r * 100)
         finally:
             for w in fields:
                 w.blockSignals(False)
@@ -1064,7 +1121,8 @@ class MainWindow(QMainWindow):
             self._log_local(f"[{entry.config.name}] zaktualizowano harmonogram")
 
     def _set_config_form_enabled(self, enabled: bool) -> None:
-        for w in self._config_widgets() + (self.btn_edit_schedule, self.btn_edit_idle, self.btn_edit_region,
+        point_buttons = tuple(b for pw in self.point_widgets.values() for b in pw[2:])
+        for w in self._config_widgets() + point_buttons + (self.btn_edit_schedule, self.btn_edit_idle, self.btn_edit_region,
                                            self.btn_clear_region, self.btn_refresh_preview, self.btn_start,
                                            self.btn_pause, self.btn_stop, self.btn_restart_app):
             w.setEnabled(enabled)
@@ -1117,13 +1175,74 @@ class MainWindow(QMainWindow):
         cfg.black_screen_timeout = self.field_black_timeout.value()
         cfg.foreground_lost_timeout = self.field_fg_lost.value()
         cfg.restart_settle_delay = self.field_settle.value()
+        for key, (_value, radius, _pick, _reset) in self.point_widgets.items():
+            x, y, _r = getattr(cfg, key)
+            setattr(cfg, key, (x, y, radius.value() / 100.0))
         entry.serial = self.field_serial.text().strip()
+        self._sync_shared(entry)
 
         self._update_dependent_enabled()
         self._mark_dirty()
         # Działający bot trzyma ten sam obiekt BotConfig, więc zmiany
         # działają od razu, bez restartu wątku.
         self.preview.set_known_config(cfg.idle_point, cfg.board_region, cfg.idle_point_radius)
+        self._update_preview_points()
+
+    def _sync_shared(self, source: InstanceEntry) -> None:
+        """Wspólne ustawienia (wszystko poza nazwą, urządzeniem i
+        harmonogramem) z `source` na pozostałe instancje. Działające boty
+        trzymają te same obiekty configu, więc zmiana działa od razu."""
+        for entry in self.instances.values():
+            if entry is not source:
+                entry.config.copy_shared_from(source.config)
+
+    def _update_preview_points(self) -> None:
+        entry = self._current_entry()
+        on_points_tab = self.tabs.tabText(self.tabs.currentIndex()) == "Punkty"
+        if entry is None or not on_points_tab:
+            self.preview.set_named_points([])
+            return
+        pts = []
+        for key, label, color in _POINTS:
+            x, y, r = getattr(entry.config, key)
+            pts.append((label.split(" (")[0], x, y, r, color))
+        self.preview.set_named_points(pts)
+
+    def _pick_point(self, key: str) -> None:
+        entry = self._current_entry()
+        if entry is None:
+            return
+        if entry.last_frame is None:
+            QMessageBox.information(self, "Brak podglądu",
+                                    "Podgląd nie ma jeszcze obrazu - uruchom bota albo kliknij "
+                                    "„Odśwież podgląd”, a potem wskaż punkt.")
+            return
+        label = next(lbl for k, lbl, _c in _POINTS if k == key)
+        self.preview.pick_named_point(key)
+        self.statusBar().showMessage(f"Kliknij na podglądzie: {label}", 15000)
+
+    def _on_named_point_picked(self, key: str, x: int, y: int, w: int, h: int) -> None:
+        entry = self._current_entry()
+        if entry is None or w <= 0 or h <= 0:
+            return
+        r = getattr(entry.config, key)[2]
+        setattr(entry.config, key, (x / w, y / h, r))
+        self._sync_shared(entry)
+        self._mark_dirty()
+        self._load_fields_from_entry(entry)
+        self._update_preview_points()
+        label = next(lbl for k, lbl, _c in _POINTS if k == key)
+        self._log_local(f"Ustawiono punkt: {label} = ({x}, {y}) - na wszystkich instancjach")
+
+    def _reset_point(self, key: str) -> None:
+        entry = self._current_entry()
+        if entry is None:
+            return
+        setattr(entry.config, key, POINT_DEFAULTS[key])
+        self._sync_shared(entry)
+        self._mark_dirty()
+        self._load_fields_from_entry(entry)
+        self._update_preview_points()
 
     def _clear_board_region(self) -> None:
         for f in (self.field_region_x1, self.field_region_y1, self.field_region_x2, self.field_region_y2):

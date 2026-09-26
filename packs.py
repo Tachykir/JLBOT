@@ -36,6 +36,11 @@ import screens
 
 logger = logging.getLogger("bot")
 
+# (import z bot.py opóźniony do użycia - bot.py importuje ten moduł)
+def _point_defaults():
+    from bot import POINT_DEFAULTS
+    return POINT_DEFAULTS
+
 
 class PackOpener:
     def __init__(self, bot):
@@ -88,22 +93,30 @@ class PackOpener:
         self._size = (frame.shape[1], frame.shape[0])
         return frame
 
-    def _tap_rel(self, rel: tuple[float, float], jitter: float = 0.015) -> None:
+    def _tap_rel(self, point: tuple[float, float, float]) -> None:
+        """Kliknięcie w losowe miejsce obszaru (x, y, promień) - ułamki ekranu."""
         W, H = self._size
-        x, y = humanize.random_point_in_circle(rel[0] * W, rel[1] * H, jitter * W)
+        x, y = humanize.random_point_in_circle(point[0] * W, point[1] * H, point[2] * W)
         self.bot._tap(x, y)
 
-    def _tap_nav(self, rel: tuple[float, float]) -> None:
-        """Kliknięcie zakładki w pasku nawigacji (PROFILE / CRAFT).
-        Szerokość bierzemy z ułamka ekranu (pasek zajmuje całą szerokość),
-        a wysokość od wykrytego przycisku JUST LOOT - leży w tym samym
-        pasku, więc działa przy dowolnych proporcjach ekranu (zakładki są
-        pół promienia koła nad jego środkiem: iOS i Android)."""
+    def _tap_nav(self, key: str) -> None:
+        """
+        Kliknięcie zakładki w pasku nawigacji (PROFILE / CRAFT) w obszarze
+        ustawionym w konfiguracji. Dla domyślnych (niekalibrowanych)
+        punktów wysokość bierzemy od wykrytego przycisku JUST LOOT - leży
+        w tym samym pasku, więc trafia przy dowolnych proporcjach ekranu
+        (zakładki są pół promienia koła nad jego środkiem: iOS i Android).
+        Punkt wskazany w GUI jest używany dokładnie tak, jak ustawiono.
+        """
+        point = getattr(self.bot.config, key)
         frame = self._frame()
         W, H = self._size
-        button = screens.find_just_loot(frame)
-        y = button.y - 0.5 * button.r if button is not None else rel[1] * H
-        x, y = humanize.random_point_in_circle(rel[0] * W, y, 0.012 * W)
+        y = point[1] * H
+        if tuple(point) == _point_defaults()[key]:
+            button = screens.find_just_loot(frame)
+            if button is not None:
+                y = button.y - 0.5 * button.r
+        x, y = humanize.random_point_in_circle(point[0] * W, y, point[2] * W)
         self.bot._tap(x, y)
 
     def _tap_rect(self, rect) -> None:
@@ -126,7 +139,7 @@ class PackOpener:
         """Otwiera Profile i sprawdza, czy wrogowie mają bonus. True =
         za słaby gear, False = OK, None = nie udało się odczytać."""
         cfg = self.bot.config
-        self._tap_nav(cfg.nav_profile)
+        self._tap_nav("nav_profile")
         self.bot._sleep(random.uniform(1.2, 1.8))
         warning = screens.frontier_warning(self._frame())
         if warning is None:
@@ -145,12 +158,12 @@ class PackOpener:
         """Jedna runda: max paczek, OPEN, wszystkie karty. False = nie
         otworzono (za mało pyłu albo nie znaleziono ekranu)."""
         bot, cfg = self.bot, self.bot.config
-        self._tap_nav(cfg.nav_craft)
+        self._tap_nav("nav_craft")
         bot._sleep(random.uniform(1.2, 1.8))
         frame = self._frame()
         buy = screens.find_buy_button(frame)
         if buy is None:
-            self._tap_rel(cfg.craft_loot_packs_tab, jitter=0.01)
+            self._tap_rel(cfg.craft_loot_packs_tab)
             bot._sleep(1.0)
             frame = self._frame()
             buy = screens.find_buy_button(frame)
@@ -163,7 +176,7 @@ class PackOpener:
         for _ in range(cfg.pack_plus_taps):
             if self._abort():
                 return False
-            bot._tap(*humanize.random_point_in_circle(plus[0], plus[1], 0.006 * W))
+            bot._tap(*humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W))
             bot._sleep(random.uniform(0.05, 0.15))
 
         bot._sleep(random.uniform(0.4, 0.8))
@@ -176,7 +189,7 @@ class PackOpener:
             logger.info("[%s] brak okna potwierdzenia - prawdopodobnie za mało pyłu", cfg.name)
             return False
         bot._sleep(random.uniform(0.3, 0.8))
-        bot._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.01 * W))
+        bot._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.012 * W))
         bot._sleep(random.uniform(1.5, 2.0))
 
         # Karty: przedmiot z auto-upgrade ma przycisk "Next Card", zwykły
@@ -211,7 +224,7 @@ class PackOpener:
             if button is not None:
                 self._tap_rect(button)
             else:
-                self._tap_rel(cfg.card_tap_anywhere, jitter=0.04)
+                self._tap_rel(cfg.card_tap_anywhere)
             cards += 1
             bot._sleep(random.uniform(0.35, 0.8))
         return cards > 0
@@ -243,5 +256,5 @@ class PackOpener:
         self.defeat_streak = 0
         self._last_check = time.monotonic()
         if warning is None:
-            self._tap_nav(cfg.nav_profile)
+            self._tap_nav("nav_profile")
             bot._sleep(1.0)

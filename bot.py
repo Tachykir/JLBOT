@@ -58,6 +58,20 @@ FrameCallback = Callable[[str, np.ndarray, "vision.DetectionResult", str], None]
 ScheduleCallback = Callable[[str, Decision], None]
 
 
+# Punkty do klikania (patrz BotConfig): klucz -> domyślne (x, y, promień)
+POINT_DEFAULTS: dict[str, tuple[float, float, float]] = {
+    "nav_profile": (0.11, 0.93, 0.03),
+    "nav_craft": (0.67, 0.93, 0.03),
+    "craft_loot_packs_tab": (0.18, 0.142, 0.03),
+    "card_tap_anywhere": (0.5, 0.22, 0.08),
+}
+
+# Ustawienia osobne dla każdej instancji - wszystkie pozostałe są w GUI
+# wspólne (zmiana na jednej instancji ustawia je na wszystkich).
+PER_INSTANCE_FIELDS = ("name", "schedule", "daily_limit_hours", "close_game_during_break",
+                       "schedule_poll_interval")
+
+
 @dataclass
 class BotConfig:
     name: str
@@ -249,14 +263,16 @@ class BotConfig:
     packs_max_rounds: int = 10
     # Ile razy kliknąć "+" (gra sama ogranicza do maksimum / dostępnego pyłu).
     pack_plus_taps: int = 25
-    # Pozycje względne (x, y jako ułamek szerokości/wysokości ekranu),
-    # zmierzone na LDPlayer.
-    nav_profile: tuple[float, float] = (0.11, 0.93)
-    nav_craft: tuple[float, float] = (0.67, 0.93)
-    craft_loot_packs_tab: tuple[float, float] = (0.18, 0.142)
+    # Punkty do klikania jako obszary: (x, y, promień) - x i promień jako
+    # ułamek szerokości ekranu, y jako ułamek wysokości. Bot klika w losowe
+    # miejsce wewnątrz koła. Domyślne wartości zmierzone na LDPlayer;
+    # w GUI (zakładka Punkty) ustawisz je kliknięciem na podglądzie.
+    nav_profile: tuple[float, float, float] = POINT_DEFAULTS["nav_profile"]
+    nav_craft: tuple[float, float, float] = POINT_DEFAULTS["nav_craft"]
+    craft_loot_packs_tab: tuple[float, float, float] = POINT_DEFAULTS["craft_loot_packs_tab"]
     # Gdzie klikać na karcie z paczki bez przycisku ("TAP ANYWHERE TO
     # CONTINUE") - pusty obszar, który na ekranie Craft też jest pusty.
-    card_tap_anywhere: tuple[float, float] = (0.5, 0.22)
+    card_tap_anywhere: tuple[float, float, float] = POINT_DEFAULTS["card_tap_anywhere"]
 
     # ------------------------------------------------------------------ #
     # Serializacja do/z JSON (jedno miejsce dla GUI i manager.py)
@@ -308,9 +324,12 @@ class BotConfig:
         ):
             if key in data and data[key] is not None:
                 setattr(d, key, conv(data[key]))
-        for key in ("nav_profile", "nav_craft", "craft_loot_packs_tab", "card_tap_anywhere"):
+        for key in POINT_DEFAULTS:
             if data.get(key):
-                setattr(d, key, tuple(float(v) for v in data[key]))
+                vals = [float(v) for v in data[key]]
+                if len(vals) == 2:  # stary format bez promienia
+                    vals.append(POINT_DEFAULTS[key][2])
+                setattr(d, key, tuple(vals[:3]))
         for key in ("reaction_delay", "tap_hold_ms"):
             if data.get(key) is not None:
                 setattr(d, key, RandomRange.from_value(data[key]))
@@ -331,6 +350,14 @@ class BotConfig:
             if x2 <= x1 or y2 <= y1:
                 raise ValueError(f"[{d.name}] board_region musi mieć x2 > x1 i y2 > y1: {d.board_region}")
         return d
+
+    def copy_shared_from(self, other: "BotConfig") -> None:
+        """Kopiuje z `other` wszystkie ustawienia poza PER_INSTANCE_FIELDS."""
+        import copy
+        import dataclasses
+        for f in dataclasses.fields(self):
+            if f.name not in PER_INSTANCE_FIELDS:
+                setattr(self, f.name, copy.deepcopy(getattr(other, f.name)))
 
     def to_dict(self) -> dict:
         return {

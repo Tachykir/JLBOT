@@ -35,11 +35,14 @@ class EditMode(Enum):
     NONE = auto()
     SET_IDLE_POINT = auto()
     SET_BOARD_REGION = auto()
+    SET_NAMED_POINT = auto()   # dowolny punkt z listy (zakładki, karta...)
 
 
 class PreviewWidget(QLabel):
     idle_point_picked = Signal(int, int)
     board_region_picked = Signal(int, int, int, int)
+    # (klucz punktu, x, y, szerokość klatki, wysokość klatki)
+    named_point_picked = Signal(str, int, int, int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,6 +59,9 @@ class PreviewWidget(QLabel):
         self._idle_point: tuple[int, int] | None = None
         self._idle_point_radius: float = 0.0
         self._board_region: tuple[int, int, int, int] | None = None
+        # punkty względne: (etykieta, x_frac, y_frac, r_frac, kolor BGR)
+        self._named_points: list[tuple[str, float, float, float, tuple[int, int, int]]] = []
+        self._pick_key: str | None = None
 
         self._drag_start_widget: QPoint | None = None
         self._drag_current_widget: QPoint | None = None
@@ -67,8 +73,18 @@ class PreviewWidget(QLabel):
         self._src_size = (0, 0)  # (w, h) oryginalnego frame'u
 
     # ------------------------------------------------------------------ #
+    def set_named_points(self, points) -> None:
+        self._named_points = list(points)
+        self._redraw()
+
+    def pick_named_point(self, key: str) -> None:
+        """Następne kliknięcie na podglądzie ustawi punkt `key`."""
+        self.set_edit_mode(EditMode.SET_NAMED_POINT)
+        self._pick_key = key
+
     def set_edit_mode(self, mode: EditMode) -> None:
         self._edit_mode = mode
+        self._pick_key = None
         self._drag_start_widget = None
         self._drag_current_widget = None
         cursor = Qt.CrossCursor if mode != EditMode.NONE else Qt.ArrowCursor
@@ -128,6 +144,18 @@ class PreviewWidget(QLabel):
         if self._board_region is not None:
             x1, y1, x2, y2 = self._board_region
             cv2.rectangle(vis, (x1, y1), (x2, y2), (255, 255, 0), 2)
+
+        h, w = vis.shape[:2]
+        for label, fx, fy, fr, color in self._named_points:
+            x, y, r = int(fx * w), int(fy * h), max(3, int(fr * w))
+            # obszar kliknięć - półprzezroczyste koło z obwódką
+            overlay = vis.copy()
+            cv2.circle(overlay, (x, y), r, color, -1)
+            cv2.addWeighted(overlay, 0.25, vis, 0.75, 0, vis)
+            cv2.circle(vis, (x, y), r, color, 2)
+            cv2.drawMarker(vis, (x, y), color, markerType=cv2.MARKER_CROSS, markerSize=12, thickness=2)
+            cv2.putText(vis, label, (min(x + r + 4, w - 120), y + 5), cv2.FONT_HERSHEY_SIMPLEX,
+                        max(0.4, w / 1400), color, 2)
 
         return vis
 
@@ -193,6 +221,11 @@ class PreviewWidget(QLabel):
             self._idle_point = src
             self.idle_point_picked.emit(*src)
             self._redraw()
+        elif self._edit_mode == EditMode.SET_NAMED_POINT and self._pick_key is not None:
+            key = self._pick_key
+            w, h = self._src_size
+            self.set_edit_mode(EditMode.NONE)
+            self.named_point_picked.emit(key, src[0], src[1], w, h)
         elif self._edit_mode == EditMode.SET_BOARD_REGION:
             self._drag_start_widget = event.pos()
             self._drag_current_widget = event.pos()
