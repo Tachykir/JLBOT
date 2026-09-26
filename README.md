@@ -223,8 +223,10 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   klikany w procedurze paczek i w zwykłym trybie.
 - **Szybkie klikanie kart** — seria kliknięć „+” i przeklikiwanie kart z
   paczek idą jednym poleceniem ADB (2–3 kliknięcia na zrzut ekranu);
-  karty z dropu po walce („?” i „TAP ANYWHERE TO CONTINUE”) bot klika
-  co ~0.15–0.45 s bez pełnego wykrywania planszy.
+  karty z dropu po walce („?” i „TAP ANYWHERE TO CONTINUE”) oraz panel
+  wyboru dropu (Keep Current) bot klika co ~0.15–0.45 s bez pełnego
+  wykrywania planszy; po wyborze na panelu czeka min. 1.2 s, zanim
+  kliknie go ponownie.
 - **Zachowanie jak człowiek** (GUI: zakładka Tempo):
   - `reaction_delay` (domyślnie 0.4–1.8 s) — chwila na „zauważenie”
     nowej planszy / minigry przed pierwszym ruchem,

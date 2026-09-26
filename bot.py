@@ -895,15 +895,23 @@ class DustMineBot:
             # karty (zakryta "?" po walce, odkryta z dropu / paczki): szybka
             # ścieżka - bez wykrywania planszy i z krótką przerwą, jak
             # człowiek szybko przeklikujący karty
-            card = (screens.find_reveal_card(frame) or screens.find_item_card(frame)
+            # To samo dla panelu wyboru dropu (Keep Current / ...): cały ciąg
+            # "?" -> odkrycie -> Keep Current bez zwykłej przerwy idle.
+            choice = screens.find_drop_choice(frame)
+            card = (choice or screens.find_reveal_card(frame) or screens.find_item_card(frame)
                     or screens.find_center_button(frame))
-            if card is not None and not self._paused:
+            if card and not self._paused:
                 if self._on_frame is not None:
                     self._on_frame(cfg.name, frame, vision.DetectionResult(None, []), "idle")
                 self._note_unknown(None)
-                point = self._idle_click_point(frame)
-                if point is not None:
-                    self._tap(*point)
+                # po wyborze na panelu dropu nie klikaj go drugi raz, zanim
+                # gra zdąży zamknąć ekran (drugie kliknięcie trafiłoby w
+                # następny ekran)
+                if not (choice and time.monotonic() - self._last_drop_choice < 1.2):
+                    if not self._handle_inventory_flow(frame):
+                        point = self._idle_click_point(frame)
+                        if point is not None:
+                            self._tap(*point)
                 last_click = time.monotonic()
                 self._sleep(humanize.human_delay(0.15, 0.45))
                 continue
@@ -1018,6 +1026,7 @@ class DustMineBot:
                 self._hold(*humanize.random_point_in_circle(cx, cy, 0.03 * W), cfg.salvage_hold_ms.sample())
                 self._inventory_full = False
                 self._inventory_salvage_pending = True
+                self._last_drop_choice = time.monotonic()
                 return True
         if self._inventory_salvage_pending and screens.find_just_loot(frame) is not None:
             self._inventory_salvage_pending = False
