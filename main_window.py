@@ -55,6 +55,8 @@ STATUS_COLORS = {
     "idle": "#5bc0de",
     "collecting": "#5cb85c",
     "paused": "#aaaaaa",
+    "break": "#b58bd6",
+    "offline": "#8a7f6a",
     "stopped": "#777777",
     "error": "#d9534f",
 }
@@ -64,6 +66,8 @@ STATUS_LABELS_PL = {
     "idle": "czekanie",
     "collecting": "zbieranie",
     "paused": "wstrzymany",
+    "break": "przerwa",
+    "offline": "offline",
     "stopped": "zatrzymany",
     "error": "błąd",
 }
@@ -80,6 +84,7 @@ class InstanceEntry:
         self.last_frame: np.ndarray | None = None
         self.last_det: vision.DetectionResult | None = None
         self.last_stats: BotStats | None = None
+        self.schedule_text: str = ""
         self.list_item: QListWidgetItem | None = None
         self.snapshot_worker: SnapshotWorker | None = None
 
@@ -89,31 +94,33 @@ _DAY_LABELS = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"]
 
 class ScheduleEditorDialog(QDialog):
     """
-    Edytor harmonogramu pracy instancji - lista okien czasowych
-    (start/koniec/dni tygodnia) z możliwością dodawania, edycji i
-    usuwania. Bot pracuje TYLKO w obrębie zdefiniowanych okien; pusta
-    lista oznacza "działa zawsze" (brak ograniczeń), co jest też
-    zachowaniem domyślnym/wstecznie kompatybilnym.
+    Edytor harmonogramu pracy instancji - lista okien czasowych, w
+    których bot może grać. Każde okno ma własne ustawienia sesji: bot
+    gra przez losowy czas, robi losową przerwę i tak do końca okna, a
+    granice okna są losowo rozmyte. Do tego opcjonalny limit dzienny.
+    Pusta lista okien = bot gra bez ograniczeń godzinowych.
     """
 
-    def __init__(self, windows: list[ScheduleWindow], close_game_during_break: bool = True, parent=None):
+    def __init__(self, windows: list[ScheduleWindow], close_game_during_break: bool = True,
+                 daily_limit_hours: RandomRange | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Harmonogram pracy")
-        self.resize(520, 420)
+        self.resize(680, 560)
         # kopia robocza - oryginał podmieniamy dopiero po "OK"
         self._windows: list[ScheduleWindow] = list(windows)
 
         root = QVBoxLayout(self)
 
         info = QLabel(
-            "Bot pracuje TYLKO w oknach zdefiniowanych poniżej.\n"
-            "Brak okien (pusta lista) = bot działa bez ograniczeń godzinowych."
+            "Bot gra TYLKO w oknach zdefiniowanych poniżej. W każdym oknie sam układa\n"
+            "sesje losowej długości z losowymi przerwami.\n"
+            "Brak okien (pusta lista) = bot gra bez ograniczeń godzinowych."
         )
         info.setStyleSheet("color: #888; font-size: 11px;")
         root.addWidget(info)
 
         body = QHBoxLayout()
-        root.addLayout(body)
+        root.addLayout(body, stretch=1)
 
         # --- lewa strona: lista okien --- #
         left = QVBoxLayout()
@@ -149,13 +156,12 @@ class ScheduleEditorDialog(QDialog):
         self.field_end.timeChanged.connect(self._apply_current_window)
         form.addRow("Koniec:", self.field_end)
 
-        hint = QLabel("Okno przechodzące przez północ (np. 22:00 -> 02:00)\njest obsługiwane poprawnie.")
+        hint = QLabel("Okno przez północ (np. 22:00 -> 02:00) jest obsługiwane.\n"
+                      "Dni tygodnia dotyczą dnia, w którym okno się zaczyna.")
         hint.setStyleSheet("color: #888; font-size: 11px;")
         form.addRow(hint)
 
-        days_label = QLabel("Dni tygodnia (brak zaznaczenia = wszystkie):")
-        right.addWidget(days_label)
-
+        right.addWidget(QLabel("Dni tygodnia (brak zaznaczenia = wszystkie):"))
         days_row = QHBoxLayout()
         self.day_checks: list[QCheckBox] = []
         for label in _DAY_LABELS:
@@ -165,17 +171,54 @@ class ScheduleEditorDialog(QDialog):
             self.day_checks.append(cb)
         right.addLayout(days_row)
 
+        self.check_sessions = QCheckBox("Losowe sesje i przerwy w tym oknie")
+        self.check_sessions.setToolTip("Odznaczone = bot gra przez całe okno bez przerw.")
+        self.check_sessions.stateChanged.connect(self._apply_current_window)
+        right.addWidget(self.check_sessions)
+
+        session_form = QFormLayout()
+        right.addLayout(session_form)
+        self.field_session_min, self.field_session_max, session_row = self._minmax_row(5, 720, 5, 0)
+        session_form.addRow("Sesja (min):", session_row)
+        self.field_break_min, self.field_break_max, break_row = self._minmax_row(1, 720, 5, 0)
+        session_form.addRow("Przerwa (min):", break_row)
+
+        self.field_jitter = QSpinBox()
+        self.field_jitter.setRange(0, 120)
+        self.field_jitter.setSuffix(" min")
+        self.field_jitter.setToolTip("Start okna losowo przesuwany o 0..tyle minut później,\n"
+                                     "koniec o 0..tyle minut wcześniej - osobno każdego dnia.")
+        self.field_jitter.valueChanged.connect(self._apply_current_window)
+        session_form.addRow("Rozmycie granic:", self.field_jitter)
+
         right.addStretch(1)
 
-        self.editor_group = QWidget()
-        # chowamy edytor prawej strony dopóki nic nie jest wybrane
         self._set_editor_enabled(False)
 
-        self.check_close_game = QCheckBox("Zamykaj grę (force-stop) na czas przerwy między oknami")
+        # --- ustawienia wspólne dla instancji --- #
+        limit_row = QHBoxLayout()
+        self.check_daily_limit = QCheckBox("Limit dzienny (godz.):")
+        self.check_daily_limit.setToolTip("Losowany raz na dzień z zakresu. Po wyczerpaniu\n"
+                                          "bot jest offline do północy.")
+        self.field_limit_min = QDoubleSpinBox(); self.field_limit_min.setRange(0.5, 24.0); self.field_limit_min.setSingleStep(0.5)
+        self.field_limit_max = QDoubleSpinBox(); self.field_limit_max.setRange(0.5, 24.0); self.field_limit_max.setSingleStep(0.5)
+        limit = daily_limit_hours or RandomRange(5.0, 6.0)
+        self.field_limit_min.setValue(limit.min)
+        self.field_limit_max.setValue(limit.max)
+        self.check_daily_limit.setChecked(daily_limit_hours is not None)
+        self.check_daily_limit.toggled.connect(self._update_limit_enabled)
+        limit_row.addWidget(self.check_daily_limit)
+        limit_row.addWidget(QLabel("min")); limit_row.addWidget(self.field_limit_min)
+        limit_row.addWidget(QLabel("max")); limit_row.addWidget(self.field_limit_max)
+        limit_row.addStretch(1)
+        root.addLayout(limit_row)
+        self._update_limit_enabled()
+
+        self.check_close_game = QCheckBox("Zamykaj grę (force-stop) na przerwach, poza oknami i po limicie dziennym")
         self.check_close_game.setChecked(close_game_during_break)
         self.check_close_game.setToolTip(
-            "Gdy zaznaczone: gra jest zamykana na wejściu w przerwę i\n"
-            "uruchamiana ponownie na starcie kolejnego okna pracy.\n"
+            "Gdy zaznaczone: gra jest zamykana na początku przerwy i\n"
+            "uruchamiana ponownie na start kolejnej sesji.\n"
             "Wymaga ustawionego game_package."
         )
         root.addWidget(self.check_close_game)
@@ -188,22 +231,63 @@ class ScheduleEditorDialog(QDialog):
         self._refresh_list()
 
     # ------------------------------------------------------------------ #
-    def _set_editor_enabled(self, enabled: bool) -> None:
-        for w in (self.field_start, self.field_end, *self.day_checks):
-            w.setEnabled(enabled)
+    def _minmax_row(self, minimum, maximum, step, decimals):
+        spin_min = QDoubleSpinBox(); spin_min.setRange(minimum, maximum); spin_min.setSingleStep(step)
+        spin_max = QDoubleSpinBox(); spin_max.setRange(minimum, maximum); spin_max.setSingleStep(step)
+        spin_min.setDecimals(decimals); spin_max.setDecimals(decimals)
+        spin_min.valueChanged.connect(self._apply_current_window)
+        spin_max.valueChanged.connect(self._apply_current_window)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("min")); row.addWidget(spin_min)
+        row.addWidget(QLabel("max")); row.addWidget(spin_max)
+        container = QWidget(); container.setLayout(row)
+        return spin_min, spin_max, container
 
-    def _window_label(self, w: ScheduleWindow) -> str:
+    def _editor_widgets(self):
+        return (self.field_start, self.field_end, *self.day_checks, self.check_sessions,
+                self.field_session_min, self.field_session_max,
+                self.field_break_min, self.field_break_max, self.field_jitter)
+
+    def _set_editor_enabled(self, enabled: bool) -> None:
+        for w in self._editor_widgets():
+            w.setEnabled(enabled)
+        if enabled:
+            self._update_session_enabled()
+
+    def _update_session_enabled(self) -> None:
+        on = self.check_sessions.isChecked() and self.check_sessions.isEnabled()
+        for w in (self.field_session_min, self.field_session_max,
+                  self.field_break_min, self.field_break_max):
+            w.setEnabled(on)
+
+    def _update_limit_enabled(self) -> None:
+        on = self.check_daily_limit.isChecked()
+        self.field_limit_min.setEnabled(on)
+        self.field_limit_max.setEnabled(on)
+
+    @staticmethod
+    def window_label(w: ScheduleWindow) -> str:
         if w.days is None:
             days_str = "codziennie"
         else:
             days_str = ",".join(_DAY_LABELS[d] for d in sorted(w.days))
-        return f"{w.start} - {w.end}  ({days_str})"
+        label = f"{w.start} - {w.end}  ({days_str})"
+        if w.session_minutes is not None:
+            s = w.session_minutes
+            b = w.break_minutes or RandomRange(0, 0)
+            label += f"\n   sesje {s.min:.0f}-{s.max:.0f} min, przerwy {b.min:.0f}-{b.max:.0f} min"
+        else:
+            label += "\n   całe okno bez przerw"
+        if w.jitter_minutes:
+            label += f", rozmycie ±{w.jitter_minutes:.0f} min"
+        return label
 
     def _refresh_list(self, select_row: int | None = None) -> None:
         self.list_widget.blockSignals(True)
         self.list_widget.clear()
         for w in self._windows:
-            self.list_widget.addItem(self._window_label(w))
+            self.list_widget.addItem(self.window_label(w))
         self.list_widget.blockSignals(False)
         if select_row is not None and 0 <= select_row < self.list_widget.count():
             self.list_widget.setCurrentRow(select_row)
@@ -213,9 +297,12 @@ class ScheduleEditorDialog(QDialog):
             self._on_row_changed(-1)
 
     def _add_window(self) -> None:
-        # domyślne nowe okno: 09:00-18:00, wszystkie dni - sensowny,
-        # nieszkodliwy punkt startowy do dalszej edycji
-        self._windows.append(ScheduleWindow(start="09:00", end="18:00", days=None))
+        # domyślne nowe okno: 09:00-13:00, wszystkie dni, z losowymi sesjami
+        self._windows.append(ScheduleWindow(
+            start="09:00", end="13:00", days=None,
+            session_minutes=RandomRange(40, 90), break_minutes=RandomRange(10, 30),
+            jitter_minutes=15,
+        ))
         self._refresh_list(select_row=len(self._windows) - 1)
 
     def _remove_window(self) -> None:
@@ -229,10 +316,10 @@ class ScheduleEditorDialog(QDialog):
         if row < 0 or row >= len(self._windows):
             self._set_editor_enabled(False)
             return
-        self._set_editor_enabled(True)
         w = self._windows[row]
 
-        for widget in (self.field_start, self.field_end, *self.day_checks):
+        widgets = self._editor_widgets()
+        for widget in widgets:
             widget.blockSignals(True)
         try:
             sh, sm = (int(x) for x in w.start.split(":"))
@@ -242,23 +329,40 @@ class ScheduleEditorDialog(QDialog):
             active_days = set(w.days) if w.days is not None else set()
             for i, cb in enumerate(self.day_checks):
                 cb.setChecked(i in active_days)
+            session = w.session_minutes or RandomRange(40, 90)
+            brk = w.break_minutes or RandomRange(10, 30)
+            self.check_sessions.setChecked(w.session_minutes is not None)
+            self.field_session_min.setValue(session.min)
+            self.field_session_max.setValue(session.max)
+            self.field_break_min.setValue(brk.min)
+            self.field_break_max.setValue(brk.max)
+            self.field_jitter.setValue(int(w.jitter_minutes))
         finally:
-            for widget in (self.field_start, self.field_end, *self.day_checks):
+            for widget in widgets:
                 widget.blockSignals(False)
+        self._set_editor_enabled(True)
 
     def _apply_current_window(self) -> None:
+        self._update_session_enabled()
         row = self.list_widget.currentRow()
         if row < 0 or row >= len(self._windows):
             return
         checked_days = [i for i, cb in enumerate(self.day_checks) if cb.isChecked()]
+        sessions = self.check_sessions.isChecked()
+        s_min = self.field_session_min.value()
+        b_min = self.field_break_min.value()
         self._windows[row] = ScheduleWindow(
             start=self.field_start.time().toString("HH:mm"),
             end=self.field_end.time().toString("HH:mm"),
             days=tuple(checked_days) if checked_days else None,
+            # max < min przycinamy do min zamiast tworzyć nonsensowny zakres
+            session_minutes=RandomRange(s_min, max(s_min, self.field_session_max.value())) if sessions else None,
+            break_minutes=RandomRange(b_min, max(b_min, self.field_break_max.value())) if sessions else None,
+            jitter_minutes=float(self.field_jitter.value()),
         )
         # odśwież etykietę w liście bez utraty zaznaczenia
         self.list_widget.blockSignals(True)
-        self.list_widget.item(row).setText(self._window_label(self._windows[row]))
+        self.list_widget.item(row).setText(self.window_label(self._windows[row]))
         self.list_widget.blockSignals(False)
 
     def result_windows(self) -> list[ScheduleWindow]:
@@ -266,6 +370,12 @@ class ScheduleEditorDialog(QDialog):
 
     def result_close_game_during_break(self) -> bool:
         return self.check_close_game.isChecked()
+
+    def result_daily_limit_hours(self) -> RandomRange | None:
+        if not self.check_daily_limit.isChecked():
+            return None
+        lo = self.field_limit_min.value()
+        return RandomRange(lo, max(lo, self.field_limit_max.value()))
 
 
 class MainWindow(QMainWindow):
@@ -476,7 +586,8 @@ class MainWindow(QMainWindow):
 
         self.btn_edit_schedule = QPushButton("📅 Edytuj harmonogram")
         self.btn_edit_schedule.clicked.connect(self._open_schedule_editor)
-        self.schedule_summary_label = QLabel("brak (działa zawsze)")
+        self.schedule_summary_label = QLabel("brak okien (działa zawsze)")
+        self.schedule_summary_label.setWordWrap(True)
         self.schedule_summary_label.setStyleSheet("color: #888; font-size: 11px;")
         schedule_row = QVBoxLayout()
         schedule_row.setContentsMargins(0, 0, 0, 0)
@@ -564,6 +675,10 @@ class MainWindow(QMainWindow):
 
     def _format_list_label(self, entry: InstanceEntry) -> str:
         status_pl = STATUS_LABELS_PL.get(entry.status, entry.status)
+        if entry.status in ("break", "offline") and entry.schedule_text:
+            status_pl = entry.schedule_text
+        elif entry.status in ("idle", "collecting", "paused") and entry.schedule_text:
+            status_pl += f", {entry.schedule_text}"
         return f"{entry.config.name}  [{status_pl}]"
 
     def _remove_selected_instance(self) -> None:
@@ -645,7 +760,7 @@ class MainWindow(QMainWindow):
         finally:
             for w in fields:
                 w.blockSignals(False)
-        self.schedule_summary_label.setText(self._schedule_summary_text(cfg.schedule))
+        self.schedule_summary_label.setText(self._schedule_summary_text(cfg))
         self.stats_label.setText(self._format_stats(entry.last_stats))
 
     @staticmethod
@@ -655,18 +770,26 @@ class MainWindow(QMainWindow):
         return (f"Cykle: {stats.cycles}   Kulki: {stats.balls_collected}   "
                 f"Przeciągnięcia: {stats.drags}   Błędy: {stats.errors}   Restarty: {stats.restarts}")
 
-    def _schedule_summary_text(self, schedule: list[ScheduleWindow]) -> str:
+    def _schedule_summary_text(self, cfg: BotConfig) -> str:
+        schedule = cfg.schedule
         if not schedule:
-            return "brak (działa zawsze)"
-        if len(schedule) == 1:
-            return f"1 okno: {self._format_window(schedule[0])}"
-        return f"{len(schedule)} okna/okien: " + "; ".join(self._format_window(w) for w in schedule)
+            text = "brak okien (działa zawsze)"
+        elif len(schedule) == 1:
+            text = f"1 okno: {self._format_window(schedule[0])}"
+        else:
+            text = f"{len(schedule)} okna/okien: " + "; ".join(self._format_window(w) for w in schedule)
+        if cfg.daily_limit_hours is not None:
+            lim = cfg.daily_limit_hours
+            text += f"; limit dzienny {lim.min:g}-{lim.max:g} h"
+        return text
 
     def _format_window(self, w: ScheduleWindow) -> str:
-        if w.days is None:
-            return f"{w.start}-{w.end}"
-        days_str = ",".join(_DAY_LABELS[d] for d in sorted(w.days))
-        return f"{w.start}-{w.end} ({days_str})"
+        text = f"{w.start}-{w.end}"
+        if w.days is not None:
+            text += " (" + ",".join(_DAY_LABELS[d] for d in sorted(w.days)) + ")"
+        if w.session_minutes is not None:
+            text += " z przerwami"
+        return text
 
     def _open_schedule_editor(self) -> None:
         entry = self._current_entry()
@@ -675,15 +798,17 @@ class MainWindow(QMainWindow):
         dialog = ScheduleEditorDialog(
             entry.config.schedule,
             close_game_during_break=entry.config.close_game_during_break,
+            daily_limit_hours=entry.config.daily_limit_hours,
             parent=self,
         )
         if dialog.exec() == QDialog.Accepted:
             entry.config.schedule = dialog.result_windows()
             entry.config.close_game_during_break = dialog.result_close_game_during_break()
-            self.schedule_summary_label.setText(self._schedule_summary_text(entry.config.schedule))
+            entry.config.daily_limit_hours = dialog.result_daily_limit_hours()
+            self.schedule_summary_label.setText(self._schedule_summary_text(entry.config))
             self._log_local(
                 f"[{entry.config.name}] zaktualizowano harmonogram: "
-                f"{self._schedule_summary_text(entry.config.schedule)} "
+                f"{self._schedule_summary_text(entry.config)} "
                 f"(zamykanie gry na przerwie: {'tak' if entry.config.close_game_during_break else 'nie'})"
             )
 
@@ -699,7 +824,7 @@ class MainWindow(QMainWindow):
                   self.btn_edit_schedule):
             w.setEnabled(enabled)
         if not enabled:
-            self.schedule_summary_label.setText("brak (działa zawsze)")
+            self.schedule_summary_label.setText("brak okien (działa zawsze)")
 
     def _apply_config_fields(self) -> None:
         entry = self._current_entry()
@@ -855,6 +980,8 @@ class MainWindow(QMainWindow):
         worker.status_changed.connect(self._on_status_changed)
         worker.stats_updated.connect(self._on_stats_updated)
         worker.connection_failed.connect(self._on_connection_failed)
+        worker.schedule_changed.connect(self._on_schedule_changed)
+        entry.schedule_text = ""
         entry.worker = worker
         worker.start()
         self._log_local(f"[{entry.config.name}] uruchamiam...")
@@ -957,6 +1084,15 @@ class MainWindow(QMainWindow):
             entry.list_item.setText(self._format_list_label(entry))
             color = STATUS_COLORS.get(status, "#fff")
             entry.list_item.setForeground(QColor(color))
+
+    @Slot(str, str)
+    def _on_schedule_changed(self, name: str, text: str) -> None:
+        entry = self.instances.get(name)
+        if entry is None:
+            return
+        entry.schedule_text = text
+        if entry.list_item is not None:
+            entry.list_item.setText(self._format_list_label(entry))
 
     @Slot(str, object)
     def _on_stats_updated(self, name: str, stats: object) -> None:

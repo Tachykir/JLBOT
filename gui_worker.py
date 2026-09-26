@@ -34,7 +34,7 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 
 from adb_controller import ADBController, ADBError
-from bot import DustMineBot, BotConfig
+from bot import DustMineBot, BotConfig, Decision
 import vision
 
 logger = logging.getLogger("gui_worker")
@@ -76,7 +76,8 @@ class BotWorker(QThread):
     # (instance_name, frame_bgr, DetectionResult, mode)
     frame_ready = Signal(str, np.ndarray, object, str)
     log_message = Signal(str, str)          # (instance_name, formatted_line)
-    status_changed = Signal(str, str)       # (instance_name, status)  status: connecting|idle|collecting|paused|stopped|error
+    status_changed = Signal(str, str)       # (instance_name, status)  status: connecting|idle|collecting|paused|break|offline|stopped|error
+    schedule_changed = Signal(str, str)     # (instance_name, opis stanu harmonogramu, np. "przerwa do 10:19")
     stats_updated = Signal(str, object)     # (instance_name, BotStats)
     connection_failed = Signal(str, str)    # (instance_name, error_message)
 
@@ -116,7 +117,8 @@ class BotWorker(QThread):
                 self._set_status("error")
                 return
 
-            bot = DustMineBot(adb, self.config, on_frame=self._handle_frame)
+            bot = DustMineBot(adb, self.config, on_frame=self._handle_frame,
+                              on_schedule=self._handle_schedule)
             self._bot = bot
             # Stop mógł zostać kliknięty w trakcie łączenia (zanim bot istniał).
             if self._stop_requested.is_set():
@@ -142,6 +144,14 @@ class BotWorker(QThread):
         self._set_status("paused" if self._bot.is_paused else mode)
         self.frame_ready.emit(self.name, frame, det, mode)
         self.stats_updated.emit(self.name, self._bot.stats)
+
+    def _handle_schedule(self, name: str, decision: Decision) -> None:
+        if decision.play:
+            text = decision.describe() if decision.reason == "session" else ""
+        else:
+            self._set_status("break" if decision.reason == "break" else "offline")
+            text = decision.describe()
+        self.schedule_changed.emit(self.name, text)
 
     # ------------------------------------------------------------------ #
     def request_stop(self) -> None:

@@ -31,6 +31,10 @@ import numpy as np
 
 from adb_controller import ADBController, ADBError
 import vision
+# re-eksport dla zgodności (GUI i manager.py importują je z bot.py)
+from scheduler import (  # noqa: F401
+    Decision, RandomRange, SchedulePlanner, ScheduleWindow, schedule_from_list, schedule_to_list,
+)
 
 logger = logging.getLogger("bot")
 
@@ -39,135 +43,9 @@ logger = logging.getLogger("bot")
 # duplikowania pętli detekcji.
 FrameCallback = Callable[[str, np.ndarray, "vision.DetectionResult", str], None]
 
-
-@dataclass
-class ScheduleWindow:
-    """
-    Jedno okno czasowe, w którym bot MOŻE pracować. Bot buduje sobie
-    dowolny, spersonalizowany rytm dnia z kilku takich okien naraz -
-    np. "9:00-12:00 w dni robocze", "14:30-18:00 codziennie",
-    "20:00-22:30 pon/śr/pt" - zamiast jednego sztywnego cyklu
-    praca/przerwa.
-
-    days: zbiór dni tygodnia, w które to okno obowiązuje (0=poniedziałek
-    ... 6=niedziela, zgodnie z datetime.weekday()). Pusty zbiór/None
-    oznacza "każdy dzień".
-
-    start / end: godzina:minuta w formacie "HH:MM" (24h). Okno
-    przechodzące przez północ (np. "22:00"-"02:00") jest obsługiwane
-    poprawnie.
-    """
-    start: str  # "HH:MM"
-    end: str    # "HH:MM"
-    days: tuple[int, ...] | None = None  # None = wszystkie dni
-
-    def __post_init__(self) -> None:
-        # Walidacja od razu przy tworzeniu - błędny wpis w configu ma
-        # wywalić się czytelnym komunikatem przy wczytywaniu, a nie
-        # wyjątkiem co 2 sekundy w pętli bota.
-        self._parse(self.start)
-        self._parse(self.end)
-        if self.days is not None:
-            for d in self.days:
-                if not (isinstance(d, int) and 0 <= d <= 6):
-                    raise ValueError(f"Nieprawidłowy dzień tygodnia w harmonogramie: {d!r} (dozwolone 0-6)")
-
-    @staticmethod
-    def _parse(hhmm: str) -> tuple[int, int]:
-        try:
-            h, m = hhmm.split(":")
-            h, m = int(h), int(m)
-        except (AttributeError, ValueError):
-            raise ValueError(f"Nieprawidłowa godzina w harmonogramie: {hhmm!r} (oczekiwano HH:MM)") from None
-        if not (0 <= h <= 23 and 0 <= m <= 59):
-            raise ValueError(f"Nieprawidłowa godzina w harmonogramie: {hhmm!r} (oczekiwano HH:MM)")
-        return h, m
-
-    def contains(self, moment: dt.datetime) -> bool:
-        if self.days is not None and moment.weekday() not in self.days:
-            return False
-
-        start_h, start_m = self._parse(self.start)
-        end_h, end_m = self._parse(self.end)
-        start_minutes = start_h * 60 + start_m
-        end_minutes = end_h * 60 + end_m
-        now_minutes = moment.hour * 60 + moment.minute
-
-        if start_minutes <= end_minutes:
-            # zwykłe okno w obrębie jednego dnia, np. 09:00-18:00
-            return start_minutes <= now_minutes < end_minutes
-        else:
-            # okno przechodzące przez północ, np. 22:00-02:00
-            return now_minutes >= start_minutes or now_minutes < end_minutes
-
-
-@dataclass
-class RandomRange:
-    """
-    Zakres losowania (min, max) dla dowolnego parametru czasowego -
-    zamiast stałej wartości, bot losuje z tego przedziału za każdym
-    razem, żeby unikać w pełni mechanicznego, identycznego rytmu
-    klikania/przeciągania.
-
-    Jeśli min == max, zachowuje się jak stała wartość (brak losowości) -
-    wygodne do wyłączenia losowości dla konkretnego parametru bez
-    zmiany reszty kodu.
-    """
-    min: float
-    max: float
-
-    def sample(self) -> float:
-        if self.max <= self.min:
-            return self.min
-        return random.uniform(self.min, self.max)
-
-    @staticmethod
-    def from_value(value) -> "RandomRange":
-        """
-        Buduje RandomRange z wartości configu, obsługując trzy formaty
-        dla wygody i wstecznej kompatybilności:
-          - liczba (int/float): stała wartość, min == max == value
-          - [min, max] / (min, max): zakres
-          - {"min": ..., "max": ...}: zakres jako słownik (jak w JSON)
-        """
-        if isinstance(value, RandomRange):
-            return value
-        if isinstance(value, dict):
-            return RandomRange(float(value["min"]), float(value["max"]))
-        if isinstance(value, (list, tuple)):
-            return RandomRange(float(value[0]), float(value[1]))
-        return RandomRange(float(value), float(value))
-
-    def to_dict(self) -> dict:
-        return {"min": self.min, "max": self.max}
-
-
-def schedule_from_list(raw: list | None) -> list[ScheduleWindow]:
-    """Buduje listę ScheduleWindow z surowych danych JSON (lista słowników
-    {"start": "HH:MM", "end": "HH:MM", "days": [0,1,2,...] | null})."""
-    if not raw:
-        return []
-    windows = []
-    for item in raw:
-        days = item.get("days")
-        windows.append(ScheduleWindow(
-            start=item["start"],
-            end=item["end"],
-            days=tuple(days) if days is not None else None,
-        ))
-    return windows
-
-
-def schedule_to_list(schedule: list[ScheduleWindow]) -> list[dict]:
-    """Odwrotność schedule_from_list - do zapisu w JSON."""
-    return [
-        {
-            "start": w.start,
-            "end": w.end,
-            "days": list(w.days) if w.days is not None else None,
-        }
-        for w in schedule
-    ]
+# Wywoływany przy każdej zmianie stanu harmonogramu (sesja / przerwa /
+# poza oknem / limit) z (nazwa_instancji, Decision).
+ScheduleCallback = Callable[[str, Decision], None]
 
 
 @dataclass
@@ -225,22 +103,29 @@ class BotConfig:
     # zachowanie identyczne jak przed dodaniem tej funkcji (pełna
     # wsteczna kompatybilność ze starymi configami).
     #
-    # Przykład - dwa okna pracy w dni robocze + krótsza sesja weekendowa:
+    # Każde okno może mieć własne losowe sesje i przerwy - patrz
+    # scheduler.py. Przykład:
     #   schedule = [
-    #       ScheduleWindow("09:00", "12:30", days=(0,1,2,3,4)),
-    #       ScheduleWindow("14:00", "19:00", days=(0,1,2,3,4)),
-    #       ScheduleWindow("11:00", "16:00", days=(5,6)),
+    #       ScheduleWindow("09:00", "13:00", days=(0,1,2,3,4),
+    #                      session_minutes=RandomRange(40, 90),
+    #                      break_minutes=RandomRange(10, 30), jitter_minutes=15),
+    #       ScheduleWindow("11:00", "16:00", days=(5,6)),   # cały czas, bez przerw
     #   ]
     schedule: list[ScheduleWindow] = field(default_factory=list)
+
+    # Dzienny limit czasu gry (godziny), losowany raz na dzień z zakresu.
+    # None = bez limitu. Po wyczerpaniu bot jest offline do północy.
+    daily_limit_hours: RandomRange | None = None
 
     # Co ile sekund sprawdzać, czy nadal jesteśmy w oknie harmonogramu
     # (podczas oczekiwania poza godzinami pracy - nie ma sensu sprawdzać
     # częściej niż raz na kilkanaście sekund).
     schedule_poll_interval: float = 15.0
 
-    # Czy zamykać grę (force-stop) na czas przerwy między oknami
-    # harmonogramu, i uruchamiać ją ponownie na starcie kolejnego
-    # okna pracy. Wymaga ustawionego game_package - bez niego ta
+    # Czy zamykać grę (force-stop) na czas przerw - zarówno między
+    # oknami harmonogramu, jak i między sesjami wewnątrz okna oraz po
+    # wyczerpaniu limitu dziennego - i uruchamiać ją ponownie na starcie
+    # kolejnej sesji. Wymaga ustawionego game_package - bez niego ta
     # opcja jest cicho ignorowana (nie ma czego zamykać/uruchamiać).
     # True domyślnie - jeśli ktoś już konfiguruje harmonogram, zwykle
     # zależy mu też na tym, żeby gra faktycznie nie działała w tle
@@ -325,6 +210,8 @@ class BotConfig:
             d.between_drags_delay = RandomRange.from_value(data["between_drags_delay"])
         if "schedule" in data:
             d.schedule = schedule_from_list(data["schedule"])
+        if data.get("daily_limit_hours") is not None:
+            d.daily_limit_hours = RandomRange.from_value(data["daily_limit_hours"])
         if "foreign_app_packages" in data:
             d.foreign_app_packages = tuple(data["foreign_app_packages"] or ())
         for key, conv in (
@@ -363,6 +250,7 @@ class BotConfig:
             "max_seconds_per_game_screen": self.max_seconds_per_game_screen,
             "idle_poll_interval": self.idle_poll_interval,
             "schedule": schedule_to_list(self.schedule),
+            "daily_limit_hours": self.daily_limit_hours.to_dict() if self.daily_limit_hours else None,
             "schedule_poll_interval": self.schedule_poll_interval,
             "close_game_during_break": self.close_game_during_break,
             "game_package": self.game_package,
@@ -390,7 +278,8 @@ class BotStats:
 
 class DustMineBot:
     def __init__(self, adb: ADBController, config: BotConfig,
-                 on_frame: Optional[FrameCallback] = None):
+                 on_frame: Optional[FrameCallback] = None,
+                 on_schedule: Optional[ScheduleCallback] = None):
         self.adb = adb
         self.config = config
         self.stats = BotStats()
@@ -400,6 +289,9 @@ class DustMineBot:
         self._stop_event = threading.Event()
         self._paused = False
         self._on_frame = on_frame
+        self._on_schedule = on_schedule
+        self._planner = SchedulePlanner(config)
+        self._last_decision: Decision | None = None
 
         # Watchdog czarnego ekranu: znacznik czasu (time.monotonic()),
         # od kiedy nieprzerwanie widzimy czarny ekran. None = ekran
@@ -411,7 +303,6 @@ class DustMineBot:
         self._watchdog_disabled_logged = False
         self._manual_restart_requested = False
         self._last_foreground_check: float = 0.0
-        self._last_schedule_log: float = 0.0
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -471,30 +362,31 @@ class DustMineBot:
         return (int(round(center[0] + dx)), int(round(center[1] + dy)))
 
     # ------------------------------------------------------------------ #
-    def _is_within_schedule(self, now: dt.datetime | None = None) -> bool:
-        """
-        Czy w tej chwili bot POWINIEN pracować wg `config.schedule`.
-        Brak zdefiniowanego harmonogramu (pusta lista/None) oznacza "zawsze".
-        """
-        cfg = self.config
-        if not cfg.schedule:
-            return True
-        if now is None:
-            now = dt.datetime.now()
-        return any(window.contains(now) for window in cfg.schedule)
+    def _check_schedule(self) -> Decision:
+        """Pyta planer o bieżącą decyzję; loguje i zgłasza do GUI każdą
+        zmianę stanu (nowa sesja, przerwa, poza oknem, limit dzienny)."""
+        decision = self._planner.decide(dt.datetime.now())
+        last = self._last_decision
+        if last is None or (decision.play, decision.reason, decision.until) != (last.play, last.reason, last.until):
+            self._last_decision = decision
+            if decision.reason != "always" or last is not None:
+                logger.info("[%s] harmonogram: %s", self.config.name, decision.describe())
+            if self._on_schedule is not None:
+                self._on_schedule(self.config.name, decision)
+        return decision
 
     def _wait_for_schedule(self) -> None:
         """
-        Blokuje dopóki nie wejdziemy w okno harmonogramu (albo do stop()).
-        Jeśli `close_game_during_break` jest włączone i mamy
+        Blokuje, dopóki harmonogram nie pozwoli grać (albo do stop()) -
+        poza oknem, w przerwie między sesjami i po wyczerpaniu limitu
+        dziennego. Jeśli `close_game_during_break` jest włączone i mamy
         skonfigurowany game_package, gra jest zamykana (force-stop) na
-        czas przerwy i ponownie uruchamiana tuż przed powrotem do pracy.
+        czas przerwy i ponownie uruchamiana na start kolejnej sesji.
         """
         cfg = self.config
-        if self._is_within_schedule():
+        decision = self._check_schedule()
+        if decision.play:
             return
-
-        logger.info("[%s] poza godzinami harmonogramu - czekam na najbliższe okno pracy", cfg.name)
 
         game_was_closed = False
         if cfg.close_game_during_break and cfg.game_package:
@@ -505,25 +397,26 @@ class DustMineBot:
             except ADBError as e:
                 logger.warning("[%s] nie udało się zamknąć gry na przerwę: %s", cfg.name, e)
 
-        self._last_schedule_log = time.monotonic()
-        while not self._stop and not self._is_within_schedule():
-            now = time.monotonic()
-            if now - self._last_schedule_log > 300:  # log co 5 minut, żeby nie zaśmiecać
-                logger.info("[%s] nadal poza harmonogramem, czekam...", cfg.name)
-                self._last_schedule_log = now
-            self._sleep(cfg.schedule_poll_interval)
+        while not self._stop:
+            decision = self._check_schedule()
+            if decision.play:
+                break
+            wait = cfg.schedule_poll_interval
+            if decision.until is not None:
+                # obudź się dokładnie na koniec przerwy, a nie do 15 s później
+                wait = min(wait, max(1.0, (decision.until - dt.datetime.now()).total_seconds()))
+            self._sleep(wait)
 
         if self._stop:
             return
 
-        logger.info("[%s] wejście w okno harmonogramu - wznawiam pracę", cfg.name)
         # Gra była celowo zamknięta - nie traktuj tego czasu jako "wypadnięcia".
         self._game_away_since = None
         self._black_screen_since = None
         if game_was_closed:
             try:
                 self.adb.start_app(cfg.game_package, cfg.game_activity)
-                logger.info("[%s] uruchomiono grę na start okna pracy", cfg.name)
+                logger.info("[%s] uruchomiono grę na start sesji", cfg.name)
                 self._sleep(cfg.restart_settle_delay)
             except ADBError as e:
                 logger.error("[%s] nie udało się uruchomić gry po przerwie: %s", cfg.name, e)
@@ -536,9 +429,9 @@ class DustMineBot:
                 self._wait_for_schedule()
                 if self._stop:
                     break
-                self._idle_loop()
-                if self._stop:
-                    break
+                if not self._idle_loop():
+                    # koniec sesji (albo stop) - wróć do harmonogramu
+                    continue
                 self._collect_loop()
                 self.stats.cycles += 1
             except ADBError as e:
@@ -706,12 +599,19 @@ class DustMineBot:
         return self._do_restart_app(f"czarny ekran przez {elapsed:.0f}s (limit {cfg.black_screen_timeout:.0f}s)")
 
     # ------------------------------------------------------------------ #
-    def _idle_loop(self) -> None:
-        """Klika idle_point dopóki nie pojawi się ekran z kulkami."""
+    def _idle_loop(self) -> bool:
+        """Klika idle_point dopóki nie pojawi się ekran z kulkami. Zwraca
+        True, gdy ekran gry się pojawił; False przy stop() albo gdy
+        harmonogram każe skończyć sesję."""
         cfg = self.config
         last_click = 0.0
         next_click_delay = cfg.idle_click_interval.sample()
         while not self._stop:
+            # Koniec sesji sprawdzamy tylko tutaj (w idle), a nie w trakcie
+            # zbierania kulek - rozpoczęta plansza zawsze jest dokończona.
+            if not self._check_schedule().play:
+                return False
+
             frame = self.adb.screenshot()
 
             if self._check_watchdogs(frame):
@@ -728,7 +628,7 @@ class DustMineBot:
             if vision.has_game_screen(det):
                 logger.info("[%s] wykryto ekran gry: DROP=%s, kulki=%d",
                             cfg.name, det.drop.center if det.drop else None, len(det.balls))
-                return
+                return True
 
             now = time.monotonic()
             if not self._paused and now - last_click >= next_click_delay:
@@ -738,6 +638,7 @@ class DustMineBot:
                 next_click_delay = cfg.idle_click_interval.sample()
 
             self._sleep(cfg.idle_poll_interval)
+        return False
 
     # ------------------------------------------------------------------ #
     @staticmethod

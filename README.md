@@ -137,6 +137,44 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   przeciągnięciach tej samej kulki bot uznaje ją za niezbieralną i
   pomija do końca bieżącego ekranu gry.
 
+### Harmonogram: okna, sesje, przerwy i limit dzienny
+
+Bez harmonogramu bot gra bez przerwy. W GUI ("📅 Edytuj harmonogram")
+albo w `config.json` możesz ustawić:
+
+- **Okna** — kiedy bot w ogóle może grać, np. 09:00–13:00 w dni
+  robocze. Poza oknami jest offline.
+- **Sesje w oknie** (osobno dla każdego okna) — bot gra przez losowy
+  czas (`session_minutes`, np. 40–90 min), robi losową przerwę
+  (`break_minutes`, np. 10–30 min) i tak do końca okna. Okno bez
+  `session_minutes` = gra przez całe okno bez przerw.
+- **Rozmycie granic** (`jitter_minutes`) — start okna przesuwa się
+  losowo o 0..N minut później, a koniec o 0..N minut wcześniej, inaczej
+  każdego dnia.
+- **Limit dzienny** (`daily_limit_hours`) — losowany raz na dzień z
+  zakresu; po jego wyczerpaniu bot jest offline do północy.
+
+Rozpoczęta plansza jest zawsze dokończona, nawet gdy sesja się skończy.
+Z `close_game_during_break: true` gra jest zamykana na każdą przerwę i
+uruchamiana ponownie na start kolejnej sesji. Aktualny stan (np.
+"sesja do 10:19", "przerwa do 10:37") widać na liście instancji w GUI.
+
+```json
+"schedule": [
+  {
+    "start": "09:00", "end": "13:00", "days": [0, 1, 2, 3, 4],
+    "session_minutes": {"min": 40, "max": 90},
+    "break_minutes": {"min": 10, "max": 30},
+    "jitter_minutes": 15
+  },
+  {"start": "19:00", "end": "22:30", "days": null}
+],
+"daily_limit_hours": {"min": 5, "max": 6}
+```
+
+Licznik limitu dziennego jest trzymany w pamięci — po ponownym
+uruchomieniu aplikacji liczy od zera.
+
 ## Krok 3: uruchomienie
 
 ### Opcja A: GUI (zalecane)
@@ -219,6 +257,7 @@ Gotowe pliki konfiguracyjne do tego już są w projekcie:
 | `adb_controller.py` | Cienka warstwa nad ADB: screenshot, tap, swipe, per-instancja |
 | `vision.py` | Detekcja kulek i punktu DROP przez OpenCV |
 | `bot.py` | Logika jednej instancji bota (pętla idle → zbieranie → idle) |
+| `scheduler.py` | Harmonogram: okna, losowe sesje/przerwy, limit dzienny |
 | `manager.py` | CLI: uruchamianie wielu instancji bota równolegle (multiprocessing) |
 | `main_window.py` | GUI: główne okno aplikacji (uruchom to, żeby odpalić GUI) |
 | `gui_worker.py` | Most między `bot.py` a GUI - uruchamia bota w wątku Qt |
