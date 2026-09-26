@@ -370,6 +370,9 @@ class DustMineBot:
         self._on_schedule = on_schedule
         self._planner = SchedulePlanner(config)
         self._packs = PackOpener(self)
+        # ostatnia znana pozycja DROP (z poprzednich plansz) - pomaga
+        # rozpoznać planszę, na której kulki mocno zasłaniają DROP
+        self._last_drop: vision.Circle | None = None
         self._last_decision: Decision | None = None
 
         # Watchdog czarnego ekranu: znacznik czasu (time.monotonic()),
@@ -713,7 +716,7 @@ class DustMineBot:
                 last_click = 0.0
                 continue
 
-            det = vision.detect_all(frame, region=cfg.board_region)
+            det = vision.detect_all(frame, region=cfg.board_region, drop_hint=self._last_drop)
 
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "idle")
@@ -860,12 +863,27 @@ class DustMineBot:
         w którym puszczono palec."""
         cfg = self.config
         duration = cfg.drag_duration_ms.sample()
-        if cfg.drag_style == "straight":
+        if cfg.drag_style == "straight" and np.hypot(ball.x - drop.x, ball.y - drop.y) >= drop.r:
             self.adb.swipe(ball.x, ball.y, drop.x, drop.y, duration_ms=int(duration))
             return drop.x, drop.y
 
         start = humanize.random_point_in_circle(ball.x, ball.y, ball.r * 0.4)
         end = humanize.random_point_in_circle(drop.x, drop.y, drop.r * 0.35)
+        dist = float(np.hypot(ball.x - drop.x, ball.y - drop.y))
+        if dist < drop.r:
+            # Kulka leży na DROP-ie - ruch "z DROP na DROP" byłby za krótki
+            # (gra może go uznać za tapnięcie). Wyciągamy ją poza okrąg i
+            # wrzucamy z powrotem jednym ciągłym ruchem.
+            if dist > 1:
+                ux, uy = (ball.x - drop.x) / dist, (ball.y - drop.y) / dist
+            else:
+                a = random.uniform(0, 2 * np.pi)
+                ux, uy = float(np.cos(a)), float(np.sin(a))
+            out_d = drop.r + ball.r * random.uniform(1.0, 1.5)
+            out = (int(drop.x + ux * out_d), int(drop.y + uy * out_d))
+            path = humanize.drag_path(start, out) + humanize.drag_path(out, end)[1:]
+            self.adb.drag_path(path, duration * 1.5)
+            return end
         path = humanize.drag_path(start, end)
         self.adb.drag_path(path, duration)
         return end
@@ -895,7 +913,7 @@ class DustMineBot:
         balls_before_drag: int | None = None
         finger: tuple[int, int] | None = None
         # ostatnia znana pozycja DROP - gdy kulki go chwilowo zasłonią
-        last_drop: vision.Circle | None = None
+        last_drop: vision.Circle | None = self._last_drop
 
         while not self._stop:
             if time.monotonic() - start_time > cfg.max_seconds_per_game_screen:
@@ -911,6 +929,7 @@ class DustMineBot:
             det = vision.detect(frame, region=cfg.board_region, drop_hint=last_drop)
             if det.drop is not None:
                 last_drop = det.drop
+                self._last_drop = det.drop
 
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "collecting")

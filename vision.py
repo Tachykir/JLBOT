@@ -87,7 +87,39 @@ def _fit_circle(xs: np.ndarray, ys: np.ndarray) -> tuple[float, float, float] | 
     return cx, cy, float(np.sqrt(r2))
 
 
-def _find_drop_point(hsv: np.ndarray) -> Circle | None:
+def _dash_pattern(angles: np.ndarray, sectors: int = 64) -> tuple[int, int]:
+    """
+    Regularne kreski na okręgu: kreska zajmuje 1-7 sektorów (z 64), a
+    przerwa za nią 1-5 (luz na zaokrąglenia przy małej rozdzielczości). Zwraca (liczba takich kresek, najdłuższa seria
+    pod rząd). Przerywany okrąg DROP daje ~13 kresek, ciągła obwódka
+    kulki - 0, przypadkowe przecięcia tekstu - nieregularne odcinki.
+    """
+    occ = np.zeros(sectors, bool)
+    occ[((angles + np.pi) / (2 * np.pi) * sectors).astype(int) % sectors] = True
+    if occ.all() or not occ.any():
+        return 0, 0
+    occ = np.roll(occ, -int(np.argmin(occ)))  # zacznij od przerwy
+    segs = []  # [czy_kreska, długość]
+    for v in occ:
+        if segs and segs[-1][0] == v:
+            segs[-1][1] += 1
+        else:
+            segs.append([v, 1])
+    total = best = run = 0
+    for i, (is_dash, length) in enumerate(segs):
+        if not is_dash:
+            continue
+        gap_after = segs[i + 1][1] if i + 1 < len(segs) else segs[0][1]
+        if 1 <= length <= 7 and 1 <= gap_after <= 5:
+            total += 1
+            run += 1
+            best = max(best, run)
+        else:
+            run = 0
+    return total, best
+
+
+def _find_drop_point(hsv: np.ndarray, known: Circle | None = None) -> Circle | None:
     """
     Szuka punktu DROP: przerywanego BIAŁEGO okręgu z napisem "DROP" w środku.
 
@@ -96,11 +128,19 @@ def _find_drop_point(hsv: np.ndarray) -> Circle | None:
       2. Kandydaci na okręgi z transformaty Hougha na tej masce - radzi
          sobie z przerywaną linią i z fragmentem okręgu (DROP częściowo
          zasłonięty przez kulki).
-      3. Weryfikacja kandydata: biały napis w środku (odróżnia DROP od
-         jasnej obwódki kulki), pusty pierścień między napisem a kreskami
-         (odróżnia go od bloków tekstu i białych okien), kreski na co
-         najmniej połowie obwodu.
+      3. Weryfikacja kandydata - jeden z dwóch warunków:
+         a) biały napis w środku (odróżnia DROP od jasnej obwódki kulki),
+            pusty pierścień między napisem a kreskami (odróżnia go od
+            bloków tekstu i białych okien), kreski na >= połowie obwodu;
+         b) albo - gdy kulka leży na DROP-ie i zasłania napis - co
+            najmniej 5 regularnych kresek, w tym 3 pod rząd (patrz
+            _dash_pattern) - działa też, gdy kulki zasłaniają DROP z
+            kilku stron.
       4. Dopasowanie końcowe metodą najmniejszych kwadratów do kresek.
+
+    known: ostatnia znana pozycja DROP (we współrzędnych `hsv`) - dodawana
+    jako kandydat, bo mocno zasłonięty okrąg bywa pomijany przez Hougha.
+    Przechodzi tę samą weryfikację, nie jest używana "na ślepo".
     """
     h, w = hsv.shape[:2]
     mask = _white_mask(hsv)
@@ -119,27 +159,37 @@ def _find_drop_point(hsv: np.ndarray) -> Circle | None:
         cv2.GaussianBlur(mask, (5, 5), 0), cv2.HOUGH_GRADIENT, dp=1.5, minDist=r_min,
         param1=100, param2=12, minRadius=int(r_min), maxRadius=int(r_max),
     )
-    if candidates is None:
+    candidates = [] if candidates is None else [tuple(c) for c in candidates[0][:40]]
+    known_c = None
+    if known is not None:
+        known_c = (known.x * scale, known.y * scale, known.r * scale)
+        candidates.insert(0, known_c)
+    if not candidates:
         return None
 
     best = None
     best_count = 0
-    for cx, cy, r in candidates[0][:15]:
+    for cx, cy, r in candidates:
         d = np.hypot(xs - cx, ys - cy)
         on_ring = np.abs(d - r) < max(3.0, 0.08 * r)
         count = int(on_ring.sum())
         if count <= best_count or count < 20:
             continue
-        # napis "DROP" w środku
-        if int((d < 0.55 * r).sum()) < 10:
-            continue
-        # pusto między napisem a kreskami
-        if int(((d > 0.62 * r) & (d < 0.86 * r)).sum()) > 0.15 * count:
-            continue
         ang = np.arctan2(ys[on_ring] - cy, xs[on_ring] - cx)
         coverage = len(np.unique(((ang + np.pi) / (2 * np.pi) * 32).astype(int) % 32)) / 32
-        if coverage < 0.5:
-            continue
+        has_text = int((d < 0.55 * r).sum()) >= 10
+        empty_between = int(((d > 0.62 * r) & (d < 0.86 * r)).sum()) <= 0.15 * count
+        with_label = has_text and empty_between and coverage >= 0.5
+        if not with_label:
+            dashes, in_row = _dash_pattern(ang)
+            # "czystość" pierścienia: białe piksele w pasie wokół okręgu
+            # leżą na nim (kreski DROP: ~0.95), a nie obok (tekst: ~0.5)
+            band = int((np.abs(d - r) < 0.2 * r).sum())
+            # w znanym miejscu DROP (z poprzednich plansz) wystarczą 3 kreski -
+            # np. gdy stos kulek zasłania prawie cały okrąg
+            need, need_row = (3, 2) if (cx, cy, r) == known_c else (5, 3)
+            if dashes < need or in_row < need_row or count < 0.8 * band:
+                continue
         best, best_count = (xs[on_ring], ys[on_ring], (float(cx), float(cy), float(r))), count
 
     if best is None:
@@ -176,10 +226,9 @@ def _find_balls(bgr: np.ndarray, hsv: np.ndarray, drop: Circle | None) -> list[C
     diff = np.linalg.norm(bgr.astype(np.int16) - bg.astype(np.int16), axis=2)
     fg = (diff > 60).astype(np.uint8) * 255
     fg[_white_mask(hsv) > 0] = 0
-    if drop is not None:
-        # napis DROP i kreski mogą mieć jasną otoczkę - pomiń wnętrze DROP
-        # (poza miejscami, gdzie leży kulka - te nie są białe)
-        cv2.circle(fg, (drop.x, drop.y), int(drop.r * 0.6), 0, thickness=-1)
+    # (wnętrza DROP nie wycinamy - kulka może leżeć na DROP-ie; biały
+    # napis i kreski odpadają przez maskę bieli, a ich cienkie otoczki
+    # przez otwarcie morfologiczne i minimalną "grubość" kulki niżej)
     # wypełnij dziury po napisach "+208" w kulkach
     contours, _ = cv2.findContours(fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     filled = np.zeros_like(fg)
@@ -219,7 +268,7 @@ def _crop(bgr: np.ndarray, region: tuple[int, int, int, int] | None):
 
 
 def detect(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
-           drop_hint: Circle | None = None) -> DetectionResult:
+           drop_hint: Circle | None = None, use_hint_as_fallback: bool = True) -> DetectionResult:
     """
     Główna funkcja detekcji.
 
@@ -229,8 +278,10 @@ def detect(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
             widoczny na screenach), żeby uniknąć fałszywych trafień w UI.
 
     drop_hint: ostatnia znana pozycja DROP (współrzędne pełnego ekranu) -
-            używana, gdy DROP jest chwilowo zasłonięty przez kulki (w
-            trakcie zbierania wiadomo, że to ekran Dust Mine).
+            sprawdzana jako dodatkowy kandydat (mocno zasłonięty DROP);
+            przy use_hint_as_fallback=True używana też wprost, gdy DROP
+            jest całkiem zasłonięty (w trakcie zbierania wiadomo, że to
+            ekran Dust Mine).
 
     Zwraca DetectionResult z pozycją DROP (lub None jeśli nie znaleziono)
     i listą wykrytych kulek (we współrzędnych PEŁNEGO screenshotu, nie
@@ -241,8 +292,11 @@ def detect(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
         return DetectionResult(drop=None, balls=[])
 
     hsv = cv2.cvtColor(work, cv2.COLOR_BGR2HSV)
-    drop = _find_drop_point(hsv)
-    if drop is None and drop_hint is not None:
+    known = None
+    if drop_hint is not None:
+        known = Circle(drop_hint.x - offset_x, drop_hint.y - offset_y, drop_hint.r)
+    drop = _find_drop_point(hsv, known)
+    if drop is None and drop_hint is not None and use_hint_as_fallback:
         drop = Circle(drop_hint.x - offset_x, drop_hint.y - offset_y, drop_hint.r)
     # bez DROP to nie jest ekran Dust Mine - kulki nie są potrzebne
     balls = _find_balls(work, hsv, drop) if drop is not None else []
@@ -381,13 +435,15 @@ def _find_cast_button(bgr: np.ndarray) -> Rect | None:
 
 
 def detect_all(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
-               in_debris_game: bool = False) -> DetectionResult:
+               in_debris_game: bool = False, drop_hint: Circle | None = None) -> DetectionResult:
     """
     Pełna detekcja ekranu: "Dust Mine" (kulki + DROP) oraz minigry
     "Depth Collapse" (kafelki) i "Fishing Hole" (przycisk CAST).
     Współrzędne we współrzędnych PEŁNEGO screenshotu.
     """
-    det = detect(bgr, region)
+    # w idle podpowiedź DROP jest tylko dodatkowym kandydatem - ekran musi
+    # sam potwierdzić, że to Dust Mine
+    det = detect(bgr, region, drop_hint=drop_hint, use_hint_as_fallback=False)
     work, ox, oy = _crop(bgr, region)
     if work.size == 0:
         return det

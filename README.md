@@ -25,8 +25,13 @@ obraz "na żywo":
   biały napis w środku, pusty pierścień między napisem a kreskami i
   kreski na co najmniej połowie obwodu. Wynik doprecyzowuje dopasowanie
   okręgu do kresek. Wystarczy fragment okręgu, więc DROP jest znajdowany
-  także wtedy, gdy kulki częściowo go zasłaniają. W trakcie zbierania bot
-  pamięta ostatnią pozycję DROP, gdyby kulki zasłoniły go całkiem.
+  także wtedy, gdy kulki częściowo go zasłaniają. Gdy kulka leży na
+  DROP-ie i zasłania napis, DROP rozpoznawany jest po regularnych
+  kreskach (co najmniej 5, a w miejscu znanym z poprzednich plansz - 3),
+  które muszą leżeć dokładnie na okręgu (odróżnia je to od tekstu).
+  Bot pamięta ostatnią pozycję DROP, gdyby kulki zasłoniły go całkiem.
+  Kulkę leżącą na DROP-ie bot wyciąga poza okrąg i wrzuca z powrotem
+  jednym ruchem (ruch „z DROP na DROP” gra mogłaby uznać za tapnięcie).
 - **Kulki**: wszystko, co odróżnia się od tła planszy (poza białym
   DROP-em), i kolejne "najgłębsze" punkty tej maski (transformata
   odległości). Działa dla kulek nachodzących na siebie i z napisem
