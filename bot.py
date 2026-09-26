@@ -12,6 +12,12 @@ Cykl działania:
      powtórz aż kulek nie będzie już widać.
   3. Wróć do kroku 1.
 
+Oprócz "Dust Mine" w trybie idle mogą się pojawić minigry:
+  - "Depth Collapse" (brązowe kafelki TAP) - bot klika wszystkie
+    kafelki przed upływem czasu,
+  - "Fishing Hole" (przycisk CAST) - bot od razu klika CAST, żeby
+    pominąć minigrę.
+
 Cała logika jest niezależna od danej instancji ADB - dostaje
 skonfigurowany ADBController i działa na nim w pętli `run()`,
 co pozwala odpalać wiele instancji równolegle (patrz manager.py).
@@ -199,6 +205,15 @@ class BotConfig:
     # pominie do końca bieżącego ekranu gry.
     max_drag_attempts_per_ball: int = 3
 
+    # --- Minigry --- #
+    # "Depth Collapse": klikanie wszystkich kafelków TAP.
+    play_debris: bool = True
+    # Odstęp między kolejnymi kliknięciami kafelków (s). Losowany zakres.
+    # Na planszę jest ~8 s, a samo kliknięcie przez ADB trwa ~0.1-0.3 s.
+    tile_tap_delay: RandomRange = field(default_factory=lambda: RandomRange(0.05, 0.25))
+    # "Fishing Hole": od razu klikaj CAST, żeby pominąć minigrę.
+    skip_fishing: bool = True
+
     # ------------------------------------------------------------------ #
     # Serializacja do/z JSON (jedno miejsce dla GUI i manager.py)
     # ------------------------------------------------------------------ #
@@ -238,9 +253,13 @@ class BotConfig:
             ("foreground_check_interval", float),
             ("foreground_lost_timeout", float),
             ("max_drag_attempts_per_ball", int),
+            ("play_debris", bool),
+            ("skip_fishing", bool),
         ):
             if key in data and data[key] is not None:
                 setattr(d, key, conv(data[key]))
+        if "tile_tap_delay" in data:
+            d.tile_tap_delay = RandomRange.from_value(data["tile_tap_delay"])
         if data.get("drag_style"):
             if data["drag_style"] not in ("human", "straight"):
                 raise ValueError(f"[{d.name}] drag_style musi być 'human' albo 'straight': {data['drag_style']!r}")
@@ -279,6 +298,9 @@ class BotConfig:
             "foreground_check_interval": self.foreground_check_interval,
             "foreground_lost_timeout": self.foreground_lost_timeout,
             "max_drag_attempts_per_ball": self.max_drag_attempts_per_ball,
+            "play_debris": self.play_debris,
+            "tile_tap_delay": self.tile_tap_delay.to_dict(),
+            "skip_fishing": self.skip_fishing,
         }
 
 
@@ -291,6 +313,8 @@ class BotStats:
     drags: int = 0
     errors: int = 0
     restarts: int = 0
+    debris_games: int = 0
+    fishing_skipped: int = 0
 
 
 class DustMineBot:
@@ -446,11 +470,17 @@ class DustMineBot:
                 self._wait_for_schedule()
                 if self._stop:
                     break
-                if not self._idle_loop():
+                kind = self._idle_loop()
+                if kind is None:
                     # koniec sesji (albo stop) - wróć do harmonogramu
                     continue
-                self._collect_loop()
-                self.stats.cycles += 1
+                if kind == "dust":
+                    self._collect_loop()
+                    self.stats.cycles += 1
+                elif kind == "debris":
+                    self._debris_loop()
+                elif kind == "fishing":
+                    self._skip_fishing()
             except ADBError as e:
                 logger.error("[%s] błąd ADB: %s", self.config.name, e)
                 self.stats.errors += 1
@@ -616,10 +646,18 @@ class DustMineBot:
         return self._do_restart_app(f"czarny ekran przez {elapsed:.0f}s (limit {cfg.black_screen_timeout:.0f}s)")
 
     # ------------------------------------------------------------------ #
-    def _idle_loop(self) -> bool:
-        """Klika idle_point dopóki nie pojawi się ekran z kulkami. Zwraca
-        True, gdy ekran gry się pojawił; False przy stop() albo gdy
-        harmonogram każe skończyć sesję."""
+    def _enabled_kind(self, det: vision.DetectionResult) -> str | None:
+        kind = vision.screen_kind(det)
+        if kind == "debris" and not self.config.play_debris:
+            return None
+        if kind == "fishing" and not self.config.skip_fishing:
+            return None
+        return kind
+
+    def _idle_loop(self) -> str | None:
+        """Klika idle_point dopóki nie pojawi się ekran gry. Zwraca rodzaj
+        ekranu ("dust" | "debris" | "fishing"), albo None przy stop()
+        albo gdy harmonogram każe skończyć sesję."""
         cfg = self.config
         last_click = 0.0
         next_click_delay = cfg.idle_click_interval.sample()
@@ -627,7 +665,7 @@ class DustMineBot:
             # Koniec sesji sprawdzamy tylko tutaj (w idle), a nie w trakcie
             # zbierania kulek - rozpoczęta plansza zawsze jest dokończona.
             if not self._check_schedule().play:
-                return False
+                return None
 
             frame = self.adb.screenshot()
 
@@ -637,15 +675,22 @@ class DustMineBot:
                 last_click = 0.0
                 continue
 
-            det = vision.detect(frame, region=cfg.board_region)
+            det = vision.detect_all(frame, region=cfg.board_region)
 
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "idle")
 
-            if vision.has_game_screen(det):
+            kind = self._enabled_kind(det)
+            if kind == "dust":
                 logger.info("[%s] wykryto ekran gry: DROP=%s, kulki=%d",
                             cfg.name, det.drop.center if det.drop else None, len(det.balls))
-                return True
+                return kind
+            if kind == "debris":
+                logger.info("[%s] wykryto minigrę Depth Collapse: %d kafelków", cfg.name, len(det.tile_taps))
+                return kind
+            if kind == "fishing":
+                logger.info("[%s] wykryto minigrę Fishing Hole - pomijam (CAST)", cfg.name)
+                return kind
 
             now = time.monotonic()
             if not self._paused and now - last_click >= next_click_delay:
@@ -655,7 +700,90 @@ class DustMineBot:
                 next_click_delay = cfg.idle_click_interval.sample()
 
             self._sleep(cfg.idle_poll_interval)
-        return False
+        return None
+
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _tap_order(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """Kolejność klikania kafelków jak u człowieka: zaczyna od
+        losowego, potem zwykle najbliższy kolejny (czasem drugi najbliższy)."""
+        remaining = list(points)
+        order = [remaining.pop(random.randrange(len(remaining)))]
+        while remaining:
+            lx, ly = order[-1]
+            remaining.sort(key=lambda p: (p[0] - lx) ** 2 + (p[1] - ly) ** 2)
+            i = 1 if len(remaining) > 1 and random.random() < 0.2 else 0
+            order.append(remaining.pop(i))
+        return order
+
+    def _debris_loop(self) -> None:
+        """Minigra "Depth Collapse": klika wszystkie kafelki, potem
+        sprawdza ekran ponownie (nachodzące kafelki, nietrafione)."""
+        cfg = self.config
+        start_time = time.monotonic()
+        empty_count = 0
+        passes = 0
+        tapped = 0
+
+        while not self._stop:
+            if time.monotonic() - start_time > cfg.max_seconds_per_game_screen:
+                logger.warning("[%s] przekroczono max czas minigry - wracam do idle", cfg.name)
+                return
+
+            frame = self.adb.screenshot()
+            if self._check_watchdogs(frame):
+                return
+            det = vision.detect_all(frame, region=cfg.board_region, in_debris_game=True)
+            if self._on_frame is not None:
+                self._on_frame(cfg.name, frame, det, "debris")
+
+            if not det.tile_taps:
+                empty_count += 1
+                if empty_count >= cfg.empty_detections_to_exit:
+                    if tapped:
+                        self.stats.debris_games += 1
+                        logger.info("[%s] Depth Collapse zakończone (%d kliknięć)", cfg.name, tapped)
+                    return
+                self._sleep(0.2)
+                continue
+            empty_count = 0
+
+            if self._paused:
+                start_time = time.monotonic()
+                self._sleep(0.3)
+                continue
+
+            passes += 1
+            if passes > 6:
+                logger.warning("[%s] kafelki nie znikają po %d rundach klikania - wracam do idle",
+                               cfg.name, passes - 1)
+                return
+
+            radius = det.tile_size * 0.25
+            for x, y in self._tap_order(det.tile_taps):
+                if self._stop or self._paused:
+                    break
+                self.adb.tap(*humanize.random_point_in_circle(x, y, radius))
+                tapped += 1
+                self._sleep(cfg.tile_tap_delay.sample())
+
+    def _skip_fishing(self) -> None:
+        """Minigra "Fishing Hole": od razu klika CAST (bez celowania),
+        co kończy minigrę."""
+        cfg = self.config
+        frame = self.adb.screenshot()
+        det = vision.detect_all(frame, region=cfg.board_region)
+        if det.cast_button is None or self._paused:
+            return
+        if self._on_frame is not None:
+            self._on_frame(cfg.name, frame, det, "fishing")
+        b = det.cast_button
+        # krótka "ludzka" chwila zastanowienia przed kliknięciem
+        self._sleep(random.uniform(0.3, 1.0))
+        cx, cy = b.center
+        self.adb.tap(*humanize.random_point_in_circle(cx, cy, min(b.w, b.h) * 0.3))
+        self.stats.fishing_skipped += 1
+        self._sleep(random.uniform(1.0, 2.0))
 
     # ------------------------------------------------------------------ #
     @staticmethod

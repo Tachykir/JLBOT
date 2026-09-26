@@ -54,6 +54,8 @@ STATUS_COLORS = {
     "connecting": "#f0ad4e",
     "idle": "#5bc0de",
     "collecting": "#5cb85c",
+    "debris": "#e0a040",
+    "fishing": "#40c8e0",
     "paused": "#aaaaaa",
     "break": "#b58bd6",
     "offline": "#8a7f6a",
@@ -65,6 +67,8 @@ STATUS_LABELS_PL = {
     "connecting": "łączenie...",
     "idle": "czekanie",
     "collecting": "zbieranie",
+    "debris": "Depth Collapse",
+    "fishing": "Fishing Hole",
     "paused": "wstrzymany",
     "break": "przerwa",
     "offline": "offline",
@@ -589,6 +593,17 @@ class MainWindow(QMainWindow):
         self.field_human_drag.toggled.connect(self._apply_config_fields)
         form.addRow("Przeciąganie:", self.field_human_drag)
 
+        self.field_play_debris = QCheckBox("Depth Collapse: klikaj kafelki")
+        self.field_play_debris.toggled.connect(self._apply_config_fields)
+        self.field_skip_fishing = QCheckBox("Fishing Hole: od razu CAST (pomiń)")
+        self.field_skip_fishing.toggled.connect(self._apply_config_fields)
+        minigames = QWidget()
+        minigames_layout = QVBoxLayout(minigames)
+        minigames_layout.setContentsMargins(0, 0, 0, 0)
+        minigames_layout.addWidget(self.field_play_debris)
+        minigames_layout.addWidget(self.field_skip_fishing)
+        form.addRow("Minigry:", minigames)
+
         self.field_between_drags_min, self.field_between_drags_max, between_drags_container = \
             _make_range_row(0.0, 10.0, 0.1)
         form.addRow("between_drags_delay (s):", between_drags_container)
@@ -686,7 +701,7 @@ class MainWindow(QMainWindow):
         status_pl = STATUS_LABELS_PL.get(entry.status, entry.status)
         if entry.status in ("break", "offline") and entry.schedule_text:
             status_pl = entry.schedule_text
-        elif entry.status in ("idle", "collecting", "paused") and entry.schedule_text:
+        elif entry.status in ("idle", "collecting", "debris", "fishing", "paused") and entry.schedule_text:
             status_pl += f", {entry.schedule_text}"
         return f"{entry.config.name}  [{status_pl}]"
 
@@ -740,6 +755,7 @@ class MainWindow(QMainWindow):
                   self.field_region_y2,
                   self.field_idle_interval_min, self.field_idle_interval_max,
                   self.field_drag_ms_min, self.field_drag_ms_max, self.field_human_drag,
+                  self.field_play_debris, self.field_skip_fishing,
                   self.field_between_drags_min, self.field_between_drags_max)
         for w in fields:
             w.blockSignals(True)
@@ -765,6 +781,8 @@ class MainWindow(QMainWindow):
             self.field_drag_ms_min.setValue(cfg.drag_duration_ms.min)
             self.field_drag_ms_max.setValue(cfg.drag_duration_ms.max)
             self.field_human_drag.setChecked(cfg.drag_style == "human")
+            self.field_play_debris.setChecked(cfg.play_debris)
+            self.field_skip_fishing.setChecked(cfg.skip_fishing)
             self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
             self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
         finally:
@@ -776,9 +794,11 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _format_stats(stats: BotStats | None) -> str:
         if stats is None:
-            return "Cykle: 0   Kulki: 0   Przeciągnięcia: 0   Błędy: 0   Restarty: 0"
-        return (f"Cykle: {stats.cycles}   Kulki: {stats.balls_collected}   "
-                f"Przeciągnięcia: {stats.drags}   Błędy: {stats.errors}   Restarty: {stats.restarts}")
+            return ("Cykle: 0   Kulki: 0   Przeciągnięcia: 0\n"
+                    "Depth Collapse: 0   Fishing pominięte: 0   Błędy: 0   Restarty: 0")
+        return (f"Cykle: {stats.cycles}   Kulki: {stats.balls_collected}   Przeciągnięcia: {stats.drags}\n"
+                f"Depth Collapse: {stats.debris_games}   Fishing pominięte: {stats.fishing_skipped}   "
+                f"Błędy: {stats.errors}   Restarty: {stats.restarts}")
 
     def _schedule_summary_text(self, cfg: BotConfig) -> str:
         schedule = cfg.schedule
@@ -830,6 +850,7 @@ class MainWindow(QMainWindow):
                   self.field_region_y2,
                   self.field_idle_interval_min, self.field_idle_interval_max,
                   self.field_drag_ms_min, self.field_drag_ms_max, self.field_human_drag,
+                  self.field_play_debris, self.field_skip_fishing,
                   self.field_between_drags_min, self.field_between_drags_max,
                   self.btn_edit_schedule):
             w.setEnabled(enabled)
@@ -864,6 +885,8 @@ class MainWindow(QMainWindow):
             max(self.field_drag_ms_min.value(), self.field_drag_ms_max.value()),
         )
         cfg.drag_style = "human" if self.field_human_drag.isChecked() else "straight"
+        cfg.play_debris = self.field_play_debris.isChecked()
+        cfg.skip_fishing = self.field_skip_fishing.isChecked()
         cfg.between_drags_delay = RandomRange(
             self.field_between_drags_min.value(),
             max(self.field_between_drags_min.value(), self.field_between_drags_max.value()),

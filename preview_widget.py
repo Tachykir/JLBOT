@@ -2,7 +2,8 @@
 preview_widget.py
 ==================
 Widget podglądu ekranu jednej instancji LDPlayer, z nałożoną
-wizualizacją detekcji (DROP na czerwono, kulki na zielono) i trybem
+wizualizacją detekcji (DROP na czerwono, kulki na zielono, kafelki
+Depth Collapse na pomarańczowo, przycisk CAST na błękitno) i trybem
 edycji konfiguracji przez klikanie bezpośrednio na obrazie:
 
   - Klik lewym przyciskiem myszy w trybie "ustaw idle_point"
@@ -101,6 +102,14 @@ class PreviewWidget(QLabel):
                 cv2.circle(vis, d.center, d.r, (0, 0, 255), 3)
             for b in self._last_det.balls:
                 cv2.circle(vis, b.center, b.r, (0, 255, 0), 3)
+            for t in getattr(self._last_det, "tiles", []):
+                cv2.rectangle(vis, (t.x, t.y), (t.x + t.w, t.y + t.h), (0, 165, 255), 3)
+            for x, y in getattr(self._last_det, "tile_taps", []):
+                cv2.drawMarker(vis, (x, y), (0, 165, 255), markerType=cv2.MARKER_CROSS,
+                               markerSize=20, thickness=2)
+            cast = getattr(self._last_det, "cast_button", None)
+            if cast is not None:
+                cv2.rectangle(vis, (cast.x, cast.y), (cast.x + cast.w, cast.y + cast.h), (255, 255, 0), 3)
 
         if self._idle_point is not None:
             x, y = self._idle_point

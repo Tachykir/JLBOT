@@ -76,7 +76,7 @@ class BotWorker(QThread):
     # (instance_name, frame_bgr, DetectionResult, mode)
     frame_ready = Signal(str, np.ndarray, object, str)
     log_message = Signal(str, str)          # (instance_name, formatted_line)
-    status_changed = Signal(str, str)       # (instance_name, status)  status: connecting|idle|collecting|paused|break|offline|stopped|error
+    status_changed = Signal(str, str)       # (instance_name, status)  status: connecting|idle|collecting|debris|fishing|paused|break|offline|stopped|error
     schedule_changed = Signal(str, str)     # (instance_name, opis stanu harmonogramu, np. "przerwa do 10:19")
     stats_updated = Signal(str, object)     # (instance_name, BotStats)
     connection_failed = Signal(str, str)    # (instance_name, error_message)
@@ -195,7 +195,7 @@ class SnapshotWorker(QThread):
         try:
             adb = ADBController(serial=self.serial)
             frame = adb.screenshot()
-            det = vision.detect(frame, region=self.board_region)
+            det = vision.detect_all(frame, region=self.board_region)
         except Exception as e:
             self.failed.emit(self.name, str(e))
             return

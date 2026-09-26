@@ -141,6 +141,13 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   (nowsze Androidy) — bot sam to sprawdza i przy starcie loguje, czy
   jest dostępne; bez niego tor jest prosty, ale losowy chwyt i
   kolejność zostają.
+- **Minigry** — w trybie idle bot rozpoznaje też:
+  - **Depth Collapse** (brązowe kafelki „TAP”): klika wszystkie kafelki
+    w „ludzkiej” kolejności, z losowym punktem kliknięcia; nachodzące na
+    siebie kafelki są klikane po kolei. Wyłączane `play_debris: false`,
+    odstęp między kliknięciami `tile_tap_delay` (s).
+  - **Fishing Hole** (przycisk CAST): od razu klika CAST, co pomija
+    minigrę. Wyłączane `skip_fishing: false`.
 - **`max_drag_attempts_per_ball`** (domyślnie 3) — po tylu nieudanych
   przeciągnięciach tej samej kulki bot uznaje ją za niezbieralną i
   pomija do końca bieżącego ekranu gry.

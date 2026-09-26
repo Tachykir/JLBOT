@@ -24,7 +24,7 @@ okrąg) się nie zmieni drastycznie.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 import cv2
 
@@ -41,9 +41,29 @@ class Circle:
 
 
 @dataclass
+class Rect:
+    x: int
+    y: int
+    w: int
+    h: int
+
+    @property
+    def center(self) -> tuple[int, int]:
+        return (self.x + self.w // 2, self.y + self.h // 2)
+
+
+@dataclass
 class DetectionResult:
     drop: Circle | None
     balls: list[Circle]
+    # Minigra "Depth Collapse": brązowe kafelki "TAP" do klikania.
+    # tiles = obszary (pojedyncze albo zlane nachodzące na siebie
+    # kafelki), tile_taps = punkty do kliknięcia (po jednym na kafelek).
+    tiles: list[Rect] = field(default_factory=list)
+    tile_taps: list[tuple[int, int]] = field(default_factory=list)
+    tile_size: int = 0
+    # Minigra "Fishing Hole": przycisk CAST.
+    cast_button: Rect | None = None
 
 
 def _ring_crop(h: int, w: int, cx: int, cy: int, r: int, thickness: int):
@@ -229,6 +249,19 @@ def _find_balls(bgr: np.ndarray, gray: np.ndarray, hough_circles: np.ndarray | N
     return deduped
 
 
+def _crop(bgr: np.ndarray, region: tuple[int, int, int, int] | None):
+    """Wycina region (x1, y1, x2, y2) przycięty do granic obrazu - config
+    z innej rozdzielczości nie może wywrócić detekcji. Zwraca
+    (wycinek, offset_x, offset_y); wycinek może być pusty."""
+    if region is None:
+        return bgr, 0, 0
+    h, w = bgr.shape[:2]
+    x1, y1, x2, y2 = region
+    x1, x2 = max(0, min(w, x1)), max(0, min(w, x2))
+    y1, y2 = max(0, min(h, y1)), max(0, min(h, y2))
+    return bgr[y1:y2, x1:x2], x1, y1
+
+
 def detect(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None) -> DetectionResult:
     """
     Główna funkcja detekcji.
@@ -242,12 +275,9 @@ def detect(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None) -> 
     i listą wykrytych kulek (we współrzędnych PEŁNEGO screenshotu, nie
     regionu - czyli gotowych do bezpośredniego użycia w tap/swipe).
     """
-    offset_x, offset_y = 0, 0
-    work = bgr
-    if region is not None:
-        x1, y1, x2, y2 = region
-        work = bgr[y1:y2, x1:x2]
-        offset_x, offset_y = x1, y1
+    work, offset_x, offset_y = _crop(bgr, region)
+    if work.size == 0:
+        return DetectionResult(drop=None, balls=[])
 
     gray = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
     gray_blur = cv2.medianBlur(gray, 5)
@@ -276,6 +306,165 @@ def detect(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None) -> 
     balls = [Circle(b.x + offset_x, b.y + offset_y, b.r) for b in balls]
 
     return DetectionResult(drop=drop, balls=balls)
+
+
+# --------------------------------------------------------------------- #
+# Minigra "Depth Collapse" - kafelki do klikania
+# --------------------------------------------------------------------- #
+
+# Brązowy kafelek (HSV w skali OpenCV: H 0-180). Zmierzone na zrzucie:
+# wnętrze H=17 S=102 V=140, jaśniejsza obwódka H=16 S~60 V~175.
+_TILE_HSV_LO = (10, 40, 90)
+_TILE_HSV_HI = (28, 200, 255)
+
+
+# Kafelek ma ~13% szerokości ekranu (zmierzone: 120 px przy 924 px).
+_TILE_WIDTH_RATIO = 0.13
+
+
+def _find_debris_tiles(bgr: np.ndarray, screen_width: int | None = None, in_game: bool = False
+                       ) -> tuple[list[Rect], list[tuple[int, int]], int]:
+    """
+    Szuka brązowych, kwadratowych kafelków z ciemnym napisem "TAP".
+    Zwraca (obszary, punkty_kliknięcia, rozmiar_kafelka_px).
+
+    Nachodzące na siebie kafelki zlewają się w masce w jeden obszar -
+    dzielimy go na siatkę o oczku równym rozmiarowi kafelka i klikamy w
+    te oczka, które faktycznie leżą na kafelku.
+
+    in_game=False (rozpoznawanie ekranu): wymagany co najmniej jeden
+    pojedynczy, wyraźny kafelek - chroni przed fałszywym uznaniem innego
+    ekranu za minigrę. in_game=True (wiadomo, że trwa minigra): gdy
+    zostały już tylko nachodzące na siebie kafelki, rozmiar kafelka
+    bierzemy ze znanej proporcji do szerokości ekranu.
+    """
+    h, w = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, _TILE_HSV_LO, _TILE_HSV_HI)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    min_side = 0.06 * w
+    max_side = 0.9 * w  # zlane kafelki mogą być duże; pojedyncze filtrujemy niżej
+
+    blobs = []
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        if min(bw, bh) < min_side or min(bw, bh) > max_side:
+            continue
+        filled = np.zeros((bh, bw), np.uint8)
+        cv2.drawContours(filled, [c - [x, y]], -1, 255, thickness=-1)
+        filled_area = int(np.count_nonzero(filled))
+        mask_area = int(np.count_nonzero(mask[y:y + bh, x:x + bw] & filled))
+        if filled_area == 0:
+            continue
+        blobs.append((x, y, bw, bh, filled, filled_area / (bw * bh), 1 - mask_area / filled_area))
+
+    # Pojedynczy kafelek: prawie kwadrat, wypełnia >=85% prostokąta
+    # (zaokrąglone rogi; kulka-koło to ~78%), z dziurami po napisie TAP.
+    singles = [b for b in blobs
+               if 0.8 <= b[2] / b[3] <= 1.25 and b[5] >= 0.85 and 0.005 <= b[6] <= 0.25
+               and max(b[2], b[3]) <= 0.25 * w]
+    if singles:
+        size = int(np.median([min(b[2], b[3]) for b in singles]))
+    elif in_game:
+        size = int(_TILE_WIDTH_RATIO * (screen_width or w))
+        # tylko plamy z napisem TAP, co najmniej wielkości kafelka
+        blobs = [b for b in blobs if b[6] >= 0.005 and min(b[2], b[3]) >= 0.8 * size]
+        if not blobs:
+            return [], [], 0
+    else:
+        return [], [], 0
+
+    rects: list[Rect] = []
+    taps: list[tuple[int, int]] = []
+    for x, y, bw, bh, filled, fill_ratio, _holes in blobs:
+        # zlane kafelki mogą tworzyć dowolny kształt (schodki, L) - nie
+        # filtrujemy ich po wypełnieniu, bo punkty kliknięć i tak muszą
+        # leżeć na kafelku (sprawdzane niżej)
+        if max(bw, bh) > 8 * size:
+            continue
+        if max(bw, bh) < 0.8 * size:
+            continue
+        nx = max(1, int(round(bw / size)))
+        ny = max(1, int(round(bh / size)))
+        xs = np.linspace(size / 2, bw - size / 2, nx) if nx > 1 else [bw / 2]
+        ys = np.linspace(size / 2, bh - size / 2, ny) if ny > 1 else [bh / 2]
+        points = [(int(px), int(py)) for py in ys for px in xs
+                  if filled[min(bh - 1, int(py)), min(bw - 1, int(px))]]
+        if not points:
+            continue
+        rects.append(Rect(x, y, bw, bh))
+        taps.extend((x + px, y + py) for px, py in points)
+    return rects, taps, size
+
+
+# --------------------------------------------------------------------- #
+# Minigra "Fishing Hole" - przycisk CAST
+# --------------------------------------------------------------------- #
+
+# Cyjan przycisku (zmierzone: H=93-95, S~130-150, V~245).
+_CAST_HSV_LO = (80, 90, 150)
+_CAST_HSV_HI = (100, 255, 255)
+
+
+def _find_cast_button(bgr: np.ndarray) -> Rect | None:
+    """
+    Szuka przycisku CAST: szerokiego, pustego w środku prostokąta
+    obrysowanego cyjanem (ramka, nie wypełnienie - odróżnia go od
+    pełnego cyjanowego wskaźnika nad nim).
+    """
+    h, w = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, _CAST_HSV_LO, _CAST_HSV_HI)
+    # domknij drobne przerwy w cienkiej ramce (kompresja, skalowanie)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    n, _labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+    best = None
+    for i in range(1, n):
+        x, y, bw, bh, area = stats[i]
+        if bw < 0.2 * w or bw > 0.7 * w or bh < 0.02 * w:
+            continue
+        if not (2.0 <= bw / bh <= 6.0):
+            continue
+        if area / (bw * bh) > 0.35:  # ramka, a nie pełny prostokąt
+            continue
+        if best is None or bw * bh > best.w * best.h:
+            best = Rect(int(x), int(y), int(bw), int(bh))
+    return best
+
+
+def detect_all(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
+               in_debris_game: bool = False) -> DetectionResult:
+    """
+    Pełna detekcja ekranu: "Dust Mine" (kulki + DROP) oraz minigry
+    "Depth Collapse" (kafelki) i "Fishing Hole" (przycisk CAST).
+    Współrzędne we współrzędnych PEŁNEGO screenshotu.
+    """
+    det = detect(bgr, region)
+    work, ox, oy = _crop(bgr, region)
+    if work.size == 0:
+        return det
+
+    rects, taps, size = _find_debris_tiles(work, screen_width=bgr.shape[1], in_game=in_debris_game)
+    det.tiles = [Rect(r.x + ox, r.y + oy, r.w, r.h) for r in rects]
+    det.tile_taps = [(x + ox, y + oy) for x, y in taps]
+    det.tile_size = size
+
+    cast = _find_cast_button(work)
+    if cast is not None:
+        det.cast_button = Rect(cast.x + ox, cast.y + oy, cast.w, cast.h)
+    return det
+
+
+def screen_kind(det: DetectionResult) -> str | None:
+    """Który ekran gry jest widoczny: "dust" | "debris" | "fishing" | None."""
+    if has_game_screen(det):
+        return "dust"
+    if det.tile_taps:
+        return "debris"
+    if det.cast_button is not None:
+        return "fishing"
+    return None
 
 
 def has_game_screen(detection: DetectionResult, min_balls: int = 1) -> bool:
