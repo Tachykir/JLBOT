@@ -33,6 +33,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+import cv2
 import numpy as np
 
 from adb_controller import ADBController, ADBError
@@ -105,6 +106,18 @@ class BotConfig:
     # "human" wymaga `input motionevent` (nowsze Androidy); bez niego
     # tor jest prosty, ale punkty chwytu i kolejność nadal są losowe.
     drag_style: str = "human"
+
+    # --- "Ludzkie" zachowanie --- #
+    # Czas reakcji (s) od pojawienia się planszy / minigry do pierwszego
+    # ruchu - człowiek potrzebuje chwili, żeby zauważyć zmianę ekranu.
+    reaction_delay: RandomRange = field(default_factory=lambda: RandomRange(0.4, 1.8))
+    # Jak długo palec trzyma tapnięcie (ms). Zwykłe `input tap` to dotyk
+    # 0 ms, zawsze identyczny; prawdziwy trwa ~50-150 ms i lekko się przesuwa.
+    tap_hold_ms: RandomRange = field(default_factory=lambda: RandomRange(50, 150))
+    # Szansa (0-1) na niegroźną pomyłkę: puszczenie kulki tuż obok DROP albo
+    # kliknięcie obok kafelka. Kosztuje tylko chwilę (bot poprawia), a
+    # 100% skuteczności wygląda nieludzko. 0 = wyłączone.
+    mistake_chance: float = 0.03
 
     # Odstęp między kolejnymi przeciągnięciami kulek (żeby gra
     # zdążyła zarejestrować i zaktualizować UI przed kolejną akcją).
@@ -284,6 +297,7 @@ class BotConfig:
             ("foreground_check_interval", float),
             ("foreground_lost_timeout", float),
             ("max_drag_attempts_per_ball", int),
+            ("mistake_chance", float),
             ("play_debris", bool),
             ("skip_fishing", bool),
             ("auto_packs", bool),
@@ -297,6 +311,9 @@ class BotConfig:
         for key in ("nav_profile", "nav_craft", "craft_loot_packs_tab", "card_tap_anywhere"):
             if data.get(key):
                 setattr(d, key, tuple(float(v) for v in data[key]))
+        for key in ("reaction_delay", "tap_hold_ms"):
+            if data.get(key) is not None:
+                setattr(d, key, RandomRange.from_value(data[key]))
         if "tile_tap_delay" in data:
             d.tile_tap_delay = RandomRange.from_value(data["tile_tap_delay"])
         if data.get("idle_target"):
@@ -325,6 +342,9 @@ class BotConfig:
             "idle_click_interval": self.idle_click_interval.to_dict(),
             "drag_duration_ms": self.drag_duration_ms.to_dict(),
             "drag_style": self.drag_style,
+            "reaction_delay": self.reaction_delay.to_dict(),
+            "tap_hold_ms": self.tap_hold_ms.to_dict(),
+            "mistake_chance": self.mistake_chance,
             "between_drags_delay": self.between_drags_delay.to_dict(),
             "empty_detections_to_exit": self.empty_detections_to_exit,
             "max_seconds_per_game_screen": self.max_seconds_per_game_screen,
@@ -534,6 +554,7 @@ class DustMineBot:
                 if kind is None:
                     # koniec sesji (albo stop) - wróć do harmonogramu
                     continue
+                self._react()
                 if kind == "dust":
                     self._collect_loop()
                     self.stats.cycles += 1
@@ -720,7 +741,7 @@ class DustMineBot:
         albo gdy harmonogram każe skończyć sesję."""
         cfg = self.config
         last_click = 0.0
-        next_click_delay = cfg.idle_click_interval.sample()
+        next_click_delay = humanize.human_delay(cfg.idle_click_interval.min, cfg.idle_click_interval.max)
         while not self._stop:
             # Koniec sesji sprawdzamy tylko tutaj (w idle), a nie w trakcie
             # zbierania kulek - rozpoczęta plansza zawsze jest dokończona.
@@ -763,12 +784,32 @@ class DustMineBot:
             if not self._paused and now - last_click >= next_click_delay:
                 point = self._idle_click_point(frame)
                 if point is not None:
-                    self.adb.tap(*point)
+                    self._tap(*point)
                 last_click = now
-                next_click_delay = cfg.idle_click_interval.sample()
+                next_click_delay = humanize.human_delay(cfg.idle_click_interval.min, cfg.idle_click_interval.max)
 
             self._sleep(cfg.idle_poll_interval)
         return None
+
+    def _tap(self, x: int, y: int) -> None:
+        """Tapnięcie "jak palcem": dotyk trwa tap_hold_ms i lekko się
+        przesuwa (swipe o ~1 px z czasem trwania = przytrzymanie). Działa
+        na każdej wersji Androida."""
+        hold = self.config.tap_hold_ms.sample()
+        if hold <= 0:
+            self.adb.tap(x, y)
+            return
+        dx = int(round(max(-2.0, min(2.0, random.gauss(0.0, 0.8)))))
+        dy = int(round(max(-2.0, min(2.0, random.gauss(0.0, 0.8)))))
+        self.adb.swipe(x, y, x + dx, y + dy, duration_ms=int(hold))
+
+    def _react(self) -> None:
+        """Czas reakcji na nowy ekran (plansza / minigra)."""
+        rd = self.config.reaction_delay
+        self._sleep(humanize.human_delay(rd.min, rd.max))
+
+    def _mistake(self) -> bool:
+        return random.random() < self.config.mistake_chance
 
     def _idle_click_point(self, frame: np.ndarray) -> tuple[int, int] | None:
         """Punkt kliknięcia w trybie idle - patrz BotConfig.idle_target."""
@@ -853,9 +894,16 @@ class DustMineBot:
             for x, y in self._tap_order(det.tile_taps):
                 if self._stop or self._paused:
                     break
-                self.adb.tap(*humanize.random_point_in_circle(x, y, radius))
+                if self._mistake():
+                    # kliknięcie obok kafelka - następna runda go poprawi
+                    a = random.uniform(0, 2 * np.pi)
+                    off = det.tile_size * random.uniform(0.6, 0.8)
+                    x, y = int(x + off * np.cos(a)), int(y + off * np.sin(a))
+                    self._tap(x, y)
+                else:
+                    self._tap(*humanize.random_point_in_circle(x, y, radius))
                 tapped += 1
-                self._sleep(cfg.tile_tap_delay.sample())
+                self._sleep(humanize.human_delay(cfg.tile_tap_delay.min, cfg.tile_tap_delay.max))
 
     def _skip_fishing(self) -> None:
         """Minigra "Fishing Hole": od razu klika CAST (bez celowania),
@@ -868,10 +916,9 @@ class DustMineBot:
         if self._on_frame is not None:
             self._on_frame(cfg.name, frame, det, "fishing")
         b = det.cast_button
-        # krótka "ludzka" chwila zastanowienia przed kliknięciem
-        self._sleep(random.uniform(0.3, 1.0))
+        # (czas reakcji na minigrę jest już odczekany w run())
         cx, cy = b.center
-        self.adb.tap(*humanize.random_point_in_circle(cx, cy, min(b.w, b.h) * 0.3))
+        self._tap(*humanize.random_point_in_circle(cx, cy, min(b.w, b.h) * 0.3))
         self.stats.fishing_skipped += 1
         self._sleep(random.uniform(1.0, 2.0))
 
@@ -911,6 +958,11 @@ class DustMineBot:
 
         start = humanize.random_point_in_circle(ball.x, ball.y, ball.r * 0.4)
         end = humanize.random_point_in_circle(drop.x, drop.y, drop.r * 0.35)
+        if self._mistake():
+            # puszczenie kulki tuż obok DROP - zostanie, bot spróbuje ponownie
+            a = random.uniform(0, 2 * np.pi)
+            off = drop.r * random.uniform(1.2, 1.5)
+            end = (int(drop.x + off * np.cos(a)), int(drop.y + off * np.sin(a)))
         dist = float(np.hypot(ball.x - drop.x, ball.y - drop.y))
         if dist < drop.r:
             # Kulka leży na DROP-ie - ruch "z DROP na DROP" byłby za krótki
@@ -931,10 +983,16 @@ class DustMineBot:
         return end
 
     @staticmethod
-    def _patch_color(frame: np.ndarray, x: int, y: int, r: int) -> np.ndarray:
-        half = max(2, int(r * 0.4))
-        patch = frame[max(0, y - half):y + half, max(0, x - half):x + half]
-        return patch.reshape(-1, 3).mean(axis=0) if patch.size else np.zeros(3)
+    def _patch(frame: np.ndarray, x: int, y: int, r: int) -> np.ndarray:
+        """Wycinek (skala szarości, stały rozmiar) wokół miejsca chwytu."""
+        half = max(4, int(r * 1.2))
+        h, w = frame.shape[:2]
+        x1, y1 = min(max(0, x - half), w - 1), min(max(0, y - half), h - 1)
+        patch = frame[y1:y1 + 2 * half, x1:x1 + 2 * half]
+        if patch.size == 0:
+            return np.zeros((16, 16), np.float32)
+        gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+        return cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA).astype(np.float32)
 
     def _collect_loop(self) -> None:
         """Przeciąga kolejno wszystkie kulki do (aktualnej) pozycji DROP."""
@@ -945,10 +1003,12 @@ class DustMineBot:
         # Kulki, które mimo kilku prób nie dały się zebrać (fałszywe
         # wykrycie, element UI itp.) - pomijane do końca tego ekranu gry.
         skipped: list[vision.Circle] = []
-        # Nieudane próby w danym miejscu: (kulka, liczba prób, kolor w
-        # miejscu chwytu). Próba jest nieudana tylko wtedy, gdy po niej w
-        # tym miejscu nadal leży kulka tego samego koloru - zdjęcie kulki
-        # ze stosu odsłania inną (inny kolor), co liczy się jako postęp.
+        # Nieudane próby w danym miejscu: (kulka, liczba prób, wycinek obrazu
+        # wokół miejsca chwytu sprzed przeciągnięcia). Próba jest nieudana
+        # tylko wtedy, gdy obraz w tym miejscu praktycznie się nie zmienił.
+        # Zdjęcie kulki ze stosu (odsłania inną, przesuniętą - nawet w tym
+        # samym kolorze) albo upuszczenie jej obok DROP (kulka się przesuwa)
+        # zmienia obraz i liczy się jako postęp.
         attempts: list[tuple[vision.Circle, int, np.ndarray]] = []
         # Liczba wykrytych kulek tuż przed ostatnim przeciągnięciem -
         # służy do policzenia, ile kulek faktycznie zniknęło.
@@ -986,14 +1046,14 @@ class DustMineBot:
                     self.stats.balls_collected += collected
                 balls_before_drag = None
 
-            # próby zostają tylko tam, gdzie nadal leży kulka tego samego koloru
+            # próby zostają tylko tam, gdzie obraz się nie zmienił
             kept = []
-            for c, n, color in attempts:
+            for c, n, before in attempts:
                 if not any(self._same_ball(c, b) for b in det.balls):
                     continue
-                if float(np.linalg.norm(self._patch_color(frame, c.x, c.y, c.r) - color)) > 30:
+                if float(np.abs(self._patch(frame, c.x, c.y, c.r) - before).mean()) > 6.0:
                     continue
-                kept.append((c, n, color))
+                kept.append((c, n, before))
             attempts = kept
 
             candidates = [b for b in det.balls if not any(self._same_ball(b, s) for s in skipped)]
@@ -1031,7 +1091,7 @@ class DustMineBot:
                                cfg.name, ball.x, ball.y, cfg.max_drag_attempts_per_ball)
                 skipped.append(ball)
                 continue
-            entry = (ball, count, self._patch_color(frame, ball.x, ball.y, ball.r))
+            entry = (ball, count, self._patch(frame, ball.x, ball.y, ball.r))
             if idx is not None:
                 attempts[idx] = entry
             else:
@@ -1044,4 +1104,4 @@ class DustMineBot:
             self.stats.drags += 1
             balls_before_drag = len(det.balls)
 
-            self._sleep(cfg.between_drags_delay.sample())
+            self._sleep(humanize.human_delay(cfg.between_drags_delay.min, cfg.between_drags_delay.max))

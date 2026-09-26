@@ -23,6 +23,18 @@ import random
 Point = tuple[int, int]
 
 
+def human_delay(lo: float, hi: float, rng=random) -> float:
+    """
+    Losowy czas z zakresu [lo, hi] o rozkładzie jak u człowieka: zwykle
+    bliżej dolnej granicy, czasem wyraźnie dłużej (rozkład beta(2, 4) -
+    prawostronnie skośny, średnio ~1/3 zakresu), zamiast równomiernego,
+    przy którym każda wartość jest tak samo prawdopodobna.
+    """
+    if hi <= lo:
+        return lo
+    return lo + (hi - lo) * rng.betavariate(2.0, 4.0)
+
+
 def random_point_in_circle(cx: float, cy: float, radius: float, rng=random) -> Point:
     """Losowy punkt w kole, gęściej przy środku (rozkład normalny obcięty
     do promienia) - tak łapie się obiekt palcem."""

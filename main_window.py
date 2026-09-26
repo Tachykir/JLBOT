@@ -705,6 +705,21 @@ class MainWindow(QMainWindow):
         self.field_between_drags_min, self.field_between_drags_max, box = self._range_row(0.0, 10.0, 0.1, " s")
         form.addRow("Przerwa między przeciągnięciami:", box)
 
+        form.addRow(self._section("Zachowanie jak człowiek"))
+        self.field_reaction_min, self.field_reaction_max, box = self._range_row(0.0, 10.0, 0.1, " s")
+        form.addRow("Czas reakcji na planszę / minigrę:", box)
+        self.field_hold_min, self.field_hold_max, box = self._range_row(0, 400, 10, " ms", decimals=0)
+        form.addRow("Przytrzymanie tapnięcia:", box)
+        self.field_mistake = QDoubleSpinBox(); self.field_mistake.setRange(0.0, 20.0)
+        self.field_mistake.setSingleStep(0.5); self.field_mistake.setDecimals(1); self.field_mistake.setSuffix(" %")
+        self.field_mistake.setSpecialValueText("wyłączone")
+        self.field_mistake.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Szansa na drobną pomyłkę:", self.field_mistake)
+        form.addRow(self._hint("Pomyłka = puszczenie kulki tuż obok DROP albo kliknięcie obok kafelka. "
+                               "Bot od razu to poprawia, więc kosztuje tylko chwilę, a 100% skuteczności "
+                               "wygląda nieludzko. Czasy są losowane częściej bliżej dolnej granicy, "
+                               "czasem dłużej - jak u człowieka."))
+
         form.addRow(self._section("Styl ruchu"))
         self.field_human_drag = QCheckBox("Ludzki ruch przy przeciąganiu")
         self.field_human_drag.toggled.connect(self._apply_config_fields)
@@ -940,6 +955,8 @@ class MainWindow(QMainWindow):
                 self.field_idle_interval_min, self.field_idle_interval_max,
                 self.field_drag_ms_min, self.field_drag_ms_max,
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
+                self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
+                self.field_mistake,
                 self.field_play_debris, self.field_skip_fishing,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
                 self.field_black_timeout, self.field_fg_lost, self.field_settle)
@@ -973,6 +990,11 @@ class MainWindow(QMainWindow):
             self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
             self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
             self.field_human_drag.setChecked(cfg.drag_style == "human")
+            self.field_reaction_min.setValue(cfg.reaction_delay.min)
+            self.field_reaction_max.setValue(cfg.reaction_delay.max)
+            self.field_hold_min.setValue(cfg.tap_hold_ms.min)
+            self.field_hold_max.setValue(cfg.tap_hold_ms.max)
+            self.field_mistake.setValue(cfg.mistake_chance * 100)
             self.field_play_debris.setChecked(cfg.play_debris)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
             self.field_auto_packs.setChecked(cfg.auto_packs)
@@ -1081,6 +1103,11 @@ class MainWindow(QMainWindow):
             self.field_between_drags_min.value(),
             max(self.field_between_drags_min.value(), self.field_between_drags_max.value()))
         cfg.drag_style = "human" if self.field_human_drag.isChecked() else "straight"
+        cfg.reaction_delay = RandomRange(
+            self.field_reaction_min.value(), max(self.field_reaction_min.value(), self.field_reaction_max.value()))
+        cfg.tap_hold_ms = RandomRange(
+            self.field_hold_min.value(), max(self.field_hold_min.value(), self.field_hold_max.value()))
+        cfg.mistake_chance = self.field_mistake.value() / 100.0
         cfg.play_debris = self.field_play_debris.isChecked()
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
         cfg.auto_packs = self.field_auto_packs.isChecked()

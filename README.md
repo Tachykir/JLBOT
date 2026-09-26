@@ -174,6 +174,19 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   `nav_craft`, `craft_loot_packs_tab`) są względne (ułamek ekranu).
   Rozpoznawanie ekranów sprawdzisz na zrzucie: `python calibrate.py
   --image zrzut.png` wypisuje, co bot na nim widzi.
+- **Zachowanie jak człowiek** (GUI: zakładka Tempo):
+  - `reaction_delay` (domyślnie 0.4–1.8 s) — chwila na „zauważenie”
+    nowej planszy / minigry przed pierwszym ruchem,
+  - `tap_hold_ms` (50–150 ms) — tapnięcie trwa jak dotyk palcem i lekko
+    się przesuwa (zamiast identycznego dotyku 0 ms),
+  - `mistake_chance` (3%) — rzadka, niegroźna pomyłka: kulka puszczona
+    tuż obok DROP albo kliknięcie obok kafelka; bot od razu poprawia,
+  - opóźnienia (odstępy klikania, między przeciągnięciami, między
+    kafelkami) są losowane częściej bliżej dolnej granicy zakresu,
+    czasem dłużej — jak u człowieka — zamiast równomiernie.
+- **Zakładki PROFILE / CRAFT** — szerokość z ułamka ekranu (`nav_profile`,
+  `nav_craft`), a wysokość od wykrytego przycisku JUST LOOT (leży w tym
+  samym pasku), więc kliknięcie trafia przy dowolnych proporcjach ekranu.
 - **`max_drag_attempts_per_ball`** (domyślnie 3) — po tylu nieudanych
   przeciągnięciach tej samej kulki bot uznaje ją za niezbieralną i
   pomija do końca bieżącego ekranu gry.

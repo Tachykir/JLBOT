@@ -91,11 +91,24 @@ class PackOpener:
     def _tap_rel(self, rel: tuple[float, float], jitter: float = 0.015) -> None:
         W, H = self._size
         x, y = humanize.random_point_in_circle(rel[0] * W, rel[1] * H, jitter * W)
-        self.bot.adb.tap(x, y)
+        self.bot._tap(x, y)
+
+    def _tap_nav(self, rel: tuple[float, float]) -> None:
+        """Kliknięcie zakładki w pasku nawigacji (PROFILE / CRAFT).
+        Szerokość bierzemy z ułamka ekranu (pasek zajmuje całą szerokość),
+        a wysokość od wykrytego przycisku JUST LOOT - leży w tym samym
+        pasku, więc działa przy dowolnych proporcjach ekranu (zakładki są
+        pół promienia koła nad jego środkiem: iOS i Android)."""
+        frame = self._frame()
+        W, H = self._size
+        button = screens.find_just_loot(frame)
+        y = button.y - 0.5 * button.r if button is not None else rel[1] * H
+        x, y = humanize.random_point_in_circle(rel[0] * W, y, 0.012 * W)
+        self.bot._tap(x, y)
 
     def _tap_rect(self, rect) -> None:
         cx, cy = rect.center
-        self.bot.adb.tap(*humanize.random_point_in_circle(cx, cy, min(rect.w, rect.h) * 0.3))
+        self.bot._tap(*humanize.random_point_in_circle(cx, cy, min(rect.w, rect.h) * 0.3))
 
     def _leave_result_screen(self) -> None:
         """Jeśli widać ekran końca walki (PROCEED), kliknij go - pasek
@@ -113,7 +126,7 @@ class PackOpener:
         """Otwiera Profile i sprawdza, czy wrogowie mają bonus. True =
         za słaby gear, False = OK, None = nie udało się odczytać."""
         cfg = self.bot.config
-        self._tap_rel(cfg.nav_profile)
+        self._tap_nav(cfg.nav_profile)
         self.bot._sleep(random.uniform(1.2, 1.8))
         warning = screens.frontier_warning(self._frame())
         if warning is None:
@@ -132,7 +145,7 @@ class PackOpener:
         """Jedna runda: max paczek, OPEN, wszystkie karty. False = nie
         otworzono (za mało pyłu albo nie znaleziono ekranu)."""
         bot, cfg = self.bot, self.bot.config
-        self._tap_rel(cfg.nav_craft)
+        self._tap_nav(cfg.nav_craft)
         bot._sleep(random.uniform(1.2, 1.8))
         frame = self._frame()
         buy = screens.find_buy_button(frame)
@@ -150,7 +163,7 @@ class PackOpener:
         for _ in range(cfg.pack_plus_taps):
             if self._abort():
                 return False
-            bot.adb.tap(*humanize.random_point_in_circle(plus[0], plus[1], 0.006 * W))
+            bot._tap(*humanize.random_point_in_circle(plus[0], plus[1], 0.006 * W))
             bot._sleep(random.uniform(0.05, 0.15))
 
         bot._sleep(random.uniform(0.4, 0.8))
@@ -163,7 +176,7 @@ class PackOpener:
             logger.info("[%s] brak okna potwierdzenia - prawdopodobnie za mało pyłu", cfg.name)
             return False
         bot._sleep(random.uniform(0.3, 0.8))
-        bot.adb.tap(*humanize.random_point_in_circle(*dialog.open_button, 0.01 * W))
+        bot._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.01 * W))
         bot._sleep(random.uniform(1.5, 2.0))
 
         # Karty: przedmiot z auto-upgrade ma przycisk "Next Card", zwykły
@@ -230,5 +243,5 @@ class PackOpener:
         self.defeat_streak = 0
         self._last_check = time.monotonic()
         if warning is None:
-            self._tap_rel(cfg.nav_profile)
+            self._tap_nav(cfg.nav_profile)
             bot._sleep(1.0)
