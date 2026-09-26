@@ -38,6 +38,7 @@ import numpy as np
 from adb_controller import ADBController, ADBError
 import humanize
 import vision
+from packs import PackOpener
 # re-eksport dla zgodności (GUI i manager.py importują je z bot.py)
 from scheduler import (  # noqa: F401
     Decision, RandomRange, SchedulePlanner, ScheduleWindow, schedule_from_list, schedule_to_list,
@@ -214,6 +215,24 @@ class BotConfig:
     # "Fishing Hole": od razu klikaj CAST, żeby pominąć minigrę.
     skip_fishing: bool = True
 
+    # --- Automatyczne otwieranie paczek (patrz packs.py) --- #
+    # Domyślnie wyłączone, dopóki rozpoznawanie ekranów nie zostanie
+    # potwierdzone na danym emulatorze.
+    auto_packs: bool = False
+    # Po ilu porażkach z rzędu otwierać paczki.
+    packs_defeat_streak: int = 5
+    # Co ile minut sprawdzać w Profile, czy gear nie jest za słaby.
+    packs_check_interval_min: float = 30.0
+    # Maksymalna liczba rund (max paczek + OPEN) w jednym podejściu.
+    packs_max_rounds: int = 10
+    # Ile razy kliknąć "+" (gra sama ogranicza do maksimum / dostępnego pyłu).
+    pack_plus_taps: int = 25
+    # Pozycje względne (x, y jako ułamek szerokości/wysokości ekranu),
+    # zmierzone na LDPlayer.
+    nav_profile: tuple[float, float] = (0.11, 0.93)
+    nav_craft: tuple[float, float] = (0.67, 0.93)
+    craft_loot_packs_tab: tuple[float, float] = (0.18, 0.142)
+
     # ------------------------------------------------------------------ #
     # Serializacja do/z JSON (jedno miejsce dla GUI i manager.py)
     # ------------------------------------------------------------------ #
@@ -255,9 +274,17 @@ class BotConfig:
             ("max_drag_attempts_per_ball", int),
             ("play_debris", bool),
             ("skip_fishing", bool),
+            ("auto_packs", bool),
+            ("packs_defeat_streak", int),
+            ("packs_check_interval_min", float),
+            ("packs_max_rounds", int),
+            ("pack_plus_taps", int),
         ):
             if key in data and data[key] is not None:
                 setattr(d, key, conv(data[key]))
+        for key in ("nav_profile", "nav_craft", "craft_loot_packs_tab"):
+            if data.get(key):
+                setattr(d, key, tuple(float(v) for v in data[key]))
         if "tile_tap_delay" in data:
             d.tile_tap_delay = RandomRange.from_value(data["tile_tap_delay"])
         if data.get("drag_style"):
@@ -301,6 +328,14 @@ class BotConfig:
             "play_debris": self.play_debris,
             "tile_tap_delay": self.tile_tap_delay.to_dict(),
             "skip_fishing": self.skip_fishing,
+            "auto_packs": self.auto_packs,
+            "packs_defeat_streak": self.packs_defeat_streak,
+            "packs_check_interval_min": self.packs_check_interval_min,
+            "packs_max_rounds": self.packs_max_rounds,
+            "pack_plus_taps": self.pack_plus_taps,
+            "nav_profile": list(self.nav_profile),
+            "nav_craft": list(self.nav_craft),
+            "craft_loot_packs_tab": list(self.craft_loot_packs_tab),
         }
 
 
@@ -315,6 +350,8 @@ class BotStats:
     restarts: int = 0
     debris_games: int = 0
     fishing_skipped: int = 0
+    defeats: int = 0
+    pack_rounds: int = 0
 
 
 class DustMineBot:
@@ -332,6 +369,7 @@ class DustMineBot:
         self._on_frame = on_frame
         self._on_schedule = on_schedule
         self._planner = SchedulePlanner(config)
+        self._packs = PackOpener(self)
         self._last_decision: Decision | None = None
 
         # Watchdog czarnego ekranu: znacznik czasu (time.monotonic()),
@@ -681,6 +719,13 @@ class DustMineBot:
                 self._on_frame(cfg.name, frame, det, "idle")
 
             kind = self._enabled_kind(det)
+            if kind is None and not self._paused:
+                reason = self._packs.observe(frame)
+                if reason is not None:
+                    self._packs.run(reason)
+                    last_click = 0.0
+                    continue
+
             if kind == "dust":
                 logger.info("[%s] wykryto ekran gry: DROP=%s, kulki=%d",
                             cfg.name, det.drop.center if det.drop else None, len(det.balls))

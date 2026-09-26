@@ -39,6 +39,7 @@ import sys
 import cv2
 import numpy as np
 
+import screens
 import vision
 from adb_controller import ADBController
 
@@ -110,6 +111,19 @@ def main() -> None:
     det = vision.detect_all(img, region=region)
 
     print(f"Rozpoznany ekran: {vision.screen_kind(det) or '(żaden)'}")
+    # ekrany paczek / profilu / walki (screens.py) - na pełnym obrazie
+    buy = screens.find_buy_button(img)
+    print(f"Craft - przycisk z ceną: {buy}")
+    if buy is not None:
+        print(f"Craft - przycisk '+': {screens.find_plus_button(img, buy)}")
+    dialog = screens.find_open_dialog(img)
+    print(f"Okno potwierdzenia: {dialog}")
+    wide = screens.find_wide_bottom_button(img)
+    print(f"Szeroki przycisk na dole (Next Card / PROCEED): {wide}")
+    print(f"Porażka (Defeated.): {screens.has_defeat_text(img, wide)}")
+    warning = screens.frontier_warning(img)
+    print("Profile - wrogowie mają bonus: "
+          + {True: "TAK (gear za słaby)", False: "nie (normal strength)", None: "nie znaleziono selektora głębokości"}[warning])
     print(f"Kafelki Depth Collapse: {len(det.tile_taps)} {det.tile_taps}")
     print(f"Przycisk CAST: {det.cast_button}")
     print(f"DROP: {det.drop}")

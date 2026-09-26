@@ -604,6 +604,29 @@ class MainWindow(QMainWindow):
         minigames_layout.addWidget(self.field_skip_fishing)
         form.addRow("Minigry:", minigames)
 
+        self.field_auto_packs = QCheckBox("otwieraj paczki, gdy gear za słaby")
+        self.field_auto_packs.setToolTip(
+            "Co N minut sprawdza w Profile, czy wrogowie mają bonus (gear za słaby\n"
+            "na wybraną głębokość), albo po serii porażek - wtedy w Craft otwiera\n"
+            "maksymalną liczbę paczek, aż gear wystarczy albo skończy się pył."
+        )
+        self.field_auto_packs.toggled.connect(self._apply_config_fields)
+        self.field_packs_defeats = QSpinBox(); self.field_packs_defeats.setRange(1, 50)
+        self.field_packs_defeats.setSuffix(" porażek z rzędu")
+        self.field_packs_defeats.valueChanged.connect(self._apply_config_fields)
+        self.field_packs_interval = QSpinBox(); self.field_packs_interval.setRange(1, 1440)
+        self.field_packs_interval.setPrefix("sprawdzaj co "); self.field_packs_interval.setSuffix(" min")
+        self.field_packs_interval.valueChanged.connect(self._apply_config_fields)
+        packs_box = QWidget()
+        packs_layout = QVBoxLayout(packs_box)
+        packs_layout.setContentsMargins(0, 0, 0, 0)
+        packs_layout.addWidget(self.field_auto_packs)
+        packs_row = QHBoxLayout()
+        packs_row.addWidget(self.field_packs_interval)
+        packs_row.addWidget(self.field_packs_defeats)
+        packs_layout.addLayout(packs_row)
+        form.addRow("Paczki:", packs_box)
+
         self.field_between_drags_min, self.field_between_drags_max, between_drags_container = \
             _make_range_row(0.0, 10.0, 0.1)
         form.addRow("between_drags_delay (s):", between_drags_container)
@@ -756,6 +779,7 @@ class MainWindow(QMainWindow):
                   self.field_idle_interval_min, self.field_idle_interval_max,
                   self.field_drag_ms_min, self.field_drag_ms_max, self.field_human_drag,
                   self.field_play_debris, self.field_skip_fishing,
+                  self.field_auto_packs, self.field_packs_defeats, self.field_packs_interval,
                   self.field_between_drags_min, self.field_between_drags_max)
         for w in fields:
             w.blockSignals(True)
@@ -783,6 +807,9 @@ class MainWindow(QMainWindow):
             self.field_human_drag.setChecked(cfg.drag_style == "human")
             self.field_play_debris.setChecked(cfg.play_debris)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
+            self.field_auto_packs.setChecked(cfg.auto_packs)
+            self.field_packs_defeats.setValue(cfg.packs_defeat_streak)
+            self.field_packs_interval.setValue(int(cfg.packs_check_interval_min))
             self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
             self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
         finally:
@@ -795,9 +822,11 @@ class MainWindow(QMainWindow):
     def _format_stats(stats: BotStats | None) -> str:
         if stats is None:
             return ("Cykle: 0   Kulki: 0   Przeciągnięcia: 0\n"
-                    "Depth Collapse: 0   Fishing pominięte: 0   Błędy: 0   Restarty: 0")
+                    "Depth Collapse: 0   Fishing pominięte: 0   Porażki: 0   Rundy paczek: 0\n"
+                    "Błędy: 0   Restarty: 0")
         return (f"Cykle: {stats.cycles}   Kulki: {stats.balls_collected}   Przeciągnięcia: {stats.drags}\n"
                 f"Depth Collapse: {stats.debris_games}   Fishing pominięte: {stats.fishing_skipped}   "
+                f"Porażki: {stats.defeats}   Rundy paczek: {stats.pack_rounds}\n"
                 f"Błędy: {stats.errors}   Restarty: {stats.restarts}")
 
     def _schedule_summary_text(self, cfg: BotConfig) -> str:
@@ -851,6 +880,7 @@ class MainWindow(QMainWindow):
                   self.field_idle_interval_min, self.field_idle_interval_max,
                   self.field_drag_ms_min, self.field_drag_ms_max, self.field_human_drag,
                   self.field_play_debris, self.field_skip_fishing,
+                  self.field_auto_packs, self.field_packs_defeats, self.field_packs_interval,
                   self.field_between_drags_min, self.field_between_drags_max,
                   self.btn_edit_schedule):
             w.setEnabled(enabled)
@@ -887,6 +917,9 @@ class MainWindow(QMainWindow):
         cfg.drag_style = "human" if self.field_human_drag.isChecked() else "straight"
         cfg.play_debris = self.field_play_debris.isChecked()
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
+        cfg.auto_packs = self.field_auto_packs.isChecked()
+        cfg.packs_defeat_streak = self.field_packs_defeats.value()
+        cfg.packs_check_interval_min = float(self.field_packs_interval.value())
         cfg.between_drags_delay = RandomRange(
             self.field_between_drags_min.value(),
             max(self.field_between_drags_min.value(), self.field_between_drags_max.value()),

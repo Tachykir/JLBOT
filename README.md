@@ -148,6 +148,19 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
     odstęp między kliknięciami `tile_tap_delay` (s).
   - **Fishing Hole** (przycisk CAST): od razu klika CAST, co pomija
     minigrę. Wyłączane `skip_fishing: false`.
+- **Automatyczne otwieranie paczek** (`auto_packs`, domyślnie wyłączone)
+  — gdy gear jest za słaby na wybraną głębokość (w Profile pod
+  „CHOOSE DEPTH” gra pisze „enemies +N% stronger — find newer gear”
+  zamiast „enemies at normal strength”) albo po `packs_defeat_streak`
+  (domyślnie 5) porażkach z rzędu, bot idzie do Craft → Loot Packs,
+  klika „+” do maksimum, przycisk z ceną, OPEN, przewija karty
+  („Next Card”) i sprawdza Profile ponownie — aż wrogowie wrócą do
+  normalnej siły, skończy się pył (brak okna potwierdzenia) albo minie
+  `packs_max_rounds` rund. Profile jest sprawdzany co
+  `packs_check_interval_min` minut. Pozycje zakładek (`nav_profile`,
+  `nav_craft`, `craft_loot_packs_tab`) są względne (ułamek ekranu).
+  Rozpoznawanie ekranów sprawdzisz na zrzucie: `python calibrate.py
+  --image zrzut.png` wypisuje, co bot na nim widzi.
 - **`max_drag_attempts_per_ball`** (domyślnie 3) — po tylu nieudanych
   przeciągnięciach tej samej kulki bot uznaje ją za niezbieralną i
   pomija do końca bieżącego ekranu gry.
@@ -274,6 +287,8 @@ Gotowe pliki konfiguracyjne do tego już są w projekcie:
 | `bot.py` | Logika jednej instancji bota (pętla idle → zbieranie → idle) |
 | `scheduler.py` | Harmonogram: okna, losowe sesje/przerwy, limit dzienny |
 | `humanize.py` | Generowanie "ludzkich" torów przeciągania |
+| `screens.py` | Rozpoznawanie ekranów Profile / Craft / kart / walki |
+| `packs.py` | Automatyczne otwieranie paczek, gdy gear za słaby |
 | `manager.py` | CLI: uruchamianie wielu instancji bota równolegle (multiprocessing) |
 | `main_window.py` | GUI: główne okno aplikacji (uruchom to, żeby odpalić GUI) |
 | `gui_worker.py` | Most między `bot.py` a GUI - uruchamia bota w wątku Qt |
