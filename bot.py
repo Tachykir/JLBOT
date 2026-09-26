@@ -826,7 +826,12 @@ class DustMineBot:
         else:
             region_frame = frame
 
-        if not vision.is_black_screen(region_frame, cfg.black_screen_brightness_threshold):
+        black = vision.is_black_screen(region_frame, cfg.black_screen_brightness_threshold)
+        # pusty ekran gry (np. zawieszona gra z samym "+1 RAID XP") -
+        # traktowany jak czarny, o ile to nie zakryta karta "?" / karta z paczki
+        empty = (not black and vision.is_empty_screen(frame)
+                 and screens.find_reveal_card(frame) is None and screens.find_item_card(frame) is None)
+        if not (black or empty):
             self._black_screen_since = None
             return False
 
@@ -834,8 +839,9 @@ class DustMineBot:
         if self._black_screen_since is None:
             self._black_screen_since = now
             self._last_black_log = now
-            logger.info("[%s] wykryto czarny ekran, start odliczania watchdoga (limit %.0fs)",
-                        cfg.name, cfg.black_screen_timeout)
+            logger.info("[%s] wykryto %s, start odliczania watchdoga (limit %.0fs)",
+                        cfg.name, "czarny ekran" if black else "pusty ekran (gra się zawiesiła?)",
+                        cfg.black_screen_timeout)
             return False
 
         elapsed = now - self._black_screen_since
@@ -846,7 +852,7 @@ class DustMineBot:
                 logger.info("[%s] czarny ekran trwa %.0fs / %.0fs", cfg.name, elapsed, cfg.black_screen_timeout)
             return False
 
-        return self._do_restart_app(f"czarny ekran przez {elapsed:.0f}s (limit {cfg.black_screen_timeout:.0f}s)")
+        return self._do_restart_app(f"czarny/pusty ekran przez {elapsed:.0f}s (limit {cfg.black_screen_timeout:.0f}s)")
 
     # ------------------------------------------------------------------ #
     def _enabled_kind(self, det: vision.DetectionResult, frame: np.ndarray | None = None) -> str | None:

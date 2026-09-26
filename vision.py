@@ -535,6 +535,22 @@ def has_game_screen(detection: DetectionResult, min_balls: int = 1) -> bool:
     return detection.drop is not None and len(detection.balls) >= min_balls
 
 
+def is_empty_screen(bgr: np.ndarray) -> bool:
+    """
+    Ciemny ekran gry bez treści - np. zawieszona gra, na której został
+    tylko dymek "+1 RAID XP". Poza paskiem statusu (górne 4%) prawie
+    żaden piksel nie odstaje od tła (< 0.4%). Uwaga: zakryta karta "?"
+    też jest prawie pusta - wywołujący musi ją wykluczyć.
+    """
+    H = bgr.shape[0]
+    gray = cv2.cvtColor(bgr[int(0.04 * H):], cv2.COLOR_BGR2GRAY)
+    small = cv2.resize(gray, (gray.shape[1] // 2 or 1, gray.shape[0] // 2 or 1), interpolation=cv2.INTER_AREA)
+    bg = float(np.median(small))
+    if bg > 50:
+        return False
+    return float((np.abs(small.astype(np.int16) - bg) > 25).mean()) < 0.004
+
+
 def is_black_screen(bgr: np.ndarray, brightness_threshold: float = 10.0) -> bool:
     """
     Sprawdza, czy klatka jest (w praktyce) całkowicie czarna - typowy

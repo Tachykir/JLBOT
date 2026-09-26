@@ -70,16 +70,18 @@ class PackOpener:
         if button is None:
             self._on_result_screen = False
         elif not self._on_result_screen:
-            if screens.has_defeat_text(frame, button):
-                self._on_result_screen = True
-                self.defeat_streak += 1
-                self.bot.stats.defeats += 1
-                logger.info("[%s] porażka w walce (%d z rzędu)", cfg.name, self.defeat_streak)
-            elif screens.has_victory_text(frame, button):
+            # najpierw "Victory." - wygrana ma pierwszeństwo przed czerwonymi
+            # wierszami logu
+            if screens.has_victory_text(frame, button):
                 self._on_result_screen = True
                 if self.defeat_streak:
                     logger.info("[%s] wygrana walka - zeruję licznik porażek", cfg.name)
                 self.defeat_streak = 0
+            elif screens.has_defeat_text(frame, button):
+                self._on_result_screen = True
+                self.defeat_streak += 1
+                self.bot.stats.defeats += 1
+                logger.info("[%s] porażka w walce (%d z rzędu)", cfg.name, self.defeat_streak)
 
         # procedury zaczynamy tylko na ekranie z paskiem nawigacji (nie w
         # trakcie walki, dropu czy minigry)

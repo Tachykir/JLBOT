@@ -215,6 +215,10 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   ramkę z krótkim napisem na środku i wskaźnik w torze nad sobą, ekran
   nie może mieć paska nawigacji (JUST LOOT), a minigra musi być widoczna
   na dwóch klatkach z rzędu.
+- **Pusty ekran = zawieszona gra** — ciemny ekran bez treści (np. został
+  sam dymek „+1 RAID XP”) jest traktowany jak czarny ekran: po
+  `black_screen_timeout` (domyślnie 20 s) bot restartuje grę. Zakryta
+  karta „?” i karty z paczek się nie liczą. Wymaga pakietu gry.
 - **Ekran „Pack Opened”** — przycisk „Done” po kartach z paczki jest
   klikany w procedurze paczek i w zwykłym trybie.
 - **Szybkie klikanie kart** — seria kliknięć „+” i przeklikiwanie kart z
