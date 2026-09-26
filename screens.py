@@ -461,11 +461,15 @@ def frontier_warning(bgr: np.ndarray) -> bool | None:
             cand = (x1, y, x2 - x1, y2 - y)
             if number is None or cand[3] > number[3]:
                 number = cand
-    if number is None:
+    selector = find_depth_selector(bgr)
+    if selector is not None:
+        ny2 = selector.bottom  # kafelki (do 79) albo duża liczba ze strzałkami
+    elif number is None:
         return None
+    else:
+        ny2 = number[1] + number[3]
 
     # 2) pierwszy wiersz tekstu pod liczbą
-    ny2 = number[1] + number[3]
     y1, y2 = ny2 + int(0.01 * W), min(H, ny2 + int(0.3 * W))
     band = hsv[y1:y2, int(0.03 * W):int(0.97 * W)]
     if band.size == 0:
@@ -485,3 +489,121 @@ def frontier_warning(bgr: np.ndarray) -> bool | None:
         return None
     saturated = (line[:, :, 1] > 100) & line_text
     return bool(saturated.sum() / line_text.sum() > 0.5)
+
+
+# --------------------------------------------------------------------- #
+# Profile: wybór głębokości ("CHOOSE DEPTH")
+# --------------------------------------------------------------------- #
+#
+# Dwa układy:
+#   - do głębokości 79: rząd kafelków z kolejnymi numerami (wybrany ma
+#     kolorową obwódkę) między strzałkami "‹" i "›",
+#   - od 80: jedna duża liczba między strzałkami (każde kliknięcie = 1).
+# Cyfry czytamy przez porównanie z wzorami czcionki gry (Kode Mono).
+
+@dataclass
+class DepthTile:
+    number: int | None
+    rect: Rect
+    selected: bool
+
+
+@dataclass
+class DepthSelector:
+    kind: str                  # "tiles" | "big"
+    left: Rect                 # strzałka "‹"
+    right: Rect                # strzałka "›"
+    tiles: list[DepthTile]     # przy "big" - jedna pozycja (sama liczba)
+    bottom: int                # dolna krawędź rzędu (pod nim opis siły wrogów)
+
+    @property
+    def current(self) -> int | None:
+        for t in self.tiles:
+            if t.selected:
+                return t.number
+        return None
+
+
+def read_number(mask: np.ndarray) -> int | None:
+    """Odczytuje liczbę z maski jasnych pikseli (cyfry Kode Mono)."""
+    import digit_templates as dt
+    comps = [c for c in _components(mask.astype(np.uint8)) if c[4] >= 10]
+    if not comps:
+        return None
+    max_h = max(c[3] for c in comps)
+    comps = sorted((c for c in comps if c[3] >= 0.6 * max_h), key=lambda c: c[0])
+    tw, th = dt.SIZE
+    digits = ""
+    for x, y, w, h, _area in comps:
+        glyph = mask[y:y + h, x:x + w].astype(np.float32)
+        norm = cv2.resize(glyph, (tw, th), interpolation=cv2.INTER_AREA)
+        aspect = w / h
+        scores = [float(np.abs(norm - t).mean()) + 0.5 * abs(aspect - a)
+                  for t, a in zip(dt.TEMPLATES, dt.ASPECTS)]
+        best = int(np.argmin(scores))
+        if scores[best] > 0.3:
+            return None
+        digits += dt.DIGITS[best]
+    if not digits or len(digits) > 4:
+        return None
+    return int(digits)
+
+
+def find_depth_selector(bgr: np.ndarray) -> DepthSelector | None:
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    bg = float(np.median(gray))
+    if bg > 40:
+        return None
+    panels = (cv2.medianBlur(gray, 5) > bg + 4).astype(np.uint8)
+    squares = [Rect(x, y, w, h) for x, y, w, h, area in _components(panels)
+               if 0.07 * W <= w <= 0.2 * W and 0.75 <= h / w <= 1.3 and area >= 0.7 * w * h]
+    nav = find_just_loot(bgr)
+    y_limit = nav.y - nav.r if nav is not None else H
+    # strzałki: kwadraty przy lewej / prawej krawędzi, większe od slotów
+    # ekwipunku (te mają ~0.083 szerokości ekranu)
+    arrows = [s for s in squares if s.w >= 0.092 * W and s.y + s.h < y_limit
+              and (s.x < 0.06 * W or s.x + s.w > 0.94 * W)]
+    for arrow in sorted(arrows, key=lambda s: -s.y):
+        cy = arrow.y + arrow.h / 2
+        same_row = [s for s in arrows if abs(s.y + s.h / 2 - cy) < 0.03 * W]
+        left = next((s for s in same_row if s.x < 0.06 * W), None)
+        right = next((s for s in same_row if s.x + s.w > 0.94 * W), None)
+        # nieaktywna strzałka jest ledwo widoczna - lustrzane odbicie drugiej
+        if left is None:
+            left = Rect(W - right.x - right.w, right.y, right.w, right.h)
+        if right is None:
+            right = Rect(W - left.x - left.w, left.y, left.w, left.h)
+        bottom = max(left.y + left.h, right.y + right.h)
+
+        tiles = []
+        for s in sorted(squares, key=lambda s: s.x):
+            if (abs(s.y + s.h / 2 - cy) < 0.03 * W and s.x > left.x + left.w
+                    and s.x + s.w < right.x and s.w <= 0.15 * W):
+                m = int(0.18 * s.w)
+                inner = hsv[s.y + m:s.y + s.h - m, s.x + m:s.x + s.w - m]
+                number = read_number(inner[..., 2] > 100)
+                ring = np.concatenate((hsv[s.y:s.y + 3, s.x:s.x + s.w].reshape(-1, 3),
+                                       hsv[s.y + s.h - 3:s.y + s.h, s.x:s.x + s.w].reshape(-1, 3)))
+                selected = float(((ring[:, 1] > 90) & (ring[:, 2] > 120)).mean()) > 0.3
+                tiles.append(DepthTile(number, s, selected))
+        if tiles:
+            return DepthSelector("tiles", left, right, tiles, bottom)
+
+        # duża biała liczba między strzałkami
+        band_y1 = int(max(0, cy - 0.12 * W))
+        band_y2 = int(min(H, cy + 0.12 * W))
+        x1, x2 = left.x + left.w, right.x
+        white = cv2.inRange(hsv[band_y1:band_y2, x1:x2], (0, 0, 200), (180, 60, 255))
+        comps = [c for c in _components(white) if c[3] >= 0.05 * W]
+        if comps:
+            number = read_number(white > 0)
+            gx1 = min(c[0] for c in comps)
+            gy1 = min(c[1] for c in comps)
+            gx2 = max(c[0] + c[2] for c in comps)
+            gy2 = max(c[1] + c[3] for c in comps)
+            rect = Rect(x1 + gx1, band_y1 + gy1, gx2 - gx1, gy2 - gy1)
+            return DepthSelector("big", left, right, [DepthTile(number, rect, True)],
+                                 max(bottom, rect.y + rect.h))
+    return None

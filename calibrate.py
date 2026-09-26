@@ -127,6 +127,12 @@ def main() -> None:
     print(f"Szeroki przycisk na dole (Next Card / PROCEED): {wide}")
     print(f"Porażka (Defeated.): {screens.has_defeat_text(img, wide)}")
     print(f"Wygrana (Victory.): {screens.has_victory_text(img, wide)}")
+    sel = screens.find_depth_selector(img)
+    if sel is not None:
+        print(f"Wybór głębokości: układ {sel.kind}, wybrana {sel.current}, "
+              f"widoczne {[t.number for t in sel.tiles]}")
+    else:
+        print("Wybór głębokości: nie znaleziono")
     warning = screens.frontier_warning(img)
     print("Profile - wrogowie mają bonus: "
           + {True: "TAK (gear za słaby)", False: "nie (normal strength)", None: "nie znaleziono selektora głębokości"}[warning])

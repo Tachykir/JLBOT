@@ -16,6 +16,7 @@ dla kolejnych instancji - ale najpewniej jest to sprawdzić przez
 
 from __future__ import annotations
 
+import random
 import subprocess
 import sys
 import os
@@ -219,6 +220,24 @@ class ADBController:
             str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)),
             str(int(duration_ms)),
         ])
+
+    def tap_sequence(self, taps: list[tuple[int, int, int]], gaps_s: list[float]) -> None:
+        """
+        Seria tapnięć jednym poleceniem `adb shell` (bez narzutu
+        uruchamiania adb.exe przy każdym kliknięciu). `taps` to
+        (x, y, czas_dotyku_ms) - dotyk jako mikro-swipe o 0-2 px, jak w
+        pojedynczym tapnięciu; `gaps_s` - przerwy między kolejnymi.
+        """
+        if not taps:
+            return
+        parts = []
+        for i, (x, y, hold) in enumerate(taps):
+            if i and i - 1 < len(gaps_s) and gaps_s[i - 1] > 0:
+                parts.append(f"sleep {gaps_s[i - 1]:.3f}")
+            dx, dy = random.randint(-1, 1), random.randint(-1, 1)
+            parts.append(f"input swipe {int(x)} {int(y)} {int(x) + dx} {int(y) + dy} {max(1, int(hold))}")
+        total = sum(gaps_s) + len(taps) * 0.5
+        self._run(["shell", "; ".join(parts)], timeout=10 + total)
 
     def _probe_motionevent(self) -> bool:
         """Sprawdza, czy `input motionevent` jest dostępne na urządzeniu

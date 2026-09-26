@@ -617,7 +617,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._scroll_tab(self._tab_points()), "Punkty")
         self.tabs.addTab(self._scroll_tab(self._tab_tempo()), "Tempo")
         self.tabs.addTab(self._scroll_tab(self._tab_minigames()), "Minigry")
-        self.tabs.addTab(self._scroll_tab(self._tab_packs()), "Paczki")
+        self.tabs.addTab(self._scroll_tab(self._tab_packs()), "Głębokość i paczki")
         self.tabs.addTab(self._scroll_tab(self._tab_schedule()), "Plan")
         self.tabs.addTab(self._scroll_tab(self._tab_protection()), "Ochrona")
         self.tabs.setTabToolTip(1, "Obszary kliknięć: punkt awaryjny, zakładki, karty")
@@ -840,6 +840,22 @@ class MainWindow(QMainWindow):
         w = QWidget()
         form = self._form()
         w.setLayout(form)
+        form.addRow(self._section("Farm na głębokości"))
+        self.field_farm_depth = QSpinBox(); self.field_farm_depth.setRange(0, 9999)
+        self.field_farm_depth.setSpecialValueText("nie zmieniaj")
+        self.field_farm_depth.setToolTip("0 = bot nie rusza wyboru głębokości")
+        self.field_farm_depth.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Farmij na głębokości:", self.field_farm_depth)
+        self.field_depth_interval = QSpinBox(); self.field_depth_interval.setRange(1, 1440)
+        self.field_depth_interval.setSuffix(" min")
+        self.field_depth_interval.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Sprawdzaj głębokość co:", self.field_depth_interval)
+        form.addRow(self._hint("Bot wchodzi w Profile → CHOOSE DEPTH i ustawia tę głębokość: klika kafelek "
+                               "z numerem (do 79) albo strzałki ‹ › (80+). Sprawdza ją od razu po zmianie "
+                               "i potem co podany czas. Gdy głębokość nie jest jeszcze odblokowana, zostaje "
+                               "najbliższa możliwa. Ustawienie osobne dla każdej instancji."))
+
+        form.addRow(self._section("Paczki"))
         self.field_auto_packs = QCheckBox("Otwieraj paczki, gdy gear jest za słaby")
         self.field_auto_packs.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_auto_packs)
@@ -1094,6 +1110,7 @@ class MainWindow(QMainWindow):
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake,
                 self.field_play_debris, self.field_skip_fishing,
+                self.field_farm_depth, self.field_depth_interval,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
                 self.field_salvage_full, self.field_salvage_items, self.field_salvage_hold_min,
                 self.field_salvage_hold_max,
@@ -1138,6 +1155,8 @@ class MainWindow(QMainWindow):
             self.field_mistake.setValue(cfg.mistake_chance * 100)
             self.field_play_debris.setChecked(cfg.play_debris)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
+            self.field_farm_depth.setValue(max(0, cfg.farm_depth))
+            self.field_depth_interval.setValue(max(1, int(cfg.depth_check_interval_min)))
             self.field_auto_packs.setChecked(cfg.auto_packs)
             self.field_packs_interval.setValue(int(cfg.packs_check_interval_min))
             self.field_packs_defeats.setValue(cfg.packs_defeat_streak)
@@ -1176,6 +1195,7 @@ class MainWindow(QMainWindow):
         packs = enabled and self.field_auto_packs.isChecked()
         for w in (self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds):
             w.setEnabled(packs)
+        self.field_depth_interval.setEnabled(enabled and self.field_farm_depth.value() > 0)
         fallback = self.field_idle_fallback.isChecked() or not self.field_idle_just_loot.isChecked()
         self.idle_point_box.setVisible(fallback)
         self.field_unknown_after.setEnabled(enabled and self.field_save_unknown.isChecked())
@@ -1274,6 +1294,8 @@ class MainWindow(QMainWindow):
         cfg.mistake_chance = self.field_mistake.value() / 100.0
         cfg.play_debris = self.field_play_debris.isChecked()
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
+        cfg.farm_depth = self.field_farm_depth.value()
+        cfg.depth_check_interval_min = float(self.field_depth_interval.value())
         cfg.auto_packs = self.field_auto_packs.isChecked()
         cfg.packs_check_interval_min = float(self.field_packs_interval.value())
         cfg.packs_defeat_streak = self.field_packs_defeats.value()

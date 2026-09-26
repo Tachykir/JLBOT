@@ -136,7 +136,7 @@ instancji:
   `salvage_items` (domyślnie 10) przedmiotach **z góry listy**. Ustaw w
   grze sortowanie tak, żeby na górze były najsłabsze przedmioty (np. Item
   Level rosnąco) — rozebrania nie da się cofnąć. Czas przytrzymania:
-  `salvage_hold_ms` (GUI: zakładka Paczki).
+  `salvage_hold_ms` (GUI: zakładka Głębokość i paczki).
 - **Nieznane ekrany** — gdy bot nie rozpoznaje ekranu, nic nie klika. Po
   `unknown_screen_after_s` (30 s) zapisuje jeden zrzut do folderu
   `unknown_screens` obok programu i pisze o tym w logu — prześlij taki
@@ -194,6 +194,19 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   Karta z paczki, która zostanie na ekranie (np. przerwane otwieranie
   albo paczki otwarte ręcznie), jest rozpoznawana także w zwykłym
   trybie — bot klika obok karty, aż wróci ekran główny.
+- **Farm na głębokości** (GUI: zakładka „Głębokość i paczki”, `farm_depth`,
+  0 = nie zmieniaj; osobno dla każdej instancji) — bot wchodzi w Profile →
+  „CHOOSE DEPTH” i ustawia podaną głębokość: do 79 klika kafelek z
+  numerem (albo strzałkę, gdy numeru nie widać), od 80 klika strzałki
+  ‹ › co 1. Numer odczytuje z ekranu (wzory cyfr czcionki gry Kode Mono,
+  licencja SIL OFL, w `digit_templates.py`). Sprawdza od razu po zmianie
+  ustawienia i potem co `depth_check_interval_min` minut (domyślnie 15),
+  zawsze tylko na ekranie z paskiem nawigacji (nie w trakcie walki).
+  Gdy głębokość nie jest odblokowana, zostaje najbliższa możliwa.
+- **Szybkie klikanie kart** — seria kliknięć „+” i przeklikiwanie kart z
+  paczek idą jednym poleceniem ADB (2–3 kliknięcia na zrzut ekranu);
+  karty z dropu po walce („?” i „TAP ANYWHERE TO CONTINUE”) bot klika
+  co ~0.15–0.45 s bez pełnego wykrywania planszy.
 - **Zachowanie jak człowiek** (GUI: zakładka Tempo):
   - `reaction_delay` (domyślnie 0.4–1.8 s) — chwila na „zauważenie”
     nowej planszy / minigry przed pierwszym ruchem,

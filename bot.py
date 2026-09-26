@@ -80,7 +80,7 @@ DROP_CHOICES: dict[str, tuple[str, int]] = {
 # Ustawienia osobne dla każdej instancji - wszystkie pozostałe są w GUI
 # wspólne (zmiana na jednej instancji ustawia je na wszystkich).
 PER_INSTANCE_FIELDS = ("name", "schedule", "daily_limit_hours", "close_game_during_break",
-                       "schedule_poll_interval")
+                       "schedule_poll_interval", "farm_depth")
 
 
 @dataclass
@@ -299,6 +299,11 @@ class BotConfig:
     packs_max_rounds: int = 10
     # Ile razy kliknąć "+" (gra sama ogranicza do maksimum / dostępnego pyłu).
     pack_plus_taps: int = 25
+    # Farmienie na wybranej głębokości: bot ustawia ją w Profile ("CHOOSE
+    # DEPTH") strzałkami / kafelkiem i pilnuje co depth_check_interval_min
+    # minut. 0 = nie zmieniaj głębokości.
+    farm_depth: int = 0
+    depth_check_interval_min: float = 15.0
     # Punkty do klikania jako obszary: (x, y, promień) - x i promień jako
     # ułamek szerokości ekranu, y jako ułamek wysokości. Bot klika w losowe
     # miejsce wewnątrz koła. Domyślne wartości zmierzone na LDPlayer;
@@ -363,6 +368,8 @@ class BotConfig:
             ("packs_check_interval_min", float),
             ("packs_max_rounds", int),
             ("pack_plus_taps", int),
+            ("farm_depth", int),
+            ("depth_check_interval_min", float),
         ):
             if key in data and data[key] is not None:
                 setattr(d, key, conv(data[key]))
@@ -451,6 +458,8 @@ class BotConfig:
             "packs_check_interval_min": self.packs_check_interval_min,
             "packs_max_rounds": self.packs_max_rounds,
             "pack_plus_taps": self.pack_plus_taps,
+            "farm_depth": self.farm_depth,
+            "depth_check_interval_min": self.depth_check_interval_min,
             "nav_profile": list(self.nav_profile),
             "nav_craft": list(self.nav_craft),
             "craft_loot_packs_tab": list(self.craft_loot_packs_tab),
@@ -864,6 +873,21 @@ class DustMineBot:
                 last_click = 0.0
                 continue
 
+            # karty (zakryta "?" po walce, odkryta z dropu / paczki): szybka
+            # ścieżka - bez wykrywania planszy i z krótką przerwą, jak
+            # człowiek szybko przeklikujący karty
+            card = screens.find_reveal_card(frame) or screens.find_item_card(frame)
+            if card is not None and not self._paused:
+                if self._on_frame is not None:
+                    self._on_frame(cfg.name, frame, vision.DetectionResult(None, []), "idle")
+                self._note_unknown(None)
+                point = self._idle_click_point(frame)
+                if point is not None:
+                    self._tap(*point)
+                last_click = time.monotonic()
+                self._sleep(humanize.human_delay(0.15, 0.45))
+                continue
+
             det = vision.detect_all(frame, region=cfg.board_region, drop_hint=self._last_drop)
 
             if self._on_frame is not None:
@@ -913,6 +937,15 @@ class DustMineBot:
         dx = int(round(max(-2.0, min(2.0, random.gauss(0.0, 0.8)))))
         dy = int(round(max(-2.0, min(2.0, random.gauss(0.0, 0.8)))))
         self.adb.swipe(x, y, x + dx, y + dy, duration_ms=int(hold))
+
+    def _tap_many(self, points: list[tuple[int, int]], gap: tuple[float, float]) -> None:
+        """Seria szybkich tapnięć (np. "+" albo kolejne karty) jednym
+        poleceniem ADB; przerwy losowe z zakresu `gap` (sekundy)."""
+        if not points:
+            return
+        holds = [max(1, int(self.config.tap_hold_ms.sample())) for _ in points]
+        gaps = [humanize.human_delay(*gap) for _ in points[1:]]
+        self.adb.tap_sequence([(x, y, h) for (x, y), h in zip(points, holds)], gaps)
 
     def _hold(self, x: int, y: int, hold_ms: float) -> None:
         """Przytrzymanie palcem (long press) z lekkim przesunięciem."""

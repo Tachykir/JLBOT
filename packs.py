@@ -48,6 +48,8 @@ class PackOpener:
         self.defeat_streak = 0
         self._on_result_screen = False
         self._last_check: float | None = None
+        self._last_depth_check: float | None = None
+        self._depth_target_seen: int | None = None  # zmiana celu = sprawdź od razu
         self._size = (0, 0)  # (W, H) ostatniej klatki
 
     # ------------------------------------------------------------------ #
@@ -57,14 +59,14 @@ class PackOpener:
         """Wywoływane na każdej klatce idle. Liczy porażki z rzędu i mówi,
         czy pora na procedurę: "defeats" | "check" | None."""
         cfg = self.bot.config
-        if not cfg.auto_packs:
+        if not cfg.auto_packs and cfg.farm_depth <= 0:
             return None
         self._size = (frame.shape[1], frame.shape[0])
 
         # Wynik walki liczymy raz na ekran i tylko wtedy, gdy log kończy się
         # napisem "Defeated." / "Victory." (sam szeroki przycisk na dole
         # albo czerwony tekst w trakcie walki to jeszcze nie koniec).
-        button = screens.find_wide_bottom_button(frame)
+        button = screens.find_wide_bottom_button(frame) if cfg.auto_packs else None
         if button is None:
             self._on_result_screen = False
         elif not self._on_result_screen:
@@ -79,11 +81,20 @@ class PackOpener:
                     logger.info("[%s] wygrana walka - zeruję licznik porażek", cfg.name)
                 self.defeat_streak = 0
 
-        if self.defeat_streak >= cfg.packs_defeat_streak:
-            return "defeats"
-        if (self._last_check is None
-                or time.monotonic() - self._last_check >= cfg.packs_check_interval_min * 60):
-            return "check"
+        # procedury zaczynamy tylko na ekranie z paskiem nawigacji (nie w
+        # trakcie walki, dropu czy minigry)
+        if screens.find_just_loot(frame) is None:
+            return None
+        now = time.monotonic()
+        if cfg.auto_packs:
+            if self.defeat_streak >= cfg.packs_defeat_streak:
+                return "defeats"
+            if self._last_check is None or now - self._last_check >= cfg.packs_check_interval_min * 60:
+                return "check"
+        if cfg.farm_depth > 0 and (self._last_depth_check is None
+                                   or cfg.farm_depth != self._depth_target_seen
+                                   or now - self._last_depth_check >= cfg.depth_check_interval_min * 60):
+            return "depth"
         return None
 
     # ------------------------------------------------------------------ #
@@ -143,32 +154,94 @@ class PackOpener:
         """Otwiera Profile i sprawdza, czy wrogowie mają bonus. True =
         za słaby gear, False = OK, None = nie udało się odczytać."""
         cfg = self.bot.config
-        self._tap_nav("nav_profile")
-        self.bot._sleep(random.uniform(1.2, 1.8))
+        self._open_profile()
         warning = screens.frontier_warning(self._frame())
-        if warning is None:
-            # selektor głębokości może być poniżej - przewiń stronę
-            W, H = self._size
-            self.bot.adb.swipe(int(W * 0.5), int(H * 0.65), int(W * 0.5), int(H * 0.35), duration_ms=400)
-            self.bot._sleep(1.0)
-            warning = screens.frontier_warning(self._frame())
         logger.info("[%s] profil: %s", cfg.name,
                     {True: "wrogowie mają bonus - gear za słaby",
                      False: "wrogowie na normalnym poziomie",
                      None: "nie udało się odczytać selektora głębokości"}[warning])
         return warning
 
+    def _open_profile(self) -> None:
+        """Otwiera Profile i w razie potrzeby przewija do "CHOOSE DEPTH"."""
+        self._tap_nav("nav_profile")
+        self.bot._sleep(random.uniform(0.8, 1.2))
+        frame = self._frame()
+        if screens.find_depth_selector(frame) is None and screens.frontier_warning(frame) is None:
+            # selektor głębokości może być poniżej - przewiń stronę
+            W, H = self._size
+            self.bot.adb.swipe(int(W * 0.5), int(H * 0.65), int(W * 0.5), int(H * 0.35),
+                               duration_ms=random.randint(300, 450))
+            self.bot._sleep(random.uniform(0.7, 1.0))
+
+    def ensure_depth(self, already_on_profile: bool = False) -> bool | None:
+        """
+        Ustawia w Profile głębokość `farm_depth`. Kafelki (do 79): klik
+        w kafelek z numerem albo strzałka w stronę celu; duża liczba (80+):
+        strzałka co 1. Gdy strzałka nic nie zmienia (koniec zakresu),
+        zostaje najbliższa możliwa głębokość. True = ustawiona, False =
+        nie da się dokładnie (np. cel poza odblokowanym zakresem), None =
+        nie odczytano selektora.
+        """
+        bot, cfg = self.bot, self.bot.config
+        target = cfg.farm_depth
+        self._last_depth_check = time.monotonic()
+        self._depth_target_seen = target
+        if target <= 0:
+            return True
+        if not already_on_profile:
+            self._open_profile()
+        sel = screens.find_depth_selector(self._frame())
+        start = sel.current if sel is not None else None
+        stuck = 0
+        prev_state = None
+        for _ in range(300):
+            if self._abort():
+                return None
+            if sel is None:
+                logger.warning("[%s] nie znaleziono wyboru głębokości (CHOOSE DEPTH) w Profile", cfg.name)
+                return None
+            numbers = [t.number for t in sel.tiles if t.number is not None]
+            current = sel.current
+            if current == target:
+                if start != target:
+                    logger.info("[%s] głębokość ustawiona: %s -> %d", cfg.name, start, target)
+                return True
+            if not numbers:
+                logger.warning("[%s] nie udało się odczytać numeru głębokości", cfg.name)
+                return None
+            state = (tuple(numbers), current)
+            if state == prev_state:
+                stuck += 1
+                if stuck >= 3:
+                    logger.warning("[%s] głębokości %d nie da się wybrać - zostaje %s "
+                                   "(poza odblokowanym zakresem?)", cfg.name, target, current)
+                    return False
+            else:
+                stuck = 0
+            prev_state = state
+
+            tile = next((t for t in sel.tiles if t.number == target), None)
+            if sel.kind == "tiles" and tile is not None:
+                self._tap_rect(tile.rect)
+            else:
+                ref = current if current is not None else (numbers[0] if target < numbers[0] else numbers[-1])
+                self._tap_rect(sel.right if target > ref else sel.left)
+            bot._sleep(humanize.human_delay(0.2, 0.6))
+            sel = screens.find_depth_selector(self._frame())
+        return False
+
     def open_round(self) -> bool:
         """Jedna runda: max paczek, OPEN, wszystkie karty. False = nie
         otworzono (za mało pyłu albo nie znaleziono ekranu)."""
         bot, cfg = self.bot, self.bot.config
         self._tap_nav("nav_craft")
-        bot._sleep(random.uniform(1.2, 1.8))
+        bot._sleep(random.uniform(0.8, 1.2))
         frame = self._frame()
         buy = screens.find_buy_button(frame)
         if buy is None:
             self._tap_rel(cfg.craft_loot_packs_tab)
-            bot._sleep(1.0)
+            bot._sleep(random.uniform(0.6, 0.9))
             frame = self._frame()
             buy = screens.find_buy_button(frame)
         if buy is None:
@@ -177,24 +250,28 @@ class PackOpener:
 
         W, _H = self._size
         plus = screens.find_plus_button(frame, buy) or (int(buy.center[0] + 0.06 * W), int(buy.y - 1.05 * buy.h))
-        for _ in range(cfg.pack_plus_taps):
-            if self._abort():
-                return False
-            bot._tap(*humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W))
-            bot._sleep(random.uniform(0.05, 0.15))
+        if self._abort():
+            return False
+        # wszystkie "+" jedną serią (jedno polecenie ADB zamiast 25)
+        bot._tap_many([humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W)
+                       for _ in range(cfg.pack_plus_taps)], (0.04, 0.12))
 
-        bot._sleep(random.uniform(0.4, 0.8))
+        bot._sleep(random.uniform(0.25, 0.5))
         frame = self._frame()
         buy = screens.find_buy_button(frame) or buy
         self._tap_rect(buy)
-        bot._sleep(random.uniform(1.0, 1.5))
-        dialog = screens.find_open_dialog(self._frame())
+        dialog = None
+        for _ in range(3):  # okno pojawia się po krótkiej animacji
+            bot._sleep(random.uniform(0.4, 0.6))
+            dialog = screens.find_open_dialog(self._frame())
+            if dialog is not None:
+                break
         if dialog is None:
             logger.info("[%s] brak okna potwierdzenia - prawdopodobnie za mało pyłu", cfg.name)
             return False
-        bot._sleep(random.uniform(0.3, 0.8))
+        bot._sleep(random.uniform(0.2, 0.5))
         bot._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.012 * W))
-        bot._sleep(random.uniform(1.5, 2.0))
+        bot._sleep(random.uniform(0.8, 1.2))
 
         # Karty: przedmiot z auto-upgrade ma przycisk "Next Card", zwykły
         # drop - napis "TAP ANYWHERE TO CONTINUE" bez przycisku. Klikamy
@@ -207,7 +284,7 @@ class PackOpener:
         while time.monotonic() < deadline and not self._abort():
             frame = self._frame()
             if screens.find_buy_button(frame) is not None and screens.find_open_dialog(frame) is None:
-                logger.info("[%s] otwarto paczki (%d kart)", cfg.name, cards)
+                logger.info("[%s] otwarto paczki (%d kliknięć w karty)", cfg.name, cards)
                 return True
             if cards >= 1000:
                 logger.warning("[%s] ponad %d kart - przerywam", cfg.name, cards)
@@ -227,19 +304,34 @@ class PackOpener:
             button = screens.find_wide_bottom_button(frame)
             if button is not None:
                 self._tap_rect(button)
+                cards += 1
+                bot._sleep(random.uniform(0.15, 0.35))
             else:
-                self._tap_rel(cfg.card_tap_anywhere)
-            cards += 1
-            bot._sleep(random.uniform(0.35, 0.8))
+                # "tap anywhere": 2-3 szybkie kliknięcia na jeden zrzut
+                # ekranu - ten obszar jest pusty także na ekranie paczek,
+                # więc nadmiarowe kliknięcie po ostatniej karcie nic nie robi
+                W, H = self._size
+                px, py, pr = cfg.card_tap_anywhere
+                n = random.randint(2, 3)
+                bot._tap_many([humanize.random_point_in_circle(px * W, py * H, pr * W) for _ in range(n)],
+                              (0.12, 0.3))
+                cards += n
+                bot._sleep(random.uniform(0.05, 0.15))
         return cards > 0
 
     # ------------------------------------------------------------------ #
     def run(self, reason: str) -> None:
         bot, cfg = self.bot, self.bot.config
-        self._last_check = time.monotonic()
         self._leave_result_screen()
+        if reason == "depth":
+            self.ensure_depth()
+            return
+        self._last_check = time.monotonic()
 
         warning = self.check_profile()
+        if cfg.farm_depth > 0 and self.ensure_depth(already_on_profile=True) is not None:
+            # po zmianie głębokości zmienia się też ostrzeżenie o sile wrogów
+            warning = screens.frontier_warning(self._frame())
         if reason == "check" and warning is not True:
             return
         if reason == "defeats":
