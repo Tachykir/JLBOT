@@ -282,7 +282,8 @@ def find_reveal_card(bgr: np.ndarray) -> Rect | None:
 def find_item_card(bgr: np.ndarray) -> Rect | None:
     """
     Odkryta karta przedmiotu z paczki ("TAP ANYWHERE TO CONTINUE"):
-    pionowa karta, odrobinę jaśniejsza od ciemnego tła, na środku
+    pionowa albo kwadratowa (w trakcie odkrywania: tylko rzadkość, typ
+    i jakość) karta, odrobinę jaśniejsza od ciemnego tła, na środku
     ekranu, z tekstem w środku, bez paska nawigacji (JUST LOOT). Obwódka
     ma kolor rzadkości (szara, niebieska, fioletowa...), więc szukamy
     wypełnionego prostokąta karty, a nie jego linii.
@@ -296,12 +297,12 @@ def find_item_card(bgr: np.ndarray) -> Rect | None:
     mask = (cv2.medianBlur(gray, 5) > bg + 5).astype(np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
     for x, y, w, h, area in _components(mask):
-        if not (0.4 * W <= w <= 0.75 * W and 1.0 <= h / w <= 1.8):
+        if not (0.4 * W <= w <= 0.75 * W and 0.9 <= h / w <= 1.8):
             continue
         if abs(x + w / 2 - W / 2) > 0.05 * W or area < 0.85 * w * h:
             continue
         inner = gray[y + 8:y + h - 8, x + 8:x + w - 8]
-        if inner.size == 0 or not (0.01 <= float((inner > 120).mean()) <= 0.15):
+        if inner.size == 0 or not (0.003 <= float((inner > 120).mean()) <= 0.15):
             continue  # pusta karta (np. zakryta "?") albo jasny panel
         # poza kartą ciemne tło (tylko nagłówek paczki i napis pod kartą)
         sides = np.concatenate((gray[y:y + h, :max(1, x - 5)].ravel(), gray[y:y + h, x + w + 5:].ravel()))
