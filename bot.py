@@ -794,7 +794,12 @@ class DustMineBot:
         return self._do_restart_app(f"czarny ekran przez {elapsed:.0f}s (limit {cfg.black_screen_timeout:.0f}s)")
 
     # ------------------------------------------------------------------ #
-    def _enabled_kind(self, det: vision.DetectionResult) -> str | None:
+    def _enabled_kind(self, det: vision.DetectionResult, frame: np.ndarray | None = None) -> str | None:
+        # ekrany dropu po walce mają pierwszeństwo - obsługuje je zwykłe
+        # klikanie idle (Keep Current / odkrycie karty), a ich elementy
+        # (np. zakładki RING, tekst przedmiotu) nie mogą udawać minigry
+        if frame is not None and (screens.find_drop_choice(frame) or screens.find_reveal_card(frame)):
+            return None
         kind = vision.screen_kind(det)
         if kind == "debris" and not self.config.play_debris:
             return None
@@ -828,7 +833,7 @@ class DustMineBot:
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "idle")
 
-            kind = self._enabled_kind(det)
+            kind = self._enabled_kind(det, frame)
             if kind is None and not self._paused:
                 reason = self._packs.observe(frame)
                 if reason is not None:

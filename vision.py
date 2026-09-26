@@ -175,6 +175,13 @@ def _find_drop_point(hsv: np.ndarray, known: Circle | None = None) -> Circle | N
         count = int(on_ring.sum())
         if count <= best_count or count < 20:
             continue
+        # kreski DROP to cienki, równy pierścień (rozrzut ~0.02 r), a wokół
+        # nich jest pusto; tekst daje grube "pierścienie" (~0.08 r) i dużo
+        # bieli dookoła (np. nazwa i statystyki przedmiotu)
+        if float(np.std(d[on_ring] - r)) > 0.05 * r:
+            continue
+        if int(((d > 1.2 * r) & (d < 1.6 * r)).sum()) > 0.5 * count:
+            continue
         ang = np.arctan2(ys[on_ring] - cy, xs[on_ring] - cx)
         coverage = len(np.unique(((ang + np.pi) / (2 * np.pi) * 32).astype(int) % 32)) / 32
         has_text = int((d < 0.55 * r).sum()) >= 10
@@ -425,7 +432,9 @@ def _find_cast_button(bgr: np.ndarray) -> Rect | None:
         x, y, bw, bh, area = stats[i]
         if bw < 0.2 * w or bw > 0.7 * w or bh < 0.02 * w:
             continue
-        if not (2.0 <= bw / bh <= 6.0):
+        # CAST: wyśrodkowany w poziomie, proporcje ~3.4 (np. zakładki
+        # "RING (LEFT)/(RIGHT)" na ekranie dropu są z boku i węższe)
+        if not (2.2 <= bw / bh <= 5.0) or abs(x + bw / 2 - w / 2) > 0.08 * w:
             continue
         if area / (bw * bh) > 0.35:  # ramka, a nie pełny prostokąt
             continue
