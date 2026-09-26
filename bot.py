@@ -241,6 +241,9 @@ class BotConfig:
     nav_profile: tuple[float, float] = (0.11, 0.93)
     nav_craft: tuple[float, float] = (0.67, 0.93)
     craft_loot_packs_tab: tuple[float, float] = (0.18, 0.142)
+    # Gdzie klikać na karcie z paczki bez przycisku ("TAP ANYWHERE TO
+    # CONTINUE") - pusty obszar, który na ekranie Craft też jest pusty.
+    card_tap_anywhere: tuple[float, float] = (0.5, 0.22)
 
     # ------------------------------------------------------------------ #
     # Serializacja do/z JSON (jedno miejsce dla GUI i manager.py)
@@ -291,7 +294,7 @@ class BotConfig:
         ):
             if key in data and data[key] is not None:
                 setattr(d, key, conv(data[key]))
-        for key in ("nav_profile", "nav_craft", "craft_loot_packs_tab"):
+        for key in ("nav_profile", "nav_craft", "craft_loot_packs_tab", "card_tap_anywhere"):
             if data.get(key):
                 setattr(d, key, tuple(float(v) for v in data[key]))
         if "tile_tap_delay" in data:
@@ -350,6 +353,7 @@ class BotConfig:
             "nav_profile": list(self.nav_profile),
             "nav_craft": list(self.nav_craft),
             "craft_loot_packs_tab": list(self.craft_loot_packs_tab),
+            "card_tap_anywhere": list(self.card_tap_anywhere),
         }
 
 

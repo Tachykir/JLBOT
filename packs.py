@@ -14,7 +14,9 @@ Kiedy:
 Co:
   1. Craft -> Loot Packs, "+" aż do maksimum (gra sama ogranicza do
      liczby paczek, na którą starcza pyłu), przycisk z ceną, OPEN.
-  2. "Next Card" aż karty się skończą (wraca ekran paczek).
+  2. Karty aż się skończą (wraca ekran paczek): "Next Card" przy
+     przedmiocie z auto-upgrade, klik w pusty obszar przy zwykłym dropie
+     ("TAP ANYWHERE TO CONTINUE").
   3. Profile - jeśli nadal ostrzeżenie, kolejna runda (max
      `packs_max_rounds`). Brak okna potwierdzenia po kliknięciu ceny =
      za mało pyłu -> koniec, bot wraca do walki.
@@ -25,6 +27,9 @@ from __future__ import annotations
 import logging
 import random
 import time
+
+import cv2
+import numpy as np
 
 import humanize
 import screens
@@ -161,27 +166,41 @@ class PackOpener:
         bot.adb.tap(*humanize.random_point_in_circle(*dialog.open_button, 0.01 * W))
         bot._sleep(random.uniform(1.5, 2.0))
 
-        # karty: "Next Card" aż wróci ekran paczek
+        # Karty: przedmiot z auto-upgrade ma przycisk "Next Card", zwykły
+        # drop - napis "TAP ANYWHERE TO CONTINUE" bez przycisku. Klikamy
+        # przycisk, jeśli jest, a w przeciwnym razie pusty obszar u góry
+        # ekranu - aż wróci ekran paczek.
         cards = 0
-        misses = 0
+        unchanged = 0
+        prev = None
         deadline = time.monotonic() + 600
         while time.monotonic() < deadline and not self._abort():
             frame = self._frame()
             if screens.find_buy_button(frame) is not None and screens.find_open_dialog(frame) is None:
                 logger.info("[%s] otwarto paczki (%d kart)", cfg.name, cards)
                 return True
+            if cards >= 250:
+                logger.warning("[%s] ponad %d kart - przerywam", cfg.name, cards)
+                return True
+            # zabezpieczenie: obraz przestał się zmieniać mimo klikania
+            small = cv2.resize(frame, (64, 64), interpolation=cv2.INTER_AREA).astype(np.int16)
+            if prev is not None and float(np.abs(small - prev).mean()) < 1.0:
+                unchanged += 1
+                if unchanged >= 15:
+                    logger.warning("[%s] ekran kart nie reaguje na kliknięcia (%d kart) - przerywam",
+                                   cfg.name, cards)
+                    return False
+            else:
+                unchanged = 0
+            prev = small
+
             button = screens.find_wide_bottom_button(frame)
             if button is not None:
                 self._tap_rect(button)
-                cards += 1
-                misses = 0
-                bot._sleep(random.uniform(0.3, 0.7))
-                continue
-            misses += 1
-            if misses >= 20:
-                logger.warning("[%s] nie rozpoznano ekranu po otwarciu paczek (%d kart)", cfg.name, cards)
-                return cards > 0
-            bot._sleep(0.5)
+            else:
+                self._tap_rel(cfg.card_tap_anywhere, jitter=0.04)
+            cards += 1
+            bot._sleep(random.uniform(0.35, 0.8))
         return cards > 0
 
     # ------------------------------------------------------------------ #
