@@ -320,15 +320,46 @@ def find_item_card(bgr: np.ndarray) -> Rect | None:
 
 def find_salvage_buttons(bgr: np.ndarray) -> list[tuple[int, int]]:
     """
-    Przyciski "+x DUST" w prawym pasku kart przedmiotów na liście
-    Inventory: pomarańczowy tekst przy prawej krawędzi, poniżej filtrów
-    i powyżej paska nawigacji. Zwraca punkty (x, y) od góry listy.
+    Przyciski "+x DUST" na liście Inventory. Każdy to pionowy, jaśniejszy
+    (łupkowo-niebieski) pasek po prawej stronie karty przedmiotu z
+    pomarańczowym "+x / DUST". Zwykle przy prawej krawędzi ekranu, ale
+    przy stosie kopii ("MYTHIC 2× · ...") karty są węższe i przewijane w
+    poziomie - pasek jest wtedy mniej więcej na środku ekranu, więc
+    szukamy samych pasków, a nie stałego miejsca. Zwraca punkty (x, y)
+    od góry listy (w rzędzie od lewej).
     """
     H, W = bgr.shape[:2]
-    y_top, y_bottom = int(0.25 * H), int(0.9 * H)
+    y_top, y_bottom = int(0.2 * H), int(0.92 * H)
     nav = find_just_loot(bgr)
     if nav is not None:
         y_bottom = min(y_bottom, int(nav.y - 1.2 * nav.r))
+    hsv = cv2.cvtColor(bgr[y_top:y_bottom], cv2.COLOR_BGR2HSV)
+    strip = cv2.inRange(hsv, (95, 80, 60), (118, 180, 100))
+    k = max(3, int(0.006 * W))  # mały, żeby nie skleić pasków sąsiednich kart
+    strip = cv2.morphologyEx(strip, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+    orange = cv2.inRange(hsv, (10, 120, 150), (35, 255, 255))
+    buttons = []
+    for x, y, w, h, area in _components(strip):
+        if not (0.03 * W <= w <= 0.15 * W and h >= 0.06 * H and h >= 1.3 * w and area >= 0.6 * w * h):
+            continue
+        glyphs = orange[y:y + h, x:x + w]
+        ys, xs = np.nonzero(glyphs)
+        if xs.size >= 8:
+            cx, cy = x + float(xs.mean()), y + float(ys.mean())
+        elif y > 0.01 * H and y + h < (y_bottom - y_top) - 0.01 * H:
+            cx, cy = x + w / 2, y + h / 2  # pasek bez tekstu (np. w trakcie przytrzymania)
+        else:
+            continue  # ucięty u góry / dołu listy, bez napisu
+        buttons.append((int(cx), int(y_top + cy)))
+    if buttons:
+        buttons.sort(key=lambda b: (round(b[1] / (0.05 * H)), b[0]))
+        return buttons
+    return _salvage_buttons_right_edge(bgr, y_top, y_bottom)
+
+
+def _salvage_buttons_right_edge(bgr: np.ndarray, y_top: int, y_bottom: int) -> list[tuple[int, int]]:
+    """Stara metoda: pomarańczowy tekst przy prawej krawędzi ekranu."""
+    H, W = bgr.shape[:2]
     x_left = int(0.82 * W)
     hsv = cv2.cvtColor(bgr[y_top:y_bottom, x_left:], cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, (10, 120, 150), (35, 255, 255))

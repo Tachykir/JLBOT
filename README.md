@@ -223,6 +223,10 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   sam dymek „+1 RAID XP”) jest traktowany jak czarny ekran: po
   `black_screen_timeout` (domyślnie 20 s) bot restartuje grę. Zakryta
   karta „?” i karty z paczek się nie liczą. Wymaga pakietu gry.
+- **Rozbieranie stosów kopii** — przycisk „+x DUST” bot znajduje po
+  jaśniejszym pionowym pasku karty, więc działa też przy stosach kopii
+  legendary/mythic („MYTHIC 2× · …”), gdzie karty są węższe, a przycisk
+  jest na środku ekranu.
 - **Ekran „Pack Opened”** — przycisk „Done” po kartach z paczki jest
   klikany w procedurze paczek i w zwykłym trybie.
 - **Szybkie klikanie kart** — seria kliknięć „+” i przeklikiwanie kart z
