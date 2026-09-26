@@ -829,7 +829,7 @@ class MainWindow(QMainWindow):
                                "Inventory przytrzymanie „+x DUST” na przedmiotach Z GÓRY LISTY - ustaw w "
                                "grze sortowanie tak, żeby na górze były najsłabsze (np. Item Level rosnąco). "
                                "Rozebrania nie da się cofnąć."))
-        self.field_salvage_items = QSpinBox(); self.field_salvage_items.setRange(1, 200)
+        self.field_salvage_items = QSpinBox(); self.field_salvage_items.setRange(1, 1000)
         self.field_salvage_items.setSuffix(" przedmiotów")
         self.field_salvage_items.valueChanged.connect(self._apply_config_fields)
         form.addRow("Rozbieraj za jednym razem:", self.field_salvage_items)
