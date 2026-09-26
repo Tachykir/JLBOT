@@ -1,0 +1,8 @@
+opencv-python>=4.8.0
+numpy>=1.24.0
+PySide6>=6.6.0
+
+# Zależności potrzebne TYLKO do budowania samodzielnego .exe
+# (patrz BUILD_INSTRUCTIONS.md) - nie są wymagane do zwykłego
+# uruchamiania `python main_window.py` / `python manager.py`.
+# pyinstaller>=6.0.0

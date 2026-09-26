@@ -1,0 +1,224 @@
+{
+  "instances": [
+    {
+      "serial": "emulator-5556",
+      "name": "instance-1",
+      "idle_point": [
+        436,
+        1488
+      ],
+      "board_region": [
+        29,
+        333,
+        861,
+        1466
+      ],
+      "idle_click_interval": {
+        "min": 0.8,
+        "max": 1.4
+      },
+      "drag_duration_ms": {
+        "min": 800,
+        "max": 1300
+      },
+      "between_drags_delay": {
+        "min": 0.5,
+        "max": 1.1
+      },
+      "empty_detections_to_exit": 2,
+      "max_seconds_per_game_screen": 60.0,
+      "idle_poll_interval": 0.5,
+      "game_package": "com.timhilgenstoehlerexpo.justlootapp",
+      "game_activity": null,
+      "black_screen_timeout": 20.0,
+      "black_screen_brightness_threshold": 10.0,
+      "restart_settle_delay": 10.0,
+      "foreign_app_packages": [
+        "com.android.vending",
+        "com.android.chrome",
+        "com.android.browser"
+      ],
+      "foreground_check_interval": 3.0,
+      "idle_point_radius": 50.0,
+      "schedule": [],
+      "schedule_poll_interval": 15.0,
+      "close_game_during_break": true
+    },
+    {
+      "serial": "emulator-5558",
+      "name": "instance-2",
+      "idle_point": [
+        436,
+        1488
+      ],
+      "board_region": [
+        29,
+        333,
+        861,
+        1466
+      ],
+      "idle_click_interval": {
+        "min": 0.8,
+        "max": 1.4
+      },
+      "drag_duration_ms": {
+        "min": 800,
+        "max": 1300
+      },
+      "between_drags_delay": {
+        "min": 0.5,
+        "max": 1.1
+      },
+      "empty_detections_to_exit": 2,
+      "max_seconds_per_game_screen": 60.0,
+      "idle_poll_interval": 0.5,
+      "game_package": "com.timhilgenstoehlerexpo.justlootapp",
+      "game_activity": null,
+      "black_screen_timeout": 20.0,
+      "black_screen_brightness_threshold": 10.0,
+      "restart_settle_delay": 10.0,
+      "foreign_app_packages": [
+        "com.android.vending",
+        "com.android.chrome",
+        "com.android.browser"
+      ],
+      "foreground_check_interval": 3.0,
+      "idle_point_radius": 50.0,
+      "schedule": [],
+      "schedule_poll_interval": 15.0,
+      "close_game_during_break": true
+    },
+    {
+      "serial": "emulator-5560",
+      "name": "instance-3",
+      "idle_point": [
+        436,
+        1488
+      ],
+      "board_region": [
+        29,
+        333,
+        861,
+        1466
+      ],
+      "idle_click_interval": {
+        "min": 0.8,
+        "max": 1.4
+      },
+      "drag_duration_ms": {
+        "min": 800,
+        "max": 1300
+      },
+      "between_drags_delay": {
+        "min": 0.5,
+        "max": 1.1
+      },
+      "empty_detections_to_exit": 2,
+      "max_seconds_per_game_screen": 60.0,
+      "idle_poll_interval": 0.5,
+      "game_package": "com.timhilgenstoehlerexpo.justlootapp",
+      "game_activity": null,
+      "black_screen_timeout": 20.0,
+      "black_screen_brightness_threshold": 10.0,
+      "restart_settle_delay": 10.0,
+      "foreign_app_packages": [
+        "com.android.vending",
+        "com.android.chrome",
+        "com.android.browser"
+      ],
+      "foreground_check_interval": 3.0,
+      "idle_point_radius": 50.0,
+      "schedule": [],
+      "schedule_poll_interval": 15.0,
+      "close_game_during_break": true
+    },
+    {
+      "serial": "emulator-5562",
+      "name": "instance-4",
+      "idle_point": [
+        436,
+        1488
+      ],
+      "board_region": [
+        29,
+        333,
+        861,
+        1466
+      ],
+      "idle_click_interval": {
+        "min": 0.8,
+        "max": 1.4
+      },
+      "drag_duration_ms": {
+        "min": 800,
+        "max": 1300
+      },
+      "between_drags_delay": {
+        "min": 0.5,
+        "max": 1.1
+      },
+      "empty_detections_to_exit": 2,
+      "max_seconds_per_game_screen": 60.0,
+      "idle_poll_interval": 0.5,
+      "game_package": "com.timhilgenstoehlerexpo.justlootapp",
+      "game_activity": null,
+      "black_screen_timeout": 20.0,
+      "black_screen_brightness_threshold": 10.0,
+      "restart_settle_delay": 10.0,
+      "foreign_app_packages": [
+        "com.android.vending",
+        "com.android.chrome",
+        "com.android.browser"
+      ],
+      "foreground_check_interval": 3.0,
+      "idle_point_radius": 50.0,
+      "schedule": [],
+      "schedule_poll_interval": 15.0,
+      "close_game_during_break": true
+    },
+    {
+      "serial": "emulator-5564",
+      "name": "instance-5",
+      "idle_point": [
+        436,
+        1488
+      ],
+      "board_region": [
+        29,
+        333,
+        861,
+        1466
+      ],
+      "idle_click_interval": {
+        "min": 0.8,
+        "max": 1.4
+      },
+      "drag_duration_ms": {
+        "min": 800,
+        "max": 1300
+      },
+      "between_drags_delay": {
+        "min": 0.5,
+        "max": 1.1
+      },
+      "empty_detections_to_exit": 2,
+      "max_seconds_per_game_screen": 60.0,
+      "idle_poll_interval": 0.5,
+      "game_package": "com.timhilgenstoehlerexpo.justlootapp",
+      "game_activity": null,
+      "black_screen_timeout": 20.0,
+      "black_screen_brightness_threshold": 10.0,
+      "restart_settle_delay": 10.0,
+      "foreign_app_packages": [
+        "com.android.vending",
+        "com.android.chrome",
+        "com.android.browser"
+      ],
+      "foreground_check_interval": 3.0,
+      "idle_point_radius": 50.0,
+      "schedule": [],
+      "schedule_poll_interval": 15.0,
+      "close_game_during_break": true
+    }
+  ]
+}

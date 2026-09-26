@@ -1,0 +1,39 @@
+{
+  "instances": [
+    {
+      "serial": "127.0.0.1:5555",
+      "name": "instance-1",
+      "idle_point": [436, 1488],
+      "board_region": [29, 333, 861, 1466],
+      "idle_click_interval": 1.0,
+      "drag_duration_ms": 1000,
+      "between_drags_delay": 0.75,
+      "empty_detections_to_exit": 2,
+      "max_seconds_per_game_screen": 60.0,
+      "idle_poll_interval": 0.5,
+      "game_package": "com.timhilgenstoehlerexpo.justlootapp",
+      "game_activity": null,
+      "black_screen_timeout": 20.0,
+      "black_screen_brightness_threshold": 10.0,
+      "restart_settle_delay": 10.0
+    },
+    {
+      "serial": "127.0.0.1:5557",
+      "name": "instance-2",
+      "idle_point": [436, 1488],
+      "board_region": [29, 333, 861, 1466]
+    },
+    {
+      "serial": "127.0.0.1:5559",
+      "name": "instance-3",
+      "idle_point": [436, 1488],
+      "board_region": [29, 333, 861, 1466]
+    },
+    {
+      "serial": "127.0.0.1:5561",
+      "name": "instance-4",
+      "idle_point": [436, 1488],
+      "board_region": [29, 333, 861, 1466]
+    }
+  ]
+}
