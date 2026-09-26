@@ -30,6 +30,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from adb_controller import ADBController, ADBError
+import humanize
 import vision
 # re-eksport dla zgodności (GUI i manager.py importują je z bot.py)
 from scheduler import (  # noqa: F401
@@ -77,6 +78,17 @@ class BotConfig:
 
     # Czas trwania gestu przeciągania kulki (ms). Losowany zakres.
     drag_duration_ms: RandomRange = field(default_factory=lambda: RandomRange(800, 1300))
+
+    # Styl przeciągania:
+    #   "human"    - po losowej krzywej z przyspieszaniem/zwalnianiem,
+    #                drżeniem i czasem lekkim przestrzeleniem celu; kulka
+    #                łapana i puszczana w losowym miejscu, kolejność
+    #                zbierania kulek losowa (patrz humanize.py),
+    #   "straight" - prosta linia od środka kulki do środka DROP, kulki
+    #                po kolei (dawne zachowanie).
+    # "human" wymaga `input motionevent` (nowsze Androidy); bez niego
+    # tor jest prosty, ale punkty chwytu i kolejność nadal są losowe.
+    drag_style: str = "human"
 
     # Odstęp między kolejnymi przeciągnięciami kulek (żeby gra
     # zdążyła zarejestrować i zaktualizować UI przed kolejną akcją).
@@ -229,6 +241,10 @@ class BotConfig:
         ):
             if key in data and data[key] is not None:
                 setattr(d, key, conv(data[key]))
+        if data.get("drag_style"):
+            if data["drag_style"] not in ("human", "straight"):
+                raise ValueError(f"[{d.name}] drag_style musi być 'human' albo 'straight': {data['drag_style']!r}")
+            d.drag_style = data["drag_style"]
         d.game_package = data.get("game_package") or None
         d.game_activity = data.get("game_activity") or None
         if d.board_region is not None:
@@ -245,6 +261,7 @@ class BotConfig:
             "board_region": list(self.board_region) if self.board_region else None,
             "idle_click_interval": self.idle_click_interval.to_dict(),
             "drag_duration_ms": self.drag_duration_ms.to_dict(),
+            "drag_style": self.drag_style,
             "between_drags_delay": self.between_drags_delay.to_dict(),
             "empty_detections_to_exit": self.empty_detections_to_exit,
             "max_seconds_per_game_screen": self.max_seconds_per_game_screen,
@@ -645,6 +662,41 @@ class DustMineBot:
     def _same_ball(a: vision.Circle, b: vision.Circle) -> bool:
         return float(np.hypot(a.x - b.x, a.y - b.y)) < max(a.r, b.r)
 
+    @staticmethod
+    def _pick_ball(candidates: list[vision.Circle],
+                   finger: tuple[int, int] | None) -> vision.Circle:
+        """
+        Wybiera kolejną kulkę tak, jak robiłby to człowiek - bez stałej
+        kolejności: najczęściej najbliższą miejsca, gdzie jest palec (po
+        poprzednim upuszczeniu), czasem "od góry planszy", czasem losową.
+        """
+        roll = random.random()
+        if finger is not None and roll < 0.45:
+            fx, fy = finger
+            ranked = sorted(candidates, key=lambda b: (b.x - fx) ** 2 + (b.y - fy) ** 2)
+            # zwykle najbliższa, czasem druga najbliższa
+            if len(ranked) > 1 and random.random() < 0.2:
+                return ranked[1]
+            return ranked[0]
+        if roll < 0.65:
+            return min(candidates, key=lambda b: b.y)
+        return random.choice(candidates)
+
+    def _drag_ball(self, ball: vision.Circle, drop: vision.Circle) -> tuple[int, int]:
+        """Przeciąga kulkę do DROP zgodnie z drag_style. Zwraca punkt,
+        w którym puszczono palec."""
+        cfg = self.config
+        duration = cfg.drag_duration_ms.sample()
+        if cfg.drag_style == "straight":
+            self.adb.swipe(ball.x, ball.y, drop.x, drop.y, duration_ms=int(duration))
+            return drop.x, drop.y
+
+        start = humanize.random_point_in_circle(ball.x, ball.y, ball.r * 0.4)
+        end = humanize.random_point_in_circle(drop.x, drop.y, drop.r * 0.35)
+        path = humanize.drag_path(start, end)
+        self.adb.drag_path(path, duration)
+        return end
+
     def _collect_loop(self) -> None:
         """Przeciąga kolejno wszystkie kulki do (aktualnej) pozycji DROP."""
         cfg = self.config
@@ -654,11 +706,12 @@ class DustMineBot:
         # Kulki, które mimo kilku prób nie dały się zebrać (fałszywe
         # wykrycie, element UI itp.) - pomijane do końca tego ekranu gry.
         skipped: list[vision.Circle] = []
-        last_target: vision.Circle | None = None
-        attempts = 0
+        # Ile razy przeciągano kulkę w danym miejscu, a ona nadal jest.
+        attempts: list[tuple[vision.Circle, int]] = []
         # Liczba wykrytych kulek tuż przed ostatnim przeciągnięciem -
         # służy do policzenia, ile kulek faktycznie zniknęło.
         balls_before_drag: int | None = None
+        finger: tuple[int, int] | None = None
 
         while not self._stop:
             if time.monotonic() - start_time > cfg.max_seconds_per_game_screen:
@@ -686,6 +739,9 @@ class DustMineBot:
                     self.stats.balls_collected += collected
                 balls_before_drag = None
 
+            # kulki, które zniknęły, nie mają już "nieudanych prób"
+            attempts = [(c, n) for c, n in attempts if any(self._same_ball(c, b) for b in det.balls)]
+
             candidates = [b for b in det.balls if not any(self._same_ball(b, s) for s in skipped)]
 
             if det.drop is None or not candidates:
@@ -708,26 +764,28 @@ class DustMineBot:
                 self._sleep(0.3)
                 continue
 
-            ball = candidates[0]
+            if cfg.drag_style == "straight":
+                ball = candidates[0]
+            else:
+                ball = self._pick_ball(candidates, finger)
             drop = det.drop
 
-            if last_target is not None and self._same_ball(ball, last_target):
-                attempts += 1
-            else:
-                attempts = 1
-            if attempts > cfg.max_drag_attempts_per_ball:
+            idx = next((i for i, (c, _) in enumerate(attempts) if self._same_ball(c, ball)), None)
+            count = (attempts[idx][1] if idx is not None else 0) + 1
+            if count > cfg.max_drag_attempts_per_ball:
                 logger.warning("[%s] kulka (%d,%d) nie znika po %d próbach - pomijam ją",
                                cfg.name, ball.x, ball.y, cfg.max_drag_attempts_per_ball)
                 skipped.append(ball)
-                last_target = None
-                attempts = 0
                 continue
-            last_target = ball
+            if idx is not None:
+                attempts[idx] = (ball, count)
+            else:
+                attempts.append((ball, count))
 
             logger.debug("[%s] przeciągam kulkę (%d,%d) -> DROP (%d,%d)",
                          cfg.name, ball.x, ball.y, drop.x, drop.y)
 
-            self.adb.swipe(ball.x, ball.y, drop.x, drop.y, duration_ms=int(cfg.drag_duration_ms.sample()))
+            finger = self._drag_ball(ball, drop)
             self.stats.drags += 1
             balls_before_drag = len(det.balls)
 

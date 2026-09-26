@@ -46,6 +46,23 @@ class DetectionResult:
     balls: list[Circle]
 
 
+def _ring_crop(h: int, w: int, cx: int, cy: int, r: int, thickness: int):
+    """
+    Rysuje okrąg (cv2.circle) w małym wycinku obrazu h x w obejmującym
+    go w całości. Zwraca (maska_wycinka, offset_x, offset_y). Piksele
+    są dokładnie te same, co przy rysowaniu na pełnym obrazie h x w
+    (łącznie z przycięciem na krawędziach obrazu).
+    """
+    pad = r + thickness + 2
+    x0, y0 = max(0, cx - pad), max(0, cy - pad)
+    x1, y1 = min(w, cx + pad + 1), min(h, cy + pad + 1)
+    if x1 <= x0 or y1 <= y0:
+        return np.zeros((0, 0), np.uint8), x0, y0
+    crop = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
+    cv2.circle(crop, (cx - x0, cy - y0), r, 255, thickness=thickness)
+    return crop, x0, y0
+
+
 def _find_drop_point(bgr: np.ndarray, gray: np.ndarray,
                       value_thresh: int = 200, sat_thresh: int = 25) -> Circle | None:
     """
@@ -113,12 +130,18 @@ def _find_drop_point(bgr: np.ndarray, gray: np.ndarray,
 
         peak_score = 0.0
         peak_r = None
+        icx, icy = int(cx), int(cy)
         for r in range(r_lo, r_hi, 2):
-            ring_mask = np.zeros_like(gray, dtype=np.uint8)
-            cv2.circle(ring_mask, (int(cx), int(cy)), r, 255, thickness=4)
-            ys_r, xs_r = np.where(ring_mask == 255)
+            # Pierścień rysujemy tylko w wycinku wokół okręgu (a nie na
+            # masce wielkości całego obrazu) - rasteryzacja okręgu o
+            # całkowitym środku jest niezmiennicza względem przesunięcia,
+            # więc zbiór pikseli jest identyczny, a koszt ~20x mniejszy.
+            ring_mask, ox, oy = _ring_crop(h, w, icx, icy, r, thickness=4)
+            ys_r, xs_r = np.nonzero(ring_mask)
             if ys_r.size == 0:
                 continue
+            ys_r = ys_r + oy
+            xs_r = xs_r + ox
             vals_on_ring = mask[ys_r, xs_r]
             ratio = float(np.mean(vals_on_ring > 0))
 
@@ -174,10 +197,14 @@ def _find_balls(bgr: np.ndarray, gray: np.ndarray, hough_circles: np.ndarray | N
             if dist < max(drop.r, r) * 0.8:
                 continue  # to ten sam obiekt co DROP
 
-        inner_mask = np.zeros_like(gray, dtype=np.uint8)
-        cv2.circle(inner_mask, (x, y), max(1, int(r * 0.7)), 255, thickness=-1)
+        # wnętrze kulki - wycinek wokół niej zamiast maski całego obrazu
+        inner_r = max(1, int(r * 0.7))
+        x0, y0 = max(0, x - inner_r - 1), max(0, y - inner_r - 1)
+        x1, y1 = min(w, x + inner_r + 2), min(h, y + inner_r + 2)
+        inner_mask = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
+        cv2.circle(inner_mask, (x - x0, y - y0), inner_r, 255, thickness=-1)
 
-        inner_gray_vals = gray[inner_mask == 255]
+        inner_gray_vals = gray[y0:y1, x0:x1][inner_mask == 255]
         if inner_gray_vals.size == 0:
             continue
         inner_brightness = float(np.mean(inner_gray_vals))

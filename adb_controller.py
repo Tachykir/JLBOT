@@ -101,6 +101,14 @@ class ADBController:
     def __init__(self, serial: str, adb_path: str | None = None, connect_timeout: float = 10.0):
         self.serial = serial
         self.adb_path = adb_path if adb_path is not None else default_adb_path()
+        # Surowy screencap (bez PNG) jest dużo szybszy; wyłączany na stałe
+        # dla tej instancji, jeśli urządzenie zwróci nieobsługiwany format.
+        self._raw_screencap_ok = True
+        # Czy `input motionevent` jest dostępne (None = jeszcze nie sprawdzono).
+        self._motionevent_ok: bool | None = None
+        # Szacowany czas jednego wywołania `input ...` po stronie Androida
+        # (uruchomienie procesu Java) - korygowany po każdym przeciągnięciu.
+        self._input_latency_s = 0.15
         self._connect(connect_timeout)
 
     # ------------------------------------------------------------------ #
@@ -212,22 +220,66 @@ class ADBController:
             str(int(duration_ms)),
         ])
 
-    def swipe_multi_point(self, points: list[tuple[int, int]], step_delay_ms: int = 16) -> None:
-        """
-        Bardziej precyzyjny "drag" złożony z wielu segmentów swipe,
-        przydatny gdy gra wymaga wielu punktów pośrednich, żeby
-        zarejestrować gest jako przeciąganie obiektu (niektóre silniki
-        gier - np. Unity - lepiej wykrywają drag, gdy zdarzenia ruchu
-        docierają częściej niż jeden skok start->koniec).
+    def _probe_motionevent(self) -> bool:
+        """Sprawdza, czy `input motionevent` jest dostępne na urządzeniu
+        (zależy od wersji Androida)."""
+        try:
+            result = subprocess.run(
+                [self.adb_path, "-s", self.serial, "shell", "input 2>&1"],
+                capture_output=True, timeout=10, creationflags=_SUBPROCESS_FLAGS,
+            )
+            out = (result.stdout or b"").decode(errors="replace") + (result.stderr or b"").decode(errors="replace")
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+        ok = "motionevent" in out
+        logger.info("[%s] przeciąganie po krzywej: %s", self.serial,
+                    "dostępne (input motionevent)" if ok
+                    else "NIEDOSTĘPNE na tej wersji Androida - używam prostego swipe")
+        return ok
 
-        UWAGA: `adb shell input swipe` sam w sobie generuje pośrednie
-        eventy MotionEvent, więc w większości przypadków wystarczy
-        zwykłe swipe(). Ta metoda to fallback na trudniejsze gry.
+    def drag_path(self, points: list[tuple[int, int]], duration_ms: float) -> None:
         """
-        for i in range(len(points) - 1):
-            x1, y1 = points[i]
-            x2, y2 = points[i + 1]
-            self.swipe(x1, y1, x2, y2, duration_ms=max(step_delay_ms, 50))
+        Przeciąga palcem po łamanej `points` jako JEDEN ciągły dotyk
+        (DOWN na pierwszym punkcie, MOVE po kolejnych, UP na ostatnim),
+        w łącznym czasie ok. `duration_ms`.
+
+        Wymaga `input motionevent` (nowsze Androidy). Gdy go brak,
+        wykonuje zwykły prosty swipe od pierwszego do ostatniego punktu.
+        Cała sekwencja idzie jednym poleceniem `adb shell`, więc między
+        punktami nie ma narzutu uruchamiania adb.exe.
+        """
+        if len(points) < 2:
+            return
+        if self._motionevent_ok is None:
+            self._motionevent_ok = self._probe_motionevent()
+        if not self._motionevent_ok:
+            (x1, y1), (x2, y2) = points[0], points[-1]
+            self.swipe(x1, y1, x2, y2, duration_ms=int(duration_ms))
+            return
+
+        moves = points[1:]
+        segment_s = duration_ms / 1000.0 / len(moves)
+        sleep_s = segment_s - self._input_latency_s
+        if sleep_s < 0.01:
+            sleep_s = 0.0
+
+        x, y = points[0]
+        parts = [f"input motionevent DOWN {int(x)} {int(y)}"]
+        for x, y in moves:
+            if sleep_s:
+                parts.append(f"sleep {sleep_s:.3f}")
+            parts.append(f"input motionevent MOVE {int(x)} {int(y)}")
+        parts.append(f"input motionevent UP {int(x)} {int(y)}")
+
+        start = time.monotonic()
+        self._run(["shell", "; ".join(parts)], timeout=15 + 3 * duration_ms / 1000.0)
+        elapsed = time.monotonic() - start
+
+        # dopasuj szacunek opóźnienia jednego `input`, żeby kolejne
+        # przeciągnięcia trwały bliżej zadanego czasu
+        calls = len(moves) + 2
+        measured = max(0.0, elapsed - sleep_s * len(moves)) / calls
+        self._input_latency_s = 0.7 * self._input_latency_s + 0.3 * measured
 
     # ------------------------------------------------------------------ #
     # Wyjście: screenshot
@@ -235,11 +287,29 @@ class ADBController:
     def screenshot(self) -> np.ndarray:
         """
         Zwraca screenshot jako obraz BGR (numpy array, kompatybilny z OpenCV).
-        Używa `exec-out screencap -p`, co zwraca surowe bajty PNG bez
-        zapisywania pliku na urządzeniu ani na dysku hosta - szybciej
-        i bez śmiecenia w /sdcard.
+
+        Domyślnie używa surowego `exec-out screencap` (bez `-p`): Android
+        nie musi kodować PNG, a my dekodować - to zwykle kilka razy
+        szybciej. Jeśli urządzenie zwróci nieobsługiwany format, instancja
+        na stałe przełącza się na `screencap -p` (PNG).
         """
-        cmd = [self.adb_path, "-s", self.serial, "exec-out", "screencap", "-p"]
+        if self._raw_screencap_ok:
+            data = self._exec_out(["screencap"])
+            img = decode_raw_screencap(data)
+            if img is not None:
+                return img
+            self._raw_screencap_ok = False
+            logger.info("[%s] surowy screencap nieobsługiwany (%d B) - przełączam na PNG",
+                        self.serial, len(data))
+
+        data = self._exec_out(["screencap", "-p"])
+        img = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            raise ADBError(f"Nie udało się zdekodować screenshotu z {self.serial}")
+        return img
+
+    def _exec_out(self, args: list[str]) -> bytes:
+        cmd = [self.adb_path, "-s", self.serial, "exec-out"] + args
         try:
             result = subprocess.run(cmd, capture_output=True, timeout=10, creationflags=_SUBPROCESS_FLAGS)
         except subprocess.TimeoutExpired as e:
@@ -253,12 +323,7 @@ class ADBController:
             raise ADBError(f"Nie udało się uruchomić '{self.adb_path}': {e}") from e
         if result.returncode != 0 or not result.stdout:
             raise ADBError(f"Nie udało się pobrać screenshotu z {self.serial}")
-        png_bytes = result.stdout
-        arr = np.frombuffer(png_bytes, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
-            raise ADBError(f"Nie udało się zdekodować screenshotu z {self.serial}")
-        return img
+        return result.stdout
 
     # ------------------------------------------------------------------ #
     # Sterowanie aplikacją: stop / start / restart
@@ -345,6 +410,33 @@ class ADBController:
                 w, h = part.split("x")
                 return int(w), int(h)
         raise ADBError(f"Nie udało się odczytać rozmiaru ekranu: {out}")
+
+
+# Formaty pikseli Androida (android.graphics.PixelFormat), 4 bajty/piksel
+_RAW_FORMATS = {
+    1: cv2.COLOR_RGBA2BGR,  # RGBA_8888
+    2: cv2.COLOR_RGBA2BGR,  # RGBX_8888
+    5: cv2.COLOR_BGRA2BGR,  # BGRA_8888
+}
+
+
+def decode_raw_screencap(data: bytes) -> np.ndarray | None:
+    """
+    Dekoduje wynik `screencap` bez `-p`: nagłówek (szerokość, wysokość,
+    format jako uint32 little-endian, na Androidzie 9+ dodatkowo 4 bajty
+    przestrzeni kolorów) i surowe piksele. Zwraca obraz BGR albo None,
+    jeśli format jest nieobsługiwany lub dane się nie zgadzają.
+    """
+    if len(data) < 16:
+        return None
+    w, h, fmt = (int(v) for v in np.frombuffer(data[:12], dtype="<u4"))
+    if fmt not in _RAW_FORMATS or w <= 0 or h <= 0 or w > 10000 or h > 10000:
+        return None
+    header = len(data) - w * h * 4
+    if header not in (12, 16):
+        return None
+    pixels = np.frombuffer(data, dtype=np.uint8, offset=header).reshape(h, w, 4)
+    return cv2.cvtColor(pixels, _RAW_FORMATS[fmt])
 
 
 def list_ldplayer_devices(adb_path: str | None = None) -> list[str]:

@@ -580,6 +580,15 @@ class MainWindow(QMainWindow):
             _make_range_row(50, 5000, 50, decimals=0)
         form.addRow("drag_duration_ms:", drag_ms_container)
 
+        self.field_human_drag = QCheckBox("ludzki ruch (krzywa, losowy chwyt i kolejność)")
+        self.field_human_drag.setToolTip(
+            "Zaznaczone: przeciąganie po losowej krzywej z przyspieszaniem i zwalnianiem,\n"
+            "łapanie kulki w losowym miejscu i losowa kolejność zbierania.\n"
+            "Odznaczone: prosta linia środek-środek, kulki po kolei."
+        )
+        self.field_human_drag.toggled.connect(self._apply_config_fields)
+        form.addRow("Przeciąganie:", self.field_human_drag)
+
         self.field_between_drags_min, self.field_between_drags_max, between_drags_container = \
             _make_range_row(0.0, 10.0, 0.1)
         form.addRow("between_drags_delay (s):", between_drags_container)
@@ -730,7 +739,7 @@ class MainWindow(QMainWindow):
                   self.field_region_x1, self.field_region_y1, self.field_region_x2,
                   self.field_region_y2,
                   self.field_idle_interval_min, self.field_idle_interval_max,
-                  self.field_drag_ms_min, self.field_drag_ms_max,
+                  self.field_drag_ms_min, self.field_drag_ms_max, self.field_human_drag,
                   self.field_between_drags_min, self.field_between_drags_max)
         for w in fields:
             w.blockSignals(True)
@@ -755,6 +764,7 @@ class MainWindow(QMainWindow):
             self.field_idle_interval_max.setValue(cfg.idle_click_interval.max)
             self.field_drag_ms_min.setValue(cfg.drag_duration_ms.min)
             self.field_drag_ms_max.setValue(cfg.drag_duration_ms.max)
+            self.field_human_drag.setChecked(cfg.drag_style == "human")
             self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
             self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
         finally:
@@ -819,7 +829,7 @@ class MainWindow(QMainWindow):
                   self.field_region_x1, self.field_region_y1, self.field_region_x2,
                   self.field_region_y2,
                   self.field_idle_interval_min, self.field_idle_interval_max,
-                  self.field_drag_ms_min, self.field_drag_ms_max,
+                  self.field_drag_ms_min, self.field_drag_ms_max, self.field_human_drag,
                   self.field_between_drags_min, self.field_between_drags_max,
                   self.btn_edit_schedule):
             w.setEnabled(enabled)
@@ -853,6 +863,7 @@ class MainWindow(QMainWindow):
             self.field_drag_ms_min.value(),
             max(self.field_drag_ms_min.value(), self.field_drag_ms_max.value()),
         )
+        cfg.drag_style = "human" if self.field_human_drag.isChecked() else "straight"
         cfg.between_drags_delay = RandomRange(
             self.field_between_drags_min.value(),
             max(self.field_between_drags_min.value(), self.field_between_drags_max.value()),

@@ -133,6 +133,14 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   Androida), bot ją restartuje. `0` wyłącza. Aplikacje z
   `foreign_app_packages` (Google Play, przeglądarka) powodują restart
   natychmiast.
+- **`drag_style`** (domyślnie `"human"`) — `"human"`: przeciąganie po
+  losowej krzywej (łuk C/S, przyspieszanie i zwalnianie, drżenie, czasem
+  lekkie przestrzelenie celu), kulka łapana i puszczana w losowym
+  miejscu, losowa kolejność zbierania. `"straight"`: prosta linia
+  środek–środek, kulki po kolei. Krzywa wymaga `input motionevent`
+  (nowsze Androidy) — bot sam to sprawdza i przy starcie loguje, czy
+  jest dostępne; bez niego tor jest prosty, ale losowy chwyt i
+  kolejność zostają.
 - **`max_drag_attempts_per_ball`** (domyślnie 3) — po tylu nieudanych
   przeciągnięciach tej samej kulki bot uznaje ją za niezbieralną i
   pomija do końca bieżącego ekranu gry.
@@ -258,6 +266,7 @@ Gotowe pliki konfiguracyjne do tego już są w projekcie:
 | `vision.py` | Detekcja kulek i punktu DROP przez OpenCV |
 | `bot.py` | Logika jednej instancji bota (pętla idle → zbieranie → idle) |
 | `scheduler.py` | Harmonogram: okna, losowe sesje/przerwy, limit dzienny |
+| `humanize.py` | Generowanie "ludzkich" torów przeciągania |
 | `manager.py` | CLI: uruchamianie wielu instancji bota równolegle (multiprocessing) |
 | `main_window.py` | GUI: główne okno aplikacji (uruchom to, żeby odpalić GUI) |
 | `gui_worker.py` | Most między `bot.py` a GUI - uruchamia bota w wątku Qt |
