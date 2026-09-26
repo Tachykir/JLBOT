@@ -67,6 +67,7 @@ STATUS_COLORS = {
 _POINTS = [
     ("nav_profile", "Zakładka PROFILE", (255, 200, 0)),
     ("nav_craft", "Zakładka CRAFT", (0, 200, 255)),
+    ("nav_inventory", "Zakładka INVENTORY", (255, 255, 0)),
     ("craft_loot_packs_tab", "Zakładka LOOT PACKS (w Craft)", (120, 255, 120)),
     ("card_tap_anywhere", "Karta bez przycisku („tap anywhere”)", (255, 120, 255)),
 ]
@@ -75,8 +76,8 @@ _POINTS = [
 _STAT_FIELDS = [
     ("cycles", "Plansze"), ("balls_collected", "Kulki"), ("drags", "Przeciągnięcia"),
     ("debris_games", "Depth Collapse"), ("fishing_skipped", "Fishing pominięte"), ("defeats", "Porażki"),
-    ("pack_rounds", "Rundy paczek"), ("drops", "Dropy po walce"), ("restarts", "Restarty gry"),
-    ("errors", "Błędy"),
+    ("pack_rounds", "Rundy paczek"), ("drops", "Dropy po walce"), ("salvaged", "Rozebrane"),
+    ("restarts", "Restarty gry"), ("errors", "Błędy"),
 ]
 
 STATUS_LABELS_PL = {
@@ -819,6 +820,21 @@ class MainWindow(QMainWindow):
         self.field_packs_rounds.setToolTip("Jedna runda = maksymalna liczba paczek + przejrzenie kart")
         self.field_packs_rounds.valueChanged.connect(self._apply_config_fields)
         form.addRow("Maks. rund za jednym razem:", self.field_packs_rounds)
+
+        form.addRow(self._section("Pełny ekwipunek"))
+        self.field_salvage_full = QCheckBox("Gdy ekwipunek pełny – rozbieraj przedmioty")
+        self.field_salvage_full.toggled.connect(self._apply_config_fields)
+        form.addRow(self.field_salvage_full)
+        form.addRow(self._hint("Po „Inventory Full”: OK, przytrzymanie Salvage na ekranie dropu, potem w "
+                               "Inventory przytrzymanie „+x DUST” na przedmiotach Z GÓRY LISTY - ustaw w "
+                               "grze sortowanie tak, żeby na górze były najsłabsze (np. Item Level rosnąco). "
+                               "Rozebrania nie da się cofnąć."))
+        self.field_salvage_items = QSpinBox(); self.field_salvage_items.setRange(1, 200)
+        self.field_salvage_items.setSuffix(" przedmiotów")
+        self.field_salvage_items.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Rozbieraj za jednym razem:", self.field_salvage_items)
+        self.field_salvage_hold_min, self.field_salvage_hold_max, box = self._range_row(300, 5000, 100, " ms", decimals=0)
+        form.addRow("Przytrzymanie przycisku:", box)
         return w
 
     def _tab_schedule(self) -> QWidget:
@@ -1019,6 +1035,8 @@ class MainWindow(QMainWindow):
                 self.field_mistake,
                 self.field_play_debris, self.field_skip_fishing,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
+                self.field_salvage_full, self.field_salvage_items, self.field_salvage_hold_min,
+                self.field_salvage_hold_max,
                 self.field_black_timeout, self.field_fg_lost, self.field_settle,
                 *[pw[1] for pw in self.point_widgets.values()])
 
@@ -1063,6 +1081,10 @@ class MainWindow(QMainWindow):
             self.field_packs_interval.setValue(int(cfg.packs_check_interval_min))
             self.field_packs_defeats.setValue(cfg.packs_defeat_streak)
             self.field_packs_rounds.setValue(cfg.packs_max_rounds)
+            self.field_salvage_full.setChecked(cfg.salvage_when_full)
+            self.field_salvage_items.setValue(cfg.salvage_items)
+            self.field_salvage_hold_min.setValue(cfg.salvage_hold_ms.min)
+            self.field_salvage_hold_max.setValue(cfg.salvage_hold_ms.max)
             self.field_black_timeout.setValue(cfg.black_screen_timeout)
             self.field_fg_lost.setValue(cfg.foreground_lost_timeout)
             self.field_settle.setValue(cfg.restart_settle_delay)
@@ -1088,6 +1110,9 @@ class MainWindow(QMainWindow):
         packs = enabled and self.field_auto_packs.isChecked()
         for w in (self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds):
             w.setEnabled(packs)
+        salvage = enabled and self.field_salvage_full.isChecked()
+        for w in (self.field_salvage_items, self.field_salvage_hold_min, self.field_salvage_hold_max):
+            w.setEnabled(salvage)
         protection = enabled and bool(self.field_game_package.text().strip())
         for w in (self.field_black_timeout, self.field_fg_lost, self.field_settle):
             w.setEnabled(protection)
@@ -1183,6 +1208,10 @@ class MainWindow(QMainWindow):
         cfg.packs_check_interval_min = float(self.field_packs_interval.value())
         cfg.packs_defeat_streak = self.field_packs_defeats.value()
         cfg.packs_max_rounds = self.field_packs_rounds.value()
+        cfg.salvage_when_full = self.field_salvage_full.isChecked()
+        cfg.salvage_items = self.field_salvage_items.value()
+        cfg.salvage_hold_ms = RandomRange(self.field_salvage_hold_min.value(),
+                                          max(self.field_salvage_hold_min.value(), self.field_salvage_hold_max.value()))
         cfg.black_screen_timeout = self.field_black_timeout.value()
         cfg.foreground_lost_timeout = self.field_fg_lost.value()
         cfg.restart_settle_delay = self.field_settle.value()

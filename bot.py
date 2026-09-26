@@ -64,6 +64,7 @@ POINT_DEFAULTS: dict[str, tuple[float, float, float]] = {
     "nav_craft": (0.67, 0.93, 0.03),
     "craft_loot_packs_tab": (0.18, 0.142, 0.03),
     "card_tap_anywhere": (0.5, 0.22, 0.08),
+    "nav_inventory": (0.31, 0.93, 0.03),
 }
 
 # Wybór na ekranie dropu: klucz -> (etykieta, numer wiersza w panelu od góry)
@@ -108,6 +109,15 @@ class BotConfig:
     # Replace / Equip & Salvage / Salvage / Keep Current):
     # "keep" | "replace" | "equip_salvage" | "salvage".
     drop_choice: str = "keep"
+
+    # Pełny ekwipunek ("Inventory Full" po Keep Current): OK, przytrzymaj
+    # Salvage na ekranie dropu, potem w Inventory przytrzymaj "+x DUST" na
+    # `salvage_items` przedmiotach Z GÓRY LISTY (sortowanie ustaw w grze
+    # tak, żeby na górze były najsłabsze, np. Item Level rosnąco).
+    salvage_when_full: bool = True
+    salvage_items: int = 10
+    # Jak długo przytrzymać przycisk rozebrania (ms).
+    salvage_hold_ms: RandomRange = field(default_factory=lambda: RandomRange(1200, 1800))
 
     # Jak często klikać punkt idle, gdy nie widać jeszcze ekranu gry.
     # Losowany zakres (s) zamiast stałej wartości - patrz RandomRange.
@@ -282,6 +292,7 @@ class BotConfig:
     # w GUI (zakładka Punkty) ustawisz je kliknięciem na podglądzie.
     nav_profile: tuple[float, float, float] = POINT_DEFAULTS["nav_profile"]
     nav_craft: tuple[float, float, float] = POINT_DEFAULTS["nav_craft"]
+    nav_inventory: tuple[float, float, float] = POINT_DEFAULTS["nav_inventory"]
     craft_loot_packs_tab: tuple[float, float, float] = POINT_DEFAULTS["craft_loot_packs_tab"]
     # Gdzie klikać na karcie z paczki bez przycisku ("TAP ANYWHERE TO
     # CONTINUE") - pusty obszar, który na ekranie Craft też jest pusty.
@@ -327,6 +338,8 @@ class BotConfig:
             ("foreground_lost_timeout", float),
             ("max_drag_attempts_per_ball", int),
             ("mistake_chance", float),
+            ("salvage_when_full", bool),
+            ("salvage_items", int),
             ("play_debris", bool),
             ("skip_fishing", bool),
             ("auto_packs", bool),
@@ -343,7 +356,7 @@ class BotConfig:
                 if len(vals) == 2:  # stary format bez promienia
                     vals.append(POINT_DEFAULTS[key][2])
                 setattr(d, key, tuple(vals[:3]))
-        for key in ("reaction_delay", "tap_hold_ms"):
+        for key in ("reaction_delay", "tap_hold_ms", "salvage_hold_ms"):
             if data.get(key) is not None:
                 setattr(d, key, RandomRange.from_value(data[key]))
         if "tile_tap_delay" in data:
@@ -383,6 +396,10 @@ class BotConfig:
             "idle_point_radius": self.idle_point_radius,
             "idle_target": self.idle_target,
             "drop_choice": self.drop_choice,
+            "salvage_when_full": self.salvage_when_full,
+            "salvage_items": self.salvage_items,
+            "salvage_hold_ms": self.salvage_hold_ms.to_dict(),
+            "nav_inventory": list(self.nav_inventory),
             "board_region": list(self.board_region) if self.board_region else None,
             "idle_click_interval": self.idle_click_interval.to_dict(),
             "drag_duration_ms": self.drag_duration_ms.to_dict(),
@@ -435,6 +452,7 @@ class BotStats:
     fishing_skipped: int = 0
     defeats: int = 0
     drops: int = 0
+    salvaged: int = 0
     pack_rounds: int = 0
 
 
@@ -459,6 +477,8 @@ class DustMineBot:
         self._last_drop: vision.Circle | None = None
         self._idle_point_warned = False
         self._last_drop_choice = 0.0
+        self._inventory_full = False            # po "Inventory Full": Salvage na ekranie dropu
+        self._inventory_salvage_pending = False # potem: rozebrać przedmioty w Inventory
         self._last_decision: Decision | None = None
 
         # Watchdog czarnego ekranu: znacznik czasu (time.monotonic()),
@@ -829,9 +849,10 @@ class DustMineBot:
 
             now = time.monotonic()
             if not self._paused and now - last_click >= next_click_delay:
-                point = self._idle_click_point(frame)
-                if point is not None:
-                    self._tap(*point)
+                if not self._handle_inventory_flow(frame):
+                    point = self._idle_click_point(frame)
+                    if point is not None:
+                        self._tap(*point)
                 last_click = now
                 next_click_delay = humanize.human_delay(cfg.idle_click_interval.min, cfg.idle_click_interval.max)
 
@@ -849,6 +870,77 @@ class DustMineBot:
         dx = int(round(max(-2.0, min(2.0, random.gauss(0.0, 0.8)))))
         dy = int(round(max(-2.0, min(2.0, random.gauss(0.0, 0.8)))))
         self.adb.swipe(x, y, x + dx, y + dy, duration_ms=int(hold))
+
+    def _hold(self, x: int, y: int, hold_ms: float) -> None:
+        """Przytrzymanie palcem (long press) z lekkim przesunięciem."""
+        dx = int(round(max(-2.0, min(2.0, random.gauss(0.0, 0.8)))))
+        dy = int(round(max(-2.0, min(2.0, random.gauss(0.0, 0.8)))))
+        self.adb.swipe(x, y, x + dx, y + dy, duration_ms=int(hold_ms))
+
+    def _handle_inventory_flow(self, frame: np.ndarray) -> bool:
+        """
+        Obsługa pełnego ekwipunku w trybie czekania. Zwraca True, jeśli
+        wykonano akcję (wtedy zwykłe kliknięcie idle jest pomijane):
+          1. okno "Inventory Full" tuż po wyborze na ekranie dropu -> OK,
+          2. ekran dropu -> przytrzymanie Salvage (zamiast Keep Current),
+          3. z powrotem na ekranie z paskiem nawigacji -> Inventory i
+             rozebranie przedmiotów z góry listy.
+        """
+        cfg = self.config
+        if not cfg.salvage_when_full:
+            return False
+        W = frame.shape[1]
+        dialog = screens.find_open_dialog(frame)
+        if dialog is not None:
+            # jedyne okno spodziewane w trybie czekania - "Inventory Full"
+            # zaraz po kliknięciu opcji na ekranie dropu; innych nie ruszamy
+            if time.monotonic() - self._last_drop_choice < 20:
+                logger.warning("[%s] ekwipunek pełny - rozbiorę nowy drop i %d przedmiotów z Inventory",
+                               cfg.name, cfg.salvage_items)
+                self._inventory_full = True
+                self._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.012 * W))
+                return True
+            return False
+        if self._inventory_full:
+            rows = screens.find_drop_choice(frame)
+            if rows and len(rows) == 4:
+                cx, cy = rows[DROP_CHOICES["salvage"][1]].center
+                logger.info("[%s] drop po walce - przytrzymuję Salvage (pełny ekwipunek)", cfg.name)
+                self._hold(*humanize.random_point_in_circle(cx, cy, 0.03 * W), cfg.salvage_hold_ms.sample())
+                self._inventory_full = False
+                self._inventory_salvage_pending = True
+                return True
+        if self._inventory_salvage_pending and screens.find_just_loot(frame) is not None:
+            self._inventory_salvage_pending = False
+            self._salvage_inventory()
+            return True
+        return False
+
+    def _salvage_inventory(self) -> None:
+        """Zakładka Inventory: przytrzymuje "+x DUST" na przedmiotach z góry
+        listy (po każdym lista przesuwa się w górę)."""
+        cfg = self.config
+        self._packs._tap_nav("nav_inventory")
+        self._sleep(random.uniform(1.2, 1.8))
+        done = misses = 0
+        while done < cfg.salvage_items and not self._stop and not self._paused:
+            frame = self.adb.screenshot()
+            buttons = screens.find_salvage_buttons(frame)
+            if not buttons:
+                misses += 1
+                if misses >= 3:
+                    if done == 0:
+                        logger.warning("[%s] nie znaleziono przycisków „+x DUST” w Inventory", cfg.name)
+                    break
+                self._sleep(0.7)
+                continue
+            misses = 0
+            x, y = buttons[0]
+            self._hold(*humanize.random_point_in_circle(x, y, 0.012 * frame.shape[1]), cfg.salvage_hold_ms.sample())
+            done += 1
+            self.stats.salvaged += 1
+            self._sleep(humanize.human_delay(0.6, 1.4))
+        logger.info("[%s] rozebrano %d przedmiotów z Inventory", cfg.name, done)
 
     def _react(self) -> None:
         """Czas reakcji na nowy ekran (plansza / minigra)."""

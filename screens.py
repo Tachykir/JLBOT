@@ -208,6 +208,10 @@ def find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
     wiersze-przyciski od góry do dołu.
     """
     H, W = bgr.shape[:2]
+    # Ekran dropu nie ma paska nawigacji - na ekranach z JUST LOOT (np.
+    # lista przedmiotów w Inventory) podobne linie tworzą obwódki kart.
+    if find_just_loot(bgr) is not None:
+        return None
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     lines = _horizontal_lines(gray, int(0.5 * H), H, 0.6 * W)
     best: list[tuple[int, int, int]] = []
@@ -224,7 +228,8 @@ def find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
             chain.append(ln)
         if len(chain) > len(best):
             best = chain
-    if len(best) < 4:
+    # panel ma 3-5 przycisków (4-6 linii)
+    if not (4 <= len(best) <= 6):
         return None
     x1 = min(l[1] for l in best)
     x2 = max(l[2] for l in best)
@@ -262,6 +267,37 @@ def find_reveal_card(bgr: np.ndarray) -> Rect | None:
             if glyph_w < 0.3 * iw and glyph_h < 0.3 * ih and abs(cx - 0.5) < 0.15 and abs(cy - 0.5) < 0.15:
                 return Rect(top[1], top[0], w, h)
     return None
+
+
+# --------------------------------------------------------------------- #
+# Inventory: przyciski "+x DUST" (rozebranie przedmiotu, przytrzymanie)
+# --------------------------------------------------------------------- #
+
+def find_salvage_buttons(bgr: np.ndarray) -> list[tuple[int, int]]:
+    """
+    Przyciski "+x DUST" w prawym pasku kart przedmiotów na liście
+    Inventory: pomarańczowy tekst przy prawej krawędzi, poniżej filtrów
+    i powyżej paska nawigacji. Zwraca punkty (x, y) od góry listy.
+    """
+    H, W = bgr.shape[:2]
+    y_top, y_bottom = int(0.25 * H), int(0.9 * H)
+    nav = find_just_loot(bgr)
+    if nav is not None:
+        y_bottom = min(y_bottom, int(nav.y - 1.2 * nav.r))
+    x_left = int(0.82 * W)
+    hsv = cv2.cvtColor(bgr[y_top:y_bottom, x_left:], cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (10, 120, 150), (35, 255, 255))
+    glyphs = [(x_left + x + w / 2, y_top + y + h / 2) for x, y, w, h, area in _components(mask)
+              if area >= 8 and h <= 0.03 * H]
+    # znaki jednego przycisku ("+8", "DUST") leżą blisko siebie w pionie
+    glyphs.sort(key=lambda g: g[1])
+    buttons: list[list[tuple[float, float]]] = []
+    for g in glyphs:
+        if buttons and g[1] - buttons[-1][-1][1] < 0.03 * H:
+            buttons[-1].append(g)
+        else:
+            buttons.append([g])
+    return [(int(np.mean([g[0] for g in b])), int(np.mean([g[1] for g in b]))) for b in buttons]
 
 
 # --------------------------------------------------------------------- #

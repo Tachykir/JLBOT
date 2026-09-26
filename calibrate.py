@@ -115,6 +115,7 @@ def main() -> None:
     print(f"Przycisk JUST LOOT: {screens.find_just_loot(img)}")
     print(f"Drop po walce - panel wyboru: {screens.find_drop_choice(img)}")
     print(f"Drop po walce - zakryta karta: {screens.find_reveal_card(img)}")
+    print(f"Inventory - przyciski „+x DUST”: {screens.find_salvage_buttons(img)}")
     buy = screens.find_buy_button(img)
     print(f"Craft - przycisk z ceną: {buy}")
     if buy is not None:

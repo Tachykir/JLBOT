@@ -130,6 +130,13 @@ instancji:
   REVEAL”) bot odkrywa sam, a na ekranie porównania przedmiotów klika
   opcję z `drop_choice`: `"keep"` (Keep Current, domyślnie), `"replace"`,
   `"equip_salvage"` albo `"salvage"` (GUI: zakładka Ogólne).
+- **Pełny ekwipunek** (`salvage_when_full`, domyślnie włączone) — gdy
+  po „Keep Current” wyskoczy „Inventory Full”: OK, przytrzymanie Salvage
+  na ekranie dropu, potem zakładka INVENTORY i przytrzymanie „+x DUST” na
+  `salvage_items` (domyślnie 10) przedmiotach **z góry listy**. Ustaw w
+  grze sortowanie tak, żeby na górze były najsłabsze przedmioty (np. Item
+  Level rosnąco) — rozebrania nie da się cofnąć. Czas przytrzymania:
+  `salvage_hold_ms` (GUI: zakładka Paczki).
 - **`idle_point`** — [x, y] punktu awaryjnego (gdy nie widać ani JUST
   LOOT, ani PROCEED) albo stałego przy `idle_target: "fixed"`.
   Odczytaj współrzędne z `calibrate.py --grid`.
