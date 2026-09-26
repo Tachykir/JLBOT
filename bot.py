@@ -870,6 +870,12 @@ class DustMineBot:
         self.adb.drag_path(path, duration)
         return end
 
+    @staticmethod
+    def _patch_color(frame: np.ndarray, x: int, y: int, r: int) -> np.ndarray:
+        half = max(2, int(r * 0.4))
+        patch = frame[max(0, y - half):y + half, max(0, x - half):x + half]
+        return patch.reshape(-1, 3).mean(axis=0) if patch.size else np.zeros(3)
+
     def _collect_loop(self) -> None:
         """Przeciąga kolejno wszystkie kulki do (aktualnej) pozycji DROP."""
         cfg = self.config
@@ -879,12 +885,17 @@ class DustMineBot:
         # Kulki, które mimo kilku prób nie dały się zebrać (fałszywe
         # wykrycie, element UI itp.) - pomijane do końca tego ekranu gry.
         skipped: list[vision.Circle] = []
-        # Ile razy przeciągano kulkę w danym miejscu, a ona nadal jest.
-        attempts: list[tuple[vision.Circle, int]] = []
+        # Nieudane próby w danym miejscu: (kulka, liczba prób, kolor w
+        # miejscu chwytu). Próba jest nieudana tylko wtedy, gdy po niej w
+        # tym miejscu nadal leży kulka tego samego koloru - zdjęcie kulki
+        # ze stosu odsłania inną (inny kolor), co liczy się jako postęp.
+        attempts: list[tuple[vision.Circle, int, np.ndarray]] = []
         # Liczba wykrytych kulek tuż przed ostatnim przeciągnięciem -
         # służy do policzenia, ile kulek faktycznie zniknęło.
         balls_before_drag: int | None = None
         finger: tuple[int, int] | None = None
+        # ostatnia znana pozycja DROP - gdy kulki go chwilowo zasłonią
+        last_drop: vision.Circle | None = None
 
         while not self._stop:
             if time.monotonic() - start_time > cfg.max_seconds_per_game_screen:
@@ -897,7 +908,9 @@ class DustMineBot:
                 logger.info("[%s] restart gry przerwał zbieranie - wracam do idle", cfg.name)
                 return
 
-            det = vision.detect(frame, region=cfg.board_region)
+            det = vision.detect(frame, region=cfg.board_region, drop_hint=last_drop)
+            if det.drop is not None:
+                last_drop = det.drop
 
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "collecting")
@@ -912,8 +925,15 @@ class DustMineBot:
                     self.stats.balls_collected += collected
                 balls_before_drag = None
 
-            # kulki, które zniknęły, nie mają już "nieudanych prób"
-            attempts = [(c, n) for c, n in attempts if any(self._same_ball(c, b) for b in det.balls)]
+            # próby zostają tylko tam, gdzie nadal leży kulka tego samego koloru
+            kept = []
+            for c, n, color in attempts:
+                if not any(self._same_ball(c, b) for b in det.balls):
+                    continue
+                if float(np.linalg.norm(self._patch_color(frame, c.x, c.y, c.r) - color)) > 30:
+                    continue
+                kept.append((c, n, color))
+            attempts = kept
 
             candidates = [b for b in det.balls if not any(self._same_ball(b, s) for s in skipped)]
 
@@ -943,17 +963,18 @@ class DustMineBot:
                 ball = self._pick_ball(candidates, finger)
             drop = det.drop
 
-            idx = next((i for i, (c, _) in enumerate(attempts) if self._same_ball(c, ball)), None)
+            idx = next((i for i, (c, _n, _col) in enumerate(attempts) if self._same_ball(c, ball)), None)
             count = (attempts[idx][1] if idx is not None else 0) + 1
             if count > cfg.max_drag_attempts_per_ball:
                 logger.warning("[%s] kulka (%d,%d) nie znika po %d próbach - pomijam ją",
                                cfg.name, ball.x, ball.y, cfg.max_drag_attempts_per_ball)
                 skipped.append(ball)
                 continue
+            entry = (ball, count, self._patch_color(frame, ball.x, ball.y, ball.r))
             if idx is not None:
-                attempts[idx] = (ball, count)
+                attempts[idx] = entry
             else:
-                attempts.append((ball, count))
+                attempts.append(entry)
 
             logger.debug("[%s] przeciągam kulkę (%d,%d) -> DROP (%d,%d)",
                          cfg.name, ball.x, ball.y, drop.x, drop.y)

@@ -19,15 +19,19 @@ Detekcja (`vision.py`) używa **OpenCV** i nie opiera się na sztywnych
 współrzędnych ani zrzutach wzorcowych (template matching) — analizuje
 obraz "na żywo":
 
-- **Kulki**: wykrywane przez transformatę Hougha (`HoughCircles`) jako
-  jednolicie wypełnione, kolorowe koła na czarnym tle.
-- **DROP**: to trudniejszy przypadek, bo to *przerywany* biały okrąg
-  z tekstem "DROP" w środku — Hough sobie z tym nie radzi. Zamiast tego:
-  odróżniamy "prawdziwą biel" (niska saturacja w HSV) od jasnych,
-  ale kolorowych kulek (wysoka saturacja), łączymy przerywaną kreskę
-  w spójny kontur przez dylatację morfologiczną, liczymy środek ciężkości
-  jasnych pikseli, a promień okręgu ustalamy skanując profil jasności
-  wzdłuż rosnących promieni wokół tego środka.
+- **DROP**: przerywany biały okrąg z napisem "DROP". Odróżniamy
+  "prawdziwą biel" (niska saturacja w HSV) od jasnych, ale kolorowych
+  kulek, szukamy kandydatów na okręgi transformatą Hougha i sprawdzamy:
+  biały napis w środku, pusty pierścień między napisem a kreskami i
+  kreski na co najmniej połowie obwodu. Wynik doprecyzowuje dopasowanie
+  okręgu do kresek. Wystarczy fragment okręgu, więc DROP jest znajdowany
+  także wtedy, gdy kulki częściowo go zasłaniają. W trakcie zbierania bot
+  pamięta ostatnią pozycję DROP, gdyby kulki zasłoniły go całkiem.
+- **Kulki**: wszystko, co odróżnia się od tła planszy (poza białym
+  DROP-em), i kolejne "najgłębsze" punkty tej maski (transformata
+  odległości). Działa dla kulek nachodzących na siebie i z napisem
+  "+208" w środku; punkt chwytu zawsze leży na kulce z wierzchu. Kulka
+  całkiem schowana pod inną pojawia się po zebraniu tej z góry.
 
 Dzięki temu bot **działa niezależnie od tego, gdzie aktualnie jest
 DROP i jaki układ/kolor mają kulki** — nie trzeba nic przeuczać przy
