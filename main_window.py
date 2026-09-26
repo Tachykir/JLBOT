@@ -33,12 +33,14 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton, QLabel, QLineEdit, QSpinBox,
     QDoubleSpinBox, QPlainTextEdit, QSplitter, QGroupBox, QMessageBox, QFileDialog,
     QTimeEdit, QCheckBox, QDialog, QDialogButtonBox, QScrollArea, QFrame, QTabWidget, QComboBox,
+    QInputDialog,
 )
 
 from bot import (BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS, DROP_CHOICES,
                  unknown_screens_dir)
 from gui_worker import BotWorker, SnapshotWorker
 from preview_widget import PreviewWidget, EditMode
+from dashboard import DashboardWidget
 from adb_controller import list_ldplayer_devices
 import vision
 
@@ -107,6 +109,7 @@ class InstanceEntry:
         self.last_frame: np.ndarray | None = None
         self.last_det: vision.DetectionResult | None = None
         self.last_stats: BotStats | None = None
+        self.last_thumb: float = 0.0
         self.schedule_text: str = ""
         self.list_item: QListWidgetItem | None = None
         self.snapshot_worker: SnapshotWorker | None = None
@@ -485,7 +488,18 @@ class MainWindow(QMainWindow):
         top.setStretchFactor(1, 1)
         top.setStretchFactor(2, 0)
         top.setSizes([230, 510, 520])
-        vsplit.addWidget(top)
+
+        # karty: przegląd wszystkich instancji / szczegóły wybranej
+        self.dashboard = DashboardWidget()
+        self.dashboard.card_action.connect(self._on_card_action)
+        self.dashboard.global_action.connect(self._on_global_action)
+        self.main_tabs = QTabWidget()
+        self.main_tabs.addTab(self.dashboard, "📋 Wszystkie instancje")
+        self.main_tabs.addTab(top, "⚙ Szczegóły instancji")
+        self.main_tabs.setCurrentIndex(0)
+        # miniatury odśwież od razu po przejściu na przegląd
+        self.main_tabs.currentChanged.connect(lambda i: i == 0 and self._rebuild_dashboard())
+        vsplit.addWidget(self.main_tabs)
         vsplit.addWidget(self._build_log_panel())
         vsplit.setStretchFactor(0, 4)
         vsplit.setStretchFactor(1, 1)
@@ -549,7 +563,11 @@ class MainWindow(QMainWindow):
         self.btn_restart_app = QPushButton("🔄 Restart gry")
         self.btn_restart_app.setToolTip("Zamknij i uruchom grę ponownie (wymaga pakietu gry)")
         self.btn_restart_app.clicked.connect(self._restart_app_selected)
-        for i, b in enumerate((self.btn_start, self.btn_pause, self.btn_stop, self.btn_restart_app)):
+        self.btn_salvage_now = QPushButton("🧹 Rozbierz teraz")
+        self.btn_salvage_now.setToolTip("Rozbierz przedmioty z góry listy Inventory (zapyta o liczbę)")
+        self.btn_salvage_now.clicked.connect(lambda: self._salvage_entries([self._current_entry()]))
+        for i, b in enumerate((self.btn_start, self.btn_pause, self.btn_stop, self.btn_restart_app,
+                               self.btn_salvage_now)):
             b.setMinimumHeight(30)
             grid.addWidget(b, i // 2, i % 2)
         layout.addWidget(box)
@@ -1001,6 +1019,7 @@ class MainWindow(QMainWindow):
         self.instances[entry.config.name] = entry
         entry.list_item = item
         self.instance_list.addItem(item)
+        self._rebuild_dashboard()
         self._refresh_list_item(entry)
         self.instance_list.setCurrentItem(item)
 
@@ -1020,6 +1039,7 @@ class MainWindow(QMainWindow):
         entry.list_item.setToolTip(f"{entry.config.name} ({entry.serial})")
         if entry.config.name == self.selected_name:
             self.btn_pause.setText("▶ Wznów" if entry.status == "paused" else "⏸ Pauza")
+        self._update_dashboard(entry)
 
     def _remove_selected_instance(self) -> None:
         entry = self._current_entry()
@@ -1032,6 +1052,7 @@ class MainWindow(QMainWindow):
         row = self.instance_list.row(entry.list_item)
         self.instance_list.takeItem(row)
         del self.instances[entry.config.name]
+        self._rebuild_dashboard()
         self._mark_dirty()
         if not self.instances:
             self.selected_name = None
@@ -1207,7 +1228,8 @@ class MainWindow(QMainWindow):
         point_buttons = tuple(b for pw in self.point_widgets.values() for b in pw[2:])
         for w in self._config_widgets() + point_buttons + (self.btn_edit_schedule, self.btn_edit_idle, self.btn_edit_region,
                                            self.btn_clear_region, self.btn_refresh_preview, self.btn_start,
-                                           self.btn_pause, self.btn_stop, self.btn_restart_app):
+                                           self.btn_pause, self.btn_stop, self.btn_restart_app,
+                                           self.btn_salvage_now):
             w.setEnabled(enabled)
         if not enabled:
             self.schedule_summary_label.setText("—")
@@ -1269,7 +1291,10 @@ class MainWindow(QMainWindow):
         for key, (_value, radius, _pick, _reset) in self.point_widgets.items():
             x, y, _r = getattr(cfg, key)
             setattr(cfg, key, (x, y, radius.value() / 100.0))
-        entry.serial = self.field_serial.text().strip()
+        new_serial = self.field_serial.text().strip()
+        if new_serial != entry.serial:
+            entry.serial = new_serial
+            self._rebuild_dashboard()
         self._sync_shared(entry)
 
         self._update_dependent_enabled()
@@ -1372,6 +1397,7 @@ class MainWindow(QMainWindow):
         self.selected_name = new_name
         entry.list_item.setData(Qt.UserRole, new_name)
         entry.list_item.setText(self._format_list_label(entry))
+        self._rebuild_dashboard()
         self.preview_title.setText(f"<b>Podgląd</b> - {new_name}")
         self._log_local(f"Zmieniono nazwę instancji '{old_name}' -> '{new_name}'")
 
@@ -1490,16 +1516,114 @@ class MainWindow(QMainWindow):
 
     def _toggle_pause_selected(self) -> None:
         entry = self._current_entry()
-        if entry is None or entry.worker is None or not entry.worker.isRunning():
+        if entry is not None:
+            self._set_paused(entry, entry.status != "paused")
+
+    @staticmethod
+    def _running(entry: InstanceEntry | None) -> bool:
+        return entry is not None and entry.worker is not None and entry.worker.isRunning()
+
+    def _set_paused(self, entry: InstanceEntry, paused: bool) -> None:
+        if not self._running(entry):
             return
-        if entry.status == "paused":
-            entry.worker.request_resume()
-            self.btn_pause.setText("⏸ Pauza")
-            self._log_local(f"[{entry.config.name}] wznowiono")
-        else:
+        if paused:
             entry.worker.request_pause()
-            self.btn_pause.setText("▶ Wznów")
             self._log_local(f"[{entry.config.name}] wstrzymano")
+        else:
+            entry.worker.request_resume()
+            entry.status = "idle"  # do czasu następnej klatki z workera
+            self._log_local(f"[{entry.config.name}] wznowiono")
+        self._refresh_list_item(entry)
+
+    def _salvage_entries(self, entries: list) -> None:
+        """Wymuszone rozebranie przedmiotów na podanych (działających)
+        instancjach - z pytaniem o liczbę i ostrzeżeniem."""
+        entries = [e for e in entries if self._running(e)]
+        if not entries:
+            QMessageBox.information(self, "Bot nieaktywny",
+                                    "Rozbieranie działa na uruchomionych instancjach - najpierw kliknij Start.")
+            return
+        default = entries[0].config.salvage_items
+        count, ok = QInputDialog.getInt(
+            self, "Rozbierz przedmioty",
+            f"Ile przedmiotów rozebrać z GÓRY listy Inventory\n"
+            f"(instancji: {len(entries)})?\n\n"
+            f"Sortowanie w grze powinno stawiać najsłabsze przedmioty na górze.\n"
+            f"Rozebrania nie da się cofnąć.",
+            default, 1, 1000)
+        if not ok:
+            return
+        for e in entries:
+            e.worker.request_salvage(count)
+            self._log_local(f"[{e.config.name}] zlecono rozebranie {count} przedmiotów - "
+                            f"bot zrobi to przy najbliższym ekranie z paskiem nawigacji")
+
+    def _on_card_action(self, name: str, action: str) -> None:
+        entry = self.instances.get(name)
+        if entry is None:
+            return
+        if action == "start":
+            self._start_entry(entry)
+        elif action == "stop":
+            self._stop_entry(entry)
+        elif action == "pause":
+            self._set_paused(entry, entry.status != "paused")
+        elif action == "salvage":
+            self._salvage_entries([entry])
+        elif action == "details":
+            if entry.list_item is not None:
+                self.instance_list.setCurrentItem(entry.list_item)
+            self.main_tabs.setCurrentIndex(1)
+
+    def _on_global_action(self, action: str) -> None:
+        entries = list(self.instances.values())
+        if action == "start_all":
+            self._start_all()
+        elif action == "stop_all":
+            self._stop_all()
+        elif action in ("pause_all", "resume_all"):
+            pause = action == "pause_all"
+            for e in entries:
+                if (e.status == "paused") != pause:
+                    self._set_paused(e, pause)
+        elif action == "salvage_all":
+            self._salvage_entries(entries)
+        elif action == "restart_all":
+            running = [e for e in entries if self._running(e) and e.config.game_package]
+            if not running:
+                QMessageBox.information(self, "Restart gry",
+                                        "Brak działających instancji z ustawionym pakietem gry.")
+                return
+            if QMessageBox.question(self, "Restart gry",
+                                    f"Zrestartować grę na {len(running)} instancjach?") == QMessageBox.Yes:
+                for e in running:
+                    e.worker.request_restart_app()
+                self._log_local(f"Zlecono restart gry na {len(running)} instancjach")
+
+    def _update_dashboard(self, entry: InstanceEntry) -> None:
+        card = self.dashboard.card(entry.config.name)
+        if card is not None:
+            status = self._format_list_label(entry).split("\n", 1)[-1].strip()
+            card.set_status(status, STATUS_COLORS.get(entry.status, "#ddd"))
+            card.set_stats(entry.last_stats)
+            card.set_running(self._running(entry) and entry.status not in ("stopped", "error"),
+                             entry.status == "paused")
+        running = sum(1 for e in self.instances.values() if self._running(e))
+
+        def total(attr: str) -> int:
+            return sum(getattr(e.last_stats, attr, 0) for e in self.instances.values() if e.last_stats)
+        self.dashboard.set_summary(
+            f"Działa: <b>{running}/{len(self.instances)}</b> &nbsp;·&nbsp; łącznie: plansze {total('cycles')}, "
+            f"kulki {total('balls_collected')}, porażki {total('defeats')}, dropy {total('drops')}, "
+            f"rozebrane {total('salvaged')}, błędy {total('errors')}")
+
+    def _rebuild_dashboard(self) -> None:
+        self.dashboard.rebuild([(n, e.serial) for n, e in self.instances.items()])
+        for e in self.instances.values():
+            self._update_dashboard(e)
+            if e.last_frame is not None:
+                self.dashboard.card(e.config.name).set_frame(e.last_frame)
+
 
     def _restart_app_selected(self) -> None:
         """Ręczny restart gry (force-stop + start) na wybranej instancji,
@@ -1557,6 +1681,13 @@ class MainWindow(QMainWindow):
         entry.last_det = det
         if name == self.selected_name:
             self.preview.update_frame(frame, det)
+        # miniatury w przeglądzie - najwyżej 2 razy na sekundę na instancję
+        now = time.monotonic()
+        if now - entry.last_thumb >= 0.5 and self.main_tabs.currentIndex() == 0:
+            entry.last_thumb = now
+            card = self.dashboard.card(name)
+            if card is not None:
+                card.set_frame(frame)
 
     @Slot(str, str)
     def _on_log_message(self, name: str, line: str) -> None:
@@ -1596,6 +1727,7 @@ class MainWindow(QMainWindow):
         entry.last_stats = stats
         if name == self.selected_name:
             self._show_stats(stats)
+        self._update_dashboard(entry)
 
     @Slot(str, str)
     def _on_connection_failed(self, name: str, message: str) -> None:

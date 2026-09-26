@@ -507,6 +507,7 @@ class DustMineBot:
         self._unknown_saved = False
         self._inventory_full = False            # po "Inventory Full": Salvage na ekranie dropu
         self._inventory_salvage_pending = False # potem: rozebrać przedmioty w Inventory
+        self._forced_salvage: int | None = None # ręczne żądanie z GUI: ile przedmiotów
         self._last_decision: Decision | None = None
 
         # Watchdog czarnego ekranu: znacznik czasu (time.monotonic()),
@@ -544,6 +545,12 @@ class DustMineBot:
     @property
     def is_paused(self) -> bool:
         return self._paused
+
+    def request_salvage(self, count: int | None = None) -> None:
+        """Ręczne żądanie rozebrania `count` przedmiotów z góry listy w
+        Inventory (domyślnie config.salvage_items). Wykonywane w wątku bota
+        przy najbliższym ekranie z paskiem nawigacji (JUST LOOT)."""
+        self._forced_salvage = int(count) if count else self.config.salvage_items
 
     def request_restart_app(self) -> None:
         """
@@ -922,6 +929,12 @@ class DustMineBot:
              rozebranie przedmiotów z góry listy.
         """
         cfg = self.config
+        # ręczne (wymuszone) rozbieranie - niezależnie od ustawień
+        if self._forced_salvage and screens.find_just_loot(frame) is not None:
+            count, self._forced_salvage = self._forced_salvage, None
+            logger.warning("[%s] wymuszone rozbieranie: %d przedmiotów z góry listy", cfg.name, count)
+            self._salvage_inventory(count)
+            return True
         if not cfg.salvage_when_full:
             return False
         W = frame.shape[1]
@@ -951,14 +964,15 @@ class DustMineBot:
             return True
         return False
 
-    def _salvage_inventory(self) -> None:
+    def _salvage_inventory(self, count: int | None = None) -> None:
         """Zakładka Inventory: przytrzymuje "+x DUST" na przedmiotach z góry
         listy (po każdym lista przesuwa się w górę)."""
         cfg = self.config
+        target = count if count else cfg.salvage_items
         self._packs._tap_nav("nav_inventory")
         self._sleep(random.uniform(1.2, 1.8))
         done = misses = 0
-        while done < cfg.salvage_items and not self._stop and not self._paused:
+        while done < target and not self._stop and not self._paused:
             frame = self.adb.screenshot()
             buttons = screens.find_salvage_buttons(frame)
             if not buttons:

@@ -269,6 +269,16 @@ Okno:
   start / stop wszystkich. Niezapisane zmiany oznacza gwiazdka w tytule,
   a przy zamykaniu okno pyta o zapis. Przy starcie wczytuje się
   `config.json` leżący obok programu.
+- **Karta „Wszystkie instancje”** (startowa): kafelek dla każdej
+  instancji — podgląd na żywo, status, statystyki i przyciski Start /
+  Pauza / Stop / Rozbierz / Szczegóły — oraz pasek akcji dla wszystkich
+  naraz: start, pauza, wznowienie, stop, rozebranie przedmiotów, restart
+  gry. Na górze podsumowanie (ile działa, łączne statystyki).
+- **Karta „Szczegóły instancji”** — widok opisany niżej.
+- **Wymuszone rozbieranie** („🧹 Rozbierz teraz” / „Rozbierz na
+  wszystkich”) — pyta o liczbę przedmiotów (1–1000) i rozbiera je z góry
+  listy Inventory przy najbliższym ekranie z paskiem nawigacji, niezależnie
+  od ustawienia „Pełny ekwipunek”. Działa na uruchomionych instancjach.
 - **Instancje** (po lewej): lista ze statusem w kolorze (czekanie,
   zbieranie, minigra, przerwa w harmonogramie…), a pod nią Start / Pauza /
   Stop / Restart gry dla zaznaczonej instancji.
@@ -334,6 +344,7 @@ Gotowe pliki konfiguracyjne do tego już są w projekcie:
 | `packs.py` | Automatyczne otwieranie paczek, gdy gear za słaby |
 | `manager.py` | CLI: uruchamianie wielu instancji bota równolegle (multiprocessing) |
 | `main_window.py` | GUI: główne okno aplikacji (uruchom to, żeby odpalić GUI) |
+| `dashboard.py` | GUI: przegląd i sterowanie wszystkimi instancjami |
 | `gui_worker.py` | Most między `bot.py` a GUI - uruchamia bota w wątku Qt |
 | `preview_widget.py` | Widget podglądu z interaktywną edycją idle_point/board_region klikiem |
 | `calibrate.py` | Narzędzie CLI do podglądu/kalibracji detekcji na pojedynczym zrzucie |
