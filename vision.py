@@ -494,6 +494,24 @@ def _cast_context(hsv: np.ndarray, mask: np.ndarray, r: Rect) -> bool:
     return False
 
 
+def board_drop_hint(bgr: np.ndarray) -> Circle | None:
+    """
+    Przewidywane położenie DROP na planszy Dust Mine: plansza to duży,
+    zaokrąglony panel prawie na całą szerokość; DROP leży na środku, na
+    ~79% jej wysokości (zmierzone na iOS i Androidzie).
+    """
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    bg = float(np.median(gray[:int(0.1 * H)]))
+    mask = (cv2.medianBlur(gray, 5) > bg + 3).astype(np.uint8)
+    n, _l, stats, _c = cv2.connectedComponentsWithStats(mask)
+    for i in range(1, n):
+        x, y, w, h, _a = (int(v) for v in stats[i])
+        if w >= 0.85 * W and h >= 0.55 * H and 0.1 * H < y < 0.35 * H:
+            return Circle(x + w // 2, int(y + 0.792 * h), int(0.087 * W))
+    return None
+
+
 def detect_all(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
                in_debris_game: bool = False, drop_hint: Circle | None = None) -> DetectionResult:
     """
@@ -504,6 +522,14 @@ def detect_all(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
     # w idle podpowiedź DROP jest tylko dodatkowym kandydatem - ekran musi
     # sam potwierdzić, że to Dust Mine
     det = detect(bgr, region, drop_hint=drop_hint, use_hint_as_fallback=False)
+    if det.drop is None and region is None:
+        # DROP mocno zasłonięty kulkami (np. zaraz po starcie bota, bez
+        # znanej pozycji): spróbuj w miejscu, gdzie leży na planszy
+        board_hint = board_drop_hint(bgr)
+        if board_hint is not None and board_hint != drop_hint:
+            det2 = detect(bgr, None, drop_hint=board_hint, use_hint_as_fallback=False)
+            if det2.drop is not None:
+                det = det2
     work, ox, oy = _crop(bgr, region)
     if work.size == 0:
         return det

@@ -244,6 +244,9 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   a potem ustawia głębokość wg trybu. Sprawdzanie odbywa się co
   `depth_check_interval_min` minut, także gdy tryb głębokości to „nie
   zmieniaj”. Pusta nazwa = wyłączone.
+- **Zasłonięty DROP** — gdy kulki zasłaniają prawie cały okrąg DROP, a
+  bot nie zna jeszcze jego położenia (np. zaraz po starcie), szuka go tam,
+  gdzie zawsze leży na planszy: na środku, na ~79% wysokości panelu planszy.
 - **Otwórz X paczek** (karta „Wszystkie instancje” → „📦 Otwórz paczki na
   wszystkich”) — pyta o liczbę (1–1000) i na każdej działającej
   instancji przy najbliższym ekranie z paskiem nawigacji: Craft → Loot
