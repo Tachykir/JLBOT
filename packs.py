@@ -461,6 +461,14 @@ class PackOpener:
         if dialog is None:
             logger.info("[%s] brak okna potwierdzenia - prawdopodobnie za mało pyłu", cfg.name)
             return False
+        if dialog.buttons < 2:
+            # "Not Enough Dust" (samo OK zamiast CANCEL / OPEN) - zamknij i
+            # nie otwieraj dalej
+            bot._sleep(random.uniform(0.3, 0.7))
+            bot._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.012 * W))
+            bot._sleep(random.uniform(0.5, 0.8))
+            logger.info("[%s] za mało pyłu na paczki (Not Enough Dust) - kończę otwieranie", cfg.name)
+            return False
         bot._sleep(random.uniform(0.2, 0.5))
         bot._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.012 * W))
         bot._sleep(random.uniform(0.8, 1.2))

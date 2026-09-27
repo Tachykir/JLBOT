@@ -250,6 +250,9 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   Packs, „+” do podanej liczby (odczytuje liczbę między „−” i „+”),
   cena, OPEN, karty, „Done”. Gdy gra ograniczy jeden zakup, kupuje
   kolejne partie; gdy zabraknie pyłu, kończy na tym, co się dało.
+- **„Not Enough Dust”** — okno z samym „OK” (zamiast CANCEL / OPEN) po
+  kliknięciu ceny: bot klika OK i kończy otwieranie paczek (automatyczne
+  i „Otwórz X paczek”). Takie okno z samym OK zamyka też w zwykłym trybie.
 - **Ekran „Pack Opened”** — przycisk „Done” po kartach z paczki jest
   klikany w procedurze paczek i w zwykłym trybie.
 - **Szybkie klikanie kart** — seria kliknięć „+” i przeklikiwanie kart z

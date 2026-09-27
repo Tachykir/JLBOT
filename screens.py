@@ -88,6 +88,7 @@ def find_plus_button(bgr: np.ndarray, buy: Rect) -> tuple[int, int] | None:
 class Dialog:
     box: Rect
     open_button: tuple[int, int]
+    buttons: int = 2   # liczba przycisków (słów) w dolnym wierszu; 1 = samo "OK"
 
 
 def find_open_dialog(bgr: np.ndarray) -> Dialog | None:
@@ -116,7 +117,7 @@ def find_open_dialog(bgr: np.ndarray) -> Dialog | None:
     cols = np.where(colored.any(axis=0))[0]
     if cols.size == 0:
         # brak kolorowych przycisków - fallback: prawy dolny róg okna
-        return Dialog(box, (box.x + box.w - int(0.08 * W), box.y + int(box.h * 0.85)))
+        return Dialog(box, (box.x + box.w - int(0.08 * W), box.y + int(box.h * 0.85)), 0)
     # podział na słowa po przerwach w kolumnach
     gap = max(3, int(0.02 * W))
     words = [[cols[0], cols[0]]]
@@ -128,7 +129,7 @@ def find_open_dialog(bgr: np.ndarray) -> Dialog | None:
     wx1, wx2 = words[-1]
     rows = np.where(colored[:, wx1:wx2 + 1].any(axis=1))[0]
     cy = by1 + int(rows.mean()) if rows.size else box.y + int(box.h * 0.85)
-    return Dialog(box, (int(box.x + (wx1 + wx2) // 2), int(cy)))
+    return Dialog(box, (int(box.x + (wx1 + wx2) // 2), int(cy)), len(words))
 
 
 # --------------------------------------------------------------------- #

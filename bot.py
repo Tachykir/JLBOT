@@ -1219,6 +1219,11 @@ class DustMineBot:
                 # punkt wypadł na karcie - kliknij nad nią
                 x, y = humanize.random_point_in_circle(w / 2, item.y / 2, 0.08 * w)
             return x, y
+        # okno informacyjne z samym "OK" (np. "Not Enough Dust") - zamknij
+        info = screens.find_open_dialog(frame)
+        if info is not None and info.buttons == 1:
+            logger.info("[%s] okno informacyjne - klikam OK", cfg.name)
+            return humanize.random_point_in_circle(*info.open_button, 0.012 * frame.shape[1])
         # "Pack Opened" -> "Done" (ekran po kartach z paczki)
         done = screens.find_center_button(frame)
         if done is not None:
