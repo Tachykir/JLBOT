@@ -297,7 +297,7 @@ def find_item_card(bgr: np.ndarray) -> Rect | None:
     mask = (cv2.medianBlur(gray, 5) > bg + 5).astype(np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
     for x, y, w, h, area in _components(mask):
-        if not (0.4 * W <= w <= 0.75 * W and 0.9 <= h / w <= 2.3):
+        if not (0.4 * W <= w <= 0.88 * W and 0.9 <= h / w <= 2.3):
             continue
         if abs(x + w / 2 - W / 2) > 0.05 * W or area < 0.85 * w * h:
             continue
