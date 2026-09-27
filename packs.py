@@ -240,6 +240,23 @@ class PackOpener:
         x, y = humanize.random_point_in_circle(point[0] * W, point[1] * H, point[2] * W)
         self.bot._tap(x, y)
 
+    def _wait_for(self, check, timeout: float = 2.0, first: float = 0.15):
+        """Zamiast stałej przerwy po przejściu: krótka pauza, potem zrzuty
+        ekranu aż `check(klatka)` będzie prawdą (albo minie `timeout`).
+        Zwraca ostatnią klatkę."""
+        self.bot._sleep(random.uniform(first, first * 1.4))
+        deadline = time.monotonic() + timeout
+        while True:
+            frame = self._frame()
+            if check(frame) or time.monotonic() >= deadline or self._abort():
+                return frame
+            self.bot._sleep(0.08)
+
+    @staticmethod
+    def _on_profile(frame) -> bool:
+        return (screens.find_depth_selector(frame) is not None
+                or screens.read_gear_level(frame) is not None)
+
     def _tap_nav(self, key: str) -> None:
         """
         Kliknięcie zakładki w pasku nawigacji (PROFILE / CRAFT) w obszarze
@@ -273,7 +290,7 @@ class PackOpener:
             if button is None:
                 return
             self._tap_rect(button)
-            self.bot._sleep(random.uniform(1.0, 1.6))
+            self._wait_for(lambda f: screens.find_wide_bottom_button(f) is None, 1.6, 0.3)
 
     # ------------------------------------------------------------------ #
     def check_profile(self) -> bool | None:
@@ -291,19 +308,18 @@ class PackOpener:
     def _open_profile(self) -> None:
         """Otwiera Profile i w razie potrzeby przewija do "CHOOSE DEPTH"."""
         self._tap_nav("nav_profile")
-        self.bot._sleep(random.uniform(0.8, 1.2))
-        frame = self._frame()
-        for _ in range(6):  # dymki z nagrodą ("+24 Dust") zasłaniają wybór głębokości
+        frame = self._wait_for(self._on_profile, 1.5, 0.25)
+        for _ in range(8):  # dymki z nagrodą ("+24 Dust") zasłaniają wybór głębokości
             if not screens.find_reward_toasts(frame):
                 break
-            self.bot._sleep(0.5)
+            self.bot._sleep(0.3)
             frame = self._frame()
         if screens.find_depth_selector(frame) is None and screens.frontier_warning(frame) is None:
             # selektor głębokości może być poniżej - przewiń stronę
             W, H = self._size
             self.bot.adb.swipe(int(W * 0.5), int(H * 0.65), int(W * 0.5), int(H * 0.35),
                                duration_ms=random.randint(300, 450))
-            self.bot._sleep(random.uniform(0.7, 1.0))
+            self.bot._sleep(random.uniform(0.45, 0.6))
 
     def _depth_goal(self):
         """Cel ustawiania (zmiana = sprawdź od razu)."""
@@ -414,7 +430,7 @@ class PackOpener:
             bot.adb.swipe(int(W * random.uniform(0.45, 0.55)), int(H * 0.35),
                           int(W * random.uniform(0.45, 0.55)), int(H * 0.75),
                           duration_ms=random.randint(300, 450))
-            bot._sleep(random.uniform(0.6, 0.9))
+            bot._sleep(random.uniform(0.45, 0.6))
             cards = screens.find_loadouts(self._frame())
             if cards:
                 break
@@ -432,7 +448,7 @@ class PackOpener:
         logger.warning("[%s] głębokość 1 i wybrany loadout %s - przełączam na %s", cfg.name, current, want)
         bot._act(f"Profile – przełączam loadout {current} → {want}")
         self._tap_rect(target.rect)
-        bot._sleep(random.uniform(0.8, 1.2))
+        bot._sleep(random.uniform(0.5, 0.7))
         return True
 
     def _move_depth(self, sel, target: int | None):
@@ -471,7 +487,7 @@ class PackOpener:
                     edge = next(t for t in sel.tiles if t.number == edge_number)
                     if current != edge_number:
                         self._tap_rect(edge.rect)
-                        self.bot._sleep(humanize.human_delay(0.2, 0.6))
+                        self.bot._sleep(humanize.human_delay(0.15, 0.35))
                         sel = self._read_depth()
                 return (True if target is None else False), sel
 
@@ -488,7 +504,7 @@ class PackOpener:
                     ref = current if current is not None else (numbers[0] if target < numbers[0] else numbers[-1])
                     up = target > ref
                 self._tap_rect(sel.right if up else sel.left)
-            self.bot._sleep(humanize.human_delay(0.2, 0.6))
+            self.bot._sleep(humanize.human_delay(0.15, 0.35))
             sel = self._read_depth()
         return False, sel
 
@@ -555,22 +571,29 @@ class PackOpener:
         kartą - SEEKER jest pierwsza).
         """
         bot, cfg = self.bot, self.bot.config
-        self._tap_nav("nav_craft")
-        bot._sleep(random.uniform(0.8, 1.2))
+
+        def ready(f):
+            if screens.find_buy_button(f) is not None:
+                return True
+            t = screens.find_craft_tabs(f)
+            return bool(t) and len(t) == 3 and not t[0].selected
+
         frame = self._frame()
+        if not (screens.find_buy_button(frame) is not None and screens.is_craft_screen(frame)):
+            # kolejna runda zaczyna się już na ekranie paczek - nie klikaj CRAFT
+            self._tap_nav("nav_craft")
+            frame = self._wait_for(ready, 2.0, 0.25)
         tabs = screens.find_craft_tabs(frame)
         if tabs and not tabs[0].selected:
             logger.info("[%s] Craft: wybieram zakładkę LOOT PACKS (była %s)", cfg.name,
                         next((t.name for t in tabs if t.selected), "?"))
             self._tap_rect(tabs[0].rect)
-            bot._sleep(random.uniform(0.6, 0.9))
-            frame = self._frame()
+            frame = self._wait_for(lambda f: screens.find_buy_button(f) is not None, 1.5, 0.2)
         self._note_dust(frame)
         buy = screens.find_buy_button(frame)
         if buy is None and not tabs:
             self._tap_rel(cfg.craft_loot_packs_tab)
-            bot._sleep(random.uniform(0.6, 0.9))
-            frame = self._frame()
+            frame = self._wait_for(lambda f: screens.find_buy_button(f) is not None, 1.5, 0.2)
             buy = screens.find_buy_button(frame)
         if buy is None:
             logger.warning("[%s] nie znaleziono ekranu Loot Packs w zakładce Craft", cfg.name)
@@ -598,8 +621,8 @@ class PackOpener:
             if not backwards:
                 xa, xb = xb, xa
             bot.adb.swipe(xa, cy, xb, cy + random.randint(-8, 8), duration_ms=random.randint(250, 400))
-            bot._sleep(random.uniform(0.6, 0.9))
-            frame = self._frame()
+            frame = self._wait_for(lambda f: _similar(screens.read_pack_name(f, screens.find_buy_button(f) or buy),
+                                                      "SEEKER"), 0.8, 0.35)
             buy = screens.find_buy_button(frame) or buy
         logger.warning("[%s] nie udało się wybrać paczki SEEKER - pomijam otwieranie", cfg.name)
         return None
@@ -609,7 +632,7 @@ class PackOpener:
         if self._abort():
             return
         self._tap_nav("nav_profile")
-        self.bot._sleep(random.uniform(0.8, 1.2))
+        self._wait_for(self._on_profile, 1.5, 0.2)
 
     def _plus_point(self, frame, buy):
         W, _H = self._size
@@ -636,11 +659,9 @@ class PackOpener:
         buy = screens.find_buy_button(frame) or buy
         self._tap_rect(buy)
         dialog = None
-        for _ in range(3):  # okno pojawia się po krótkiej animacji
-            bot._sleep(random.uniform(0.4, 0.6))
-            dialog = screens.find_open_dialog(self._frame())
-            if dialog is not None:
-                break
+        # okno pojawia się po krótkiej animacji
+        dialog = screens.find_open_dialog(
+            self._wait_for(lambda f: screens.find_open_dialog(f) is not None, 1.6, 0.2))
         if dialog is None:
             logger.info("[%s] brak okna potwierdzenia - prawdopodobnie za mało pyłu", cfg.name)
             return False
@@ -652,9 +673,9 @@ class PackOpener:
             bot._sleep(random.uniform(0.5, 0.8))
             logger.info("[%s] za mało pyłu na paczki (Not Enough Dust) - kończę otwieranie", cfg.name)
             return False
-        bot._sleep(random.uniform(0.2, 0.5))
+        bot._sleep(random.uniform(0.1, 0.25))
         bot._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.012 * W))
-        bot._sleep(random.uniform(0.8, 1.2))
+        bot._sleep(random.uniform(0.35, 0.5))
         self._open_cards()
         return True
 
@@ -705,7 +726,7 @@ class PackOpener:
             if taps:
                 bot._tap_many([humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W)
                                for _ in range(taps)], (0.04, 0.12))
-                bot._sleep(random.uniform(0.25, 0.5))
+                bot._sleep(random.uniform(0.15, 0.25))
                 frame = self._frame()
             qty = self._read_quantity(frame, buy)
             if qty is None:
@@ -715,7 +736,7 @@ class PackOpener:
                 mx = int(2 * buy.center[0] - plus[0])
                 bot._tap_many([humanize.random_point_in_circle(mx, plus[1], 0.015 * W)
                                for _ in range(qty - want)], (0.04, 0.12))
-                bot._sleep(random.uniform(0.25, 0.5))
+                bot._sleep(random.uniform(0.15, 0.25))
                 qty = want
             if not self._buy_and_open(buy):
                 break
@@ -767,7 +788,7 @@ class PackOpener:
                 if done is not None:
                     # "Pack Opened" - "Done" po ostatniej karcie
                     self._tap_rect(done)
-                    bot._sleep(random.uniform(0.5, 0.8))
+                    bot._sleep(random.uniform(0.3, 0.45))
                     continue
             bot._act(f"Paczki – przeklikuję karty ({cards})")
             if button is not None:

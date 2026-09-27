@@ -1224,7 +1224,7 @@ class DustMineBot:
         target = count if count else cfg.salvage_items
         self._act(f"Inventory – rozbieranie {target} przedmiotów")
         self._packs._tap_nav("nav_inventory")
-        self._sleep(random.uniform(1.2, 1.8))
+        self._packs._wait_for(lambda f: bool(screens.find_salvage_buttons(f)), 1.8, 0.3)
         done = misses = 0
         while done < target and not self._stop and not self._paused:
             frame = self.adb.screenshot()
@@ -1235,7 +1235,7 @@ class DustMineBot:
                     if done == 0:
                         logger.warning("[%s] nie znaleziono przycisków „+x DUST” w Inventory", cfg.name)
                     break
-                self._sleep(0.7)
+                self._sleep(0.4)
                 continue
             misses = 0
             x, y = buttons[0]
@@ -1243,7 +1243,7 @@ class DustMineBot:
             done += 1
             self.stats.salvaged += 1
             self._act(f"Inventory – rozbieram przedmioty ({done}/{target})")
-            self._sleep(humanize.human_delay(0.6, 1.4))
+            self._sleep(humanize.human_delay(0.35, 0.8))
         logger.info("[%s] rozebrano %d przedmiotów z Inventory", cfg.name, done)
 
     def _react(self) -> None:
