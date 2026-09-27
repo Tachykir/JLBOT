@@ -904,7 +904,10 @@ class DustMineBot:
         # plansza Dust Mine i minigry zajmują cały ekran - gdy widać pasek
         # nawigacji z JUST LOOT (Profile, Craft, Inventory...), to nie jest
         # żadna z nich, nawet jeśli coś na ekranie przypomina kulki / DROP
-        if kind is not None and frame is not None and screens.find_just_loot(frame) is not None:
+        if kind is not None and frame is not None and self._non_board_screen(frame):
+            # np. PROCEED po walce albo ekran dropu - inaczej idle wchodziłby
+            # w zbieranie, a pętla zbierania od razu by z niego wychodziła
+            # (i nikt nie kliknąłby PROCEED)
             return None
         if kind == "debris" and not self.config.play_debris:
             return None
