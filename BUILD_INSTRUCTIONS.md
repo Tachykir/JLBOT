@@ -12,6 +12,14 @@ systemu).
 
 ---
 
+## Najszybciej: build.bat
+
+Na Windowsie, w folderze projektu, uruchom dwuklikiem **`build.bat`**.
+Skrypt sam tworzy środowisko `.venv`, instaluje zależności i PyInstaller,
+buduje `dist\DustMineBot\DustMineBot.exe`, a jeśli jest zainstalowany
+Inno Setup 6 - także instalator `installer_output\DustMineBot-Setup.exe`.
+Poniżej te same kroki ręcznie.
+
 ## Krok 1: Przygotowanie środowiska budowania
 
 Potrzebujesz Pythona **tylko na czas budowania** (nie na komputerze
