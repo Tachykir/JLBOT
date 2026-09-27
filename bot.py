@@ -1016,6 +1016,20 @@ class DustMineBot:
         if hasattr(self.adb, "max_width"):
             self.adb.max_width = max(0, int(self.config.processing_width))
 
+    @staticmethod
+    def _non_board_screen(frame: np.ndarray) -> str | None:
+        """Nazwa rozpoznanego ekranu, który na pewno nie jest planszą Dust
+        Mine (żadnego z tych elementów plansza nie ma), albo None."""
+        if screens.find_just_loot(frame) is not None:
+            return "widać pasek nawigacji"
+        if screens.find_wide_bottom_button(frame) is not None:
+            return "ekran końca walki"
+        if screens.find_drop_choice(frame) or screens.find_reveal_card(frame) or screens.find_item_card(frame):
+            return "ekran dropu"
+        if screens.find_center_button(frame) is not None:
+            return "ekran z przyciskiem"
+        return None
+
     def _tap(self, x: int, y: int) -> None:
         """Tapnięcie "jak palcem": dotyk trwa tap_hold_ms i lekko się
         przesuwa (swipe o ~1 px z czasem trwania = przytrzymanie). Działa
@@ -1424,12 +1438,13 @@ class DustMineBot:
                 logger.info("[%s] restart gry przerwał zbieranie - wracam do idle", cfg.name)
                 return
 
-            if screens.find_just_loot(frame) is not None:
-                # widać pasek nawigacji - plansza się skończyła (z podpowiedzią
-                # położenia DROP detektor mógłby brać elementy UI za kulki)
+            other = self._non_board_screen(frame)
+            if other:
+                # plansza się skończyła - z podpowiedzią położenia DROP
+                # detektor mógłby brać elementy UI (np. PROCEED) za kulki
                 if balls_before_drag is not None:
                     self.stats.balls_collected += min(balls_before_drag, 1)  # jak przy zniknięciu planszy
-                logger.info("[%s] plansza zamknięta (widać pasek nawigacji) - wracam do idle", cfg.name)
+                logger.info("[%s] plansza zamknięta (%s) - wracam do idle", cfg.name, other)
                 return
 
             det = vision.detect(frame, region=self._region(), drop_hint=last_drop)
