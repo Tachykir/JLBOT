@@ -180,6 +180,11 @@ class PackOpener:
         self._tap_nav("nav_profile")
         self.bot._sleep(random.uniform(0.8, 1.2))
         frame = self._frame()
+        for _ in range(6):  # dymki z nagrodą ("+24 Dust") zasłaniają wybór głębokości
+            if not screens.find_reward_toasts(frame):
+                break
+            self.bot._sleep(0.5)
+            frame = self._frame()
         if screens.find_depth_selector(frame) is None and screens.frontier_warning(frame) is None:
             # selektor głębokości może być poniżej - przewiń stronę
             W, H = self._size

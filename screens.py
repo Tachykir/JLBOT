@@ -518,6 +518,19 @@ def _final_log_word(bgr: np.ndarray, button: Rect | None, *ranges) -> bool:
 # Profile: czy wrogowie mają bonus (za słaby gear)
 # --------------------------------------------------------------------- #
 
+def find_reward_toasts(bgr: np.ndarray) -> list[Rect]:
+    """Dymki z nagrodą ("+24 Dust", "+6 RAID XP"): prostokąty obrysowane
+    kolorową ramką, pojawiające się na chwilę nad treścią ekranu."""
+    H, W = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 80, 150), (180, 255, 255))
+    out = []
+    for x, y, w, h, area in _components(mask):
+        if 0.2 * W <= w <= 0.6 * W and 0.04 * H <= h <= 0.12 * H and area < 0.4 * w * h:
+            out.append(Rect(x, y, w, h))
+    return out
+
+
 def frontier_warning(bgr: np.ndarray) -> bool | None:
     """
     Na zakładce Profile pod dużą liczbą "CHOOSE DEPTH" gra pisze:
@@ -573,6 +586,11 @@ def frontier_warning(bgr: np.ndarray) -> bool | None:
             break
         end = r
     line = band[rows[0]:end + 1]
+    # dymek z nagrodą ("+24 Dust", "+6 RAID XP") potrafi zasłonić ten
+    # wiersz - jego kolorowy napis wyglądałby jak ostrzeżenie
+    ly1, ly2 = y1 + rows[0], y1 + end + 1
+    if any(t.y < ly2 and t.y + t.h > ly1 for t in find_reward_toasts(bgr)):
+        return None
     line_text = line[:, :, 2] > 90
     if line_text.sum() < 20:
         return None
@@ -635,7 +653,7 @@ def read_number(mask: np.ndarray) -> int | None:
         if scores[best] > 0.3:
             return None
         digits += dt.DIGITS[best]
-    if not digits or len(digits) > 4:
+    if not digits or len(digits) > 6:
         return None
     return int(digits)
 
@@ -649,12 +667,13 @@ def find_depth_selector(bgr: np.ndarray) -> DepthSelector | None:
         return None
     panels = (cv2.medianBlur(gray, 5) > bg + 4).astype(np.uint8)
     squares = [Rect(x, y, w, h) for x, y, w, h, area in _components(panels)
-               if 0.07 * W <= w <= 0.2 * W and 0.75 <= h / w <= 1.3 and area >= 0.7 * w * h]
+               if 0.07 * W <= w <= 0.2 * W and 0.6 <= h / w <= 1.5 and area >= 0.7 * w * h]
     nav = find_just_loot(bgr)
     y_limit = nav.y - nav.r if nav is not None else H
-    # strzałki: kwadraty przy lewej / prawej krawędzi, większe od slotów
-    # ekwipunku (te mają ~0.083 szerokości ekranu)
-    arrows = [s for s in squares if s.w >= 0.092 * W and s.y + s.h < y_limit
+    # strzałki: prostokąty przy lewej / prawej krawędzi (przy 4-cyfrowej
+    # głębokości są węższe i wyższe); sloty ekwipunku przy krawędziach
+    # odpadają niżej - między nimi nie ma kafelków ani dużej liczby
+    arrows = [s for s in squares if s.w >= 0.075 * W and s.y + s.h < y_limit
               and (s.x < 0.06 * W or s.x + s.w > 0.94 * W)]
     for arrow in sorted(arrows, key=lambda s: -s.y):
         cy = arrow.y + arrow.h / 2
@@ -672,7 +691,9 @@ def find_depth_selector(bgr: np.ndarray) -> DepthSelector | None:
         tiles = []
         for s in sorted(squares, key=lambda s: s.x):
             if (abs(s.y + s.h / 2 - cy) < 0.03 * W and s.x > left.x + left.w
-                    and s.x + s.w < right.x and s.w <= 0.15 * W):
+                    and s.x + s.w < right.x and s.w <= 0.15 * W and 0.75 <= s.h / s.w <= 1.3
+                    and float(np.median(gray[s.y:s.y + s.h, s.x:s.x + s.w])) < 90):
+                # (kafelek to ciemny panel z numerem - nie blok jasnych cyfr)
                 m = int(0.18 * s.w)
                 inner = hsv[s.y + m:s.y + s.h - m, s.x + m:s.x + s.w - m]
                 number = read_number(inner[..., 2] > 100)
@@ -683,14 +704,19 @@ def find_depth_selector(bgr: np.ndarray) -> DepthSelector | None:
         if tiles:
             return DepthSelector("tiles", left, right, tiles, bottom, left_found, right_found)
 
-        # duża biała liczba między strzałkami
+        # duża liczba między strzałkami (biała na maksimum, cyjanowa niżej);
+        # tylko wysokie cyfry - bez dymków "+24 Dust" i ich ramek
         band_y1 = int(max(0, cy - 0.12 * W))
         band_y2 = int(min(H, cy + 0.12 * W))
         x1, x2 = left.x + left.w, right.x
-        white = cv2.inRange(hsv[band_y1:band_y2, x1:x2], (0, 0, 200), (180, 60, 255))
-        comps = [c for c in _components(white) if c[3] >= 0.05 * W]
+        bright = (hsv[band_y1:band_y2, x1:x2, 2] > 190).astype(np.uint8)
+        n_lab, labels, stats, _c = cv2.connectedComponentsWithStats(bright)
+        keep = [i for i in range(1, n_lab)
+                if stats[i][3] >= 0.05 * W and stats[i][2] <= 0.14 * W
+                and abs((stats[i][1] + stats[i][3] / 2) - (cy - band_y1)) < 0.06 * W]
+        comps = [tuple(int(v) for v in stats[i]) for i in keep]
         if comps:
-            number = read_number(white > 0)
+            number = read_number(np.isin(labels, keep))
             gx1 = min(c[0] for c in comps)
             gy1 = min(c[1] for c in comps)
             gx2 = max(c[0] + c[2] for c in comps)
