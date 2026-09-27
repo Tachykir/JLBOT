@@ -200,6 +200,19 @@ def _horizontal_lines(gray: np.ndarray, y1: int, y2: int, min_len: float,
     return lines
 
 
+def _edge_lines(lines: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
+    """Jednolicie wypełniony panel (np. odkryta karta z paczki) daje
+    "linię" co 4 wiersze - z takiego bloku zostaw tylko górną i dolną
+    krawędź (inaczej np. karta legendary udaje panel wyboru dropu)."""
+    edges: list[tuple[int, int, int]] = []
+    for k, line in enumerate(lines):
+        joined_prev = k > 0 and line[0] - lines[k - 1][0] <= 4
+        joined_next = k + 1 < len(lines) and lines[k + 1][0] - line[0] <= 4
+        if not (joined_prev and joined_next):
+            edges.append(line)
+    return edges
+
+
 def find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
     """
     Panel wyboru po wygranej walce (Replace / Equip & Salvage / Salvage /
@@ -213,7 +226,18 @@ def find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
     if find_just_loot(bgr) is not None:
         return None
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    lines = _horizontal_lines(gray, int(0.5 * H), H, 0.6 * W)
+    lines = _edge_lines(_horizontal_lines(gray, int(0.5 * H), H, 0.6 * W))
+    # cienka linia podziału ma nad sobą i pod sobą ciemne tło; wiersz
+    # wewnątrz wypełnionej karty (np. legendary) - jasne wypełnienie
+    def thin(ln) -> bool:
+        y, x1, x2 = ln
+        fills = []
+        for dy in (-5, 5):
+            yy = min(H - 1, max(0, y + dy))
+            row = gray[yy, x1:x2]
+            fills.append(float(((row >= 26) & (row <= 90)).mean()))
+        return min(fills) < 0.5
+    lines = [ln for ln in lines if thin(ln)]
     best: list[tuple[int, int, int]] = []
     for i in range(len(lines)):
         chain = [lines[i]]
@@ -245,16 +269,7 @@ def find_reveal_card(bgr: np.ndarray) -> Rect | None:
     H, W = bgr.shape[:2]
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     lines = _horizontal_lines(gray, int(0.15 * H), int(0.85 * H), 0.35 * W, 0.85 * W)
-    # jednolicie wypełniony panel (np. odkryta karta z paczki) daje
-    # "linię" co 4 wiersze - z takiego bloku zostaw tylko górną i dolną
-    # krawędź, inaczej par do sprawdzenia są dziesiątki tysięcy
-    edges: list[tuple[int, int, int]] = []
-    for k, line in enumerate(lines):
-        joined_prev = k > 0 and line[0] - lines[k - 1][0] <= 4
-        joined_next = k + 1 < len(lines) and lines[k + 1][0] - line[0] <= 4
-        if not (joined_prev and joined_next):
-            edges.append(line)
-    lines = edges
+    lines = _edge_lines(lines)
     for i, top in enumerate(lines):
         for bottom in lines[i + 1:]:
             if abs(top[1] - bottom[1]) > 0.03 * W or abs(top[2] - bottom[2]) > 0.03 * W:
