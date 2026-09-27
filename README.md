@@ -429,7 +429,7 @@ Gotowe pliki konfiguracyjne do tego już są w projekcie:
 | `vision.py` | Detekcja kulek i punktu DROP przez OpenCV |
 | `bot.py` | Logika jednej instancji bota (pętla idle → zbieranie → idle) |
 | `scheduler.py` | Harmonogram: okna, losowe sesje/przerwy, limit dzienny |
-| `humanize.py` | Generowanie "ludzkich" torów przeciągania |
+| `human_motion.py` | Generowanie "ludzkich" torów przeciągania |
 | `screens.py` | Rozpoznawanie ekranów Profile / Craft / kart / walki |
 | `packs.py` | Automatyczne otwieranie paczek, gdy gear za słaby |
 | `manager.py` | CLI: uruchamianie wielu instancji bota równolegle (multiprocessing) |

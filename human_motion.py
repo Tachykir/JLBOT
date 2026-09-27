@@ -1,6 +1,6 @@
 """
-humanize.py
-===========
+human_motion.py
+===============
 Generowanie "ludzkich" ruchów palcem do przeciągania kulek.
 
 Prawdziwy palec nie jeździ po linii prostej ze stałą prędkością:

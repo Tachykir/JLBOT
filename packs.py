@@ -31,7 +31,7 @@ import time
 import cv2
 import numpy as np
 
-import humanize
+import human_motion as humanize  # nie "humanize" - kolizja z biblioteką PyPI o tej nazwie (PyInstaller)
 import screens
 
 logger = logging.getLogger("bot")

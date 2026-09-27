@@ -43,7 +43,7 @@ cv2.setNumThreads(1)
 import numpy as np
 
 from adb_controller import ADBController, ADBError
-import humanize
+import human_motion as humanize  # nie "humanize" - kolizja z biblioteką PyPI o tej nazwie (PyInstaller)
 import screens
 import vision
 from packs import PackOpener
@@ -171,7 +171,7 @@ class BotConfig:
     #   "human"    - po losowej krzywej z przyspieszaniem/zwalnianiem,
     #                drżeniem i czasem lekkim przestrzeleniem celu; kulka
     #                łapana i puszczana w losowym miejscu, kolejność
-    #                zbierania kulek losowa (patrz humanize.py),
+    #                zbierania kulek losowa (patrz human_motion.py),
     #   "straight" - prosta linia od środka kulki do środka DROP, kulki
     #                po kolei (dawne zachowanie).
     # "human" wymaga `input motionevent` (nowsze Androidy); bez niego
