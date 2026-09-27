@@ -1101,17 +1101,28 @@ class DustMineBot:
         if not cfg.salvage_when_full:
             return False
         W = frame.shape[1]
+        now = time.monotonic()
+        if screens.find_just_loot(frame) is not None:
+            self._nav_since_choice = True
         dialog = screens.find_open_dialog(frame)
         if dialog is not None:
-            # jedyne okno spodziewane w trybie czekania - "Inventory Full"
-            # zaraz po kliknięciu opcji na ekranie dropu; innych nie ruszamy
-            if time.monotonic() - self._last_drop_choice < 20:
+            # "Inventory Full" pojawia się od razu po kliknięciu opcji na
+            # ekranie dropu (panel dropu dalej pod spodem). Inne okna z samym
+            # OK (np. "Not Enough Dust" w Craft) przychodzą później, po
+            # powrocie na ekran z paskiem nawigacji - tych nie ruszamy tutaj.
+            if now - self._last_drop_choice < 6 and not getattr(self, "_nav_since_choice", True):
                 logger.warning("[%s] ekwipunek pełny - rozbiorę nowy drop i %d przedmiotów z Inventory",
                                cfg.name, cfg.salvage_items)
                 self._inventory_full = True
+                self._inventory_full_since = now
                 self._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.012 * W))
                 return True
             return False
+        if self._inventory_full and now - getattr(self, "_inventory_full_since", now) > 15:
+            # panel dropu po "Inventory Full" nie pojawił się - nie rozbieraj
+            # przypadkiem następnego dropu
+            logger.info("[%s] tryb pełnego ekwipunku wygasł (brak panelu dropu)", cfg.name)
+            self._inventory_full = False
         if self._inventory_full:
             rows = screens.find_drop_choice(frame)
             if rows and len(rows) == 4:
@@ -1218,14 +1229,17 @@ class DustMineBot:
         if rows:
             label, index = DROP_CHOICES.get(cfg.drop_choice, DROP_CHOICES["keep"])
             if len(rows) != 4:
-                # nietypowy układ - bezpiecznie: ostatni wiersz = Keep Current
-                label, index = DROP_CHOICES["keep"][0], len(rows) - 1
+                # niepełny odczyt (np. klatka w trakcie animacji) - nie zgaduj,
+                # który wiersz to Keep Current (ostatni widoczny mógłby być
+                # Salvage); poczekaj na następną klatkę
+                return None
             row = rows[index]
             now = time.monotonic()
             if now - self._last_drop_choice > 5.0:  # licz raz na ekran, nie na każde ponowienie
                 self.stats.drops += 1
                 logger.info("[%s] drop po walce - wybieram: %s", cfg.name, label)
             self._last_drop_choice = now
+            self._nav_since_choice = False
             cx, cy = row.center
             return humanize.random_point_in_circle(cx, cy, min(row.w, row.h) * 0.3)
         # zakryta karta dropu - "tap anywhere to reveal"

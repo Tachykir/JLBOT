@@ -263,7 +263,9 @@ def find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
             gap = ln[0] - prev[0]
             if not same_x or not (0.03 * H <= gap <= 0.09 * H):
                 continue
-            if len(chain) >= 2 and abs(gap - (chain[1][0] - chain[0][0])) > 0.3 * (chain[1][0] - chain[0][0]):
+            # przyciski mają podobną wysokość - ale "Equip & Salvage current
+            # item · +61 Dust" bywa w dwóch linijkach (wyższy wiersz)
+            if len(chain) >= 2 and not (0.6 <= gap / (chain[1][0] - chain[0][0]) <= 1.7):
                 continue
             chain.append(ln)
         if len(chain) > len(best):
@@ -273,7 +275,20 @@ def find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
         return None
     x1 = min(l[1] for l in best)
     x2 = max(l[2] for l in best)
-    return [Rect(x1, a[0], x2 - x1, b[0] - a[0]) for a, b in zip(best, best[1:])]
+    rows = [Rect(x1, a[0], x2 - x1, b[0] - a[0]) for a, b in zip(best, best[1:])]
+    # napisy przycisków są wyśrodkowane; ramka "AFFIX CHANGES" nad panelem
+    # ma tekst wyrównany do lewej - odrzuć takie wiersze z góry
+    def centered(r: Rect) -> bool:
+        band = gray[r.y + 3:r.y + r.h - 3, r.x + 4:r.x + r.w - 4]
+        if band.size == 0:
+            return True
+        ys, xs = np.nonzero(band > float(np.median(band)) + 40)
+        if xs.size < 10:
+            return True  # pusty wiersz (np. wypełniany przy przytrzymaniu)
+        return abs((xs.min() + xs.max()) / 2 - band.shape[1] / 2) < 0.12 * band.shape[1]
+    while len(rows) > 3 and not centered(rows[0]):
+        rows = rows[1:]
+    return rows[-4:] if len(rows) > 4 else rows
 
 
 def find_reveal_card(bgr: np.ndarray) -> Rect | None:
