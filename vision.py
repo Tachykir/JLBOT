@@ -592,3 +592,64 @@ def is_black_screen(bgr: np.ndarray, brightness_threshold: float = 10.0) -> bool
     """
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     return float(gray.mean()) < brightness_threshold
+
+
+def balls_left(bgr: np.ndarray) -> int | None:
+    """
+    Ile kulek zostało wg nagłówka planszy ("+0 dust · 4 left · +87 each"):
+    wiersz tekstu tuż nad panelem planszy, druga liczba w wierszu. None =
+    nie udało się odczytać.
+    """
+    import screens
+    hint = board_drop_hint(bgr)
+    if hint is None:
+        return None
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    bg = float(np.median(gray[:int(0.1 * H)]))
+    mask = (cv2.medianBlur(gray, 5) > bg + 3).astype(np.uint8)
+    n, _l, stats, _c = cv2.connectedComponentsWithStats(mask)
+    panel_y = None
+    for i in range(1, n):
+        x, y, w, h, _a = (int(v) for v in stats[i])
+        if w >= 0.85 * W and h >= 0.55 * H and 0.1 * H < y < 0.35 * H:
+            panel_y = y
+    if panel_y is None:
+        return None
+    band = gray[max(0, panel_y - int(0.09 * H)):panel_y - 2]
+    text = band > 150
+    rows = np.where(text.sum(axis=1) >= 2)[0]
+    if rows.size == 0:
+        return None
+    # ostatni wiersz tekstu nad panelem
+    end = rows[-1]
+    start = end
+    for r in rows[::-1][1:]:
+        if start - r > 2:
+            break
+        start = r
+    line = text[start:end + 1]
+    comps = sorted((c for c in screens._components(line.astype(np.uint8)) if c[4] >= 3), key=lambda c: c[0])
+    if not comps:
+        return None
+    ch = max(c[3] for c in comps)
+    # słowa: przerwa większa niż ~0.6 wysokości znaku
+    words, cur = [], [comps[0]]
+    for c in comps[1:]:
+        prev = cur[-1]
+        if c[0] - (prev[0] + prev[2]) > 0.6 * ch:
+            words.append(cur)
+            cur = [c]
+        else:
+            cur.append(c)
+    words.append(cur)
+    numbers = []
+    for wd in words:
+        x1 = min(c[0] for c in wd)
+        x2 = max(c[0] + c[2] for c in wd)
+        token = screens.read_word(line[:, x1:x2])
+        digits = "".join(ch_ for ch_ in token if ch_.isdigit())
+        # słowo jest liczbą, jeśli poza ewentualnym "+" składa się z cyfr
+        if digits and len(digits) >= len(token) - 1:
+            numbers.append(int(digits))
+    return numbers[1] if len(numbers) >= 3 else None

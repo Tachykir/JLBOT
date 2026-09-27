@@ -797,6 +797,10 @@ class MainWindow(QMainWindow):
         form.addRow("Odstęp między kliknięciami:", box)
         self.field_drag_ms_min, self.field_drag_ms_max, box = self._range_row(50, 5000, 50, " ms", decimals=0)
         form.addRow("Czas przeciągania kulki:", box)
+        self.field_hold_end_min, self.field_hold_end_max, box = self._range_row(0, 2000, 50, " ms", decimals=0)
+        box.setToolTip("Ile palec stoi na DROP przed puszczeniem - gra przesuwa kulkę za palcem z "
+                       "opóźnieniem; za krótko = kulka ląduje przed środkiem DROP")
+        form.addRow("Przytrzymanie na DROP:", box)
         self.field_between_drags_min, self.field_between_drags_max, box = self._range_row(0.0, 10.0, 0.1, " s")
         form.addRow("Przerwa między przeciągnięciami:", box)
 
@@ -1143,7 +1147,7 @@ class MainWindow(QMainWindow):
                 self.field_idle_just_loot, self.field_drop_choice, self.field_idle_x, self.field_idle_y, self.field_idle_radius,
                 self.field_region_x1, self.field_region_y1, self.field_region_x2, self.field_region_y2,
                 self.field_idle_interval_min, self.field_idle_interval_max,
-                self.field_drag_ms_min, self.field_drag_ms_max,
+                self.field_drag_ms_min, self.field_drag_ms_max, self.field_hold_end_min, self.field_hold_end_max,
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake, self.field_proc_width,
@@ -1184,6 +1188,8 @@ class MainWindow(QMainWindow):
             self.field_idle_interval_max.setValue(cfg.idle_click_interval.max)
             self.field_drag_ms_min.setValue(cfg.drag_duration_ms.min)
             self.field_drag_ms_max.setValue(cfg.drag_duration_ms.max)
+            self.field_hold_end_min.setValue(cfg.drag_end_hold_ms.min)
+            self.field_hold_end_max.setValue(cfg.drag_end_hold_ms.max)
             self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
             self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
             self.field_human_drag.setChecked(cfg.drag_style == "human")
@@ -1330,6 +1336,8 @@ class MainWindow(QMainWindow):
             max(self.field_idle_interval_min.value(), self.field_idle_interval_max.value()))
         cfg.drag_duration_ms = RandomRange(
             self.field_drag_ms_min.value(), max(self.field_drag_ms_min.value(), self.field_drag_ms_max.value()))
+        cfg.drag_end_hold_ms = RandomRange(
+            self.field_hold_end_min.value(), max(self.field_hold_end_min.value(), self.field_hold_end_max.value()))
         cfg.between_drags_delay = RandomRange(
             self.field_between_drags_min.value(),
             max(self.field_between_drags_min.value(), self.field_between_drags_max.value()))

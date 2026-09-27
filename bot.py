@@ -163,6 +163,9 @@ class BotConfig:
 
     # Czas trwania gestu przeciągania kulki (ms). Losowany zakres.
     drag_duration_ms: RandomRange = field(default_factory=lambda: RandomRange(800, 1300))
+    # Ile palec stoi na DROP przed puszczeniem - gra przesuwa kulkę za
+    # palcem z opóźnieniem; puszczenie od razu upuszcza ją przed środkiem.
+    drag_end_hold_ms: RandomRange = field(default_factory=lambda: RandomRange(180, 350))
 
     # Styl przeciągania:
     #   "human"    - po losowej krzywej z przyspieszaniem/zwalnianiem,
@@ -368,6 +371,8 @@ class BotConfig:
         d.board_region = tuple(int(v) for v in region) if region else None
         if "drag_duration_ms" in data:
             d.drag_duration_ms = RandomRange.from_value(data["drag_duration_ms"])
+        if "drag_end_hold_ms" in data:
+            d.drag_end_hold_ms = RandomRange.from_value(data["drag_end_hold_ms"])
         if "between_drags_delay" in data:
             d.between_drags_delay = RandomRange.from_value(data["between_drags_delay"])
         if "schedule" in data:
@@ -466,6 +471,7 @@ class BotConfig:
             "board_region": list(self.board_region) if self.board_region else None,
             "idle_click_interval": self.idle_click_interval.to_dict(),
             "drag_duration_ms": self.drag_duration_ms.to_dict(),
+            "drag_end_hold_ms": self.drag_end_hold_ms.to_dict(),
             "drag_style": self.drag_style,
             "reaction_delay": self.reaction_delay.to_dict(),
             "tap_hold_ms": self.tap_hold_ms.to_dict(),
@@ -1163,6 +1169,13 @@ class DustMineBot:
                 or now - self._unknown_since < cfg.unknown_screen_after_s):
             return
         self._unknown_saved = True
+        self._save_debug_frame(frame, f"nie rozpoznaję ekranu od {now - self._unknown_since:.0f} s")
+
+    def _save_debug_frame(self, frame: np.ndarray, reason: str) -> None:
+        """Zapisuje zrzut do folderu unknown_screens (do diagnozy)."""
+        cfg = self.config
+        if not cfg.save_unknown_screens:
+            return
         try:
             folder = unknown_screens_dir()
             folder.mkdir(parents=True, exist_ok=True)
@@ -1173,9 +1186,8 @@ class DustMineBot:
             safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in cfg.name)
             path = folder / f"{dt.datetime.now():%Y%m%d_%H%M%S_%f}_{safe_name}.png"
             cv2.imwrite(str(path), frame)
-            logger.warning("[%s] nie rozpoznaję ekranu od %.0f s - zapisano zrzut: %s "
-                           "(prześlij go, żeby dodać obsługę tego ekranu)",
-                           cfg.name, now - self._unknown_since, path)
+            logger.warning("[%s] %s - zapisano zrzut: %s (prześlij go, żeby dodać obsługę tego ekranu)",
+                           cfg.name, reason, path)
         except Exception as e:
             logger.warning("[%s] nie udało się zapisać zrzutu nierozpoznanego ekranu: %s", cfg.name, e)
 
@@ -1389,12 +1401,14 @@ class DustMineBot:
             return drop.x, drop.y
 
         start = humanize.random_point_in_circle(ball.x, ball.y, ball.r * 0.4)
-        end = humanize.random_point_in_circle(drop.x, drop.y, drop.r * 0.35)
+        end = humanize.random_point_in_circle(drop.x, drop.y, drop.r * 0.3)
+        hold = cfg.drag_end_hold_ms.sample()
         if self._mistake():
             # puszczenie kulki tuż obok DROP - zostanie, bot spróbuje ponownie
             a = random.uniform(0, 2 * np.pi)
             off = drop.r * random.uniform(1.2, 1.5)
             end = (int(drop.x + off * np.cos(a)), int(drop.y + off * np.sin(a)))
+            logger.info("[%s] celowa „ludzka” pomyłka: puszczam kulkę obok DROP (mistake_chance)", cfg.name)
         dist = float(np.hypot(ball.x - drop.x, ball.y - drop.y))
         if dist < drop.r:
             # Kulka leży na DROP-ie - ruch "z DROP na DROP" byłby za krótki
@@ -1407,12 +1421,28 @@ class DustMineBot:
                 ux, uy = float(np.cos(a)), float(np.sin(a))
             out_d = drop.r + ball.r * random.uniform(1.0, 1.5)
             out = (int(drop.x + ux * out_d), int(drop.y + uy * out_d))
-            path = humanize.drag_path(start, out) + humanize.drag_path(out, end)[1:]
-            self.adb.drag_path(path, duration * 1.5)
+            path = (self._dense_path(start, out, ball.r)
+                    + self._dense_path(out, end, ball.r)[1:])
+            self._adb_drag(path, duration * 1.5, hold)
             return end
-        path = humanize.drag_path(start, end)
-        self.adb.drag_path(path, duration)
+        path = self._dense_path(start, end, ball.r)
+        self._adb_drag(path, duration, hold)
         return end
+
+    @staticmethod
+    def _dense_path(start, end, ball_r: float) -> list[tuple[int, int]]:
+        """Ludzki tor z liczbą punktów zależną od długości: kolejne punkty
+        najwyżej ~1.5 promienia kulki od siebie, żeby palec nie
+        "przeskakiwał" dalej, niż kulka nadąża."""
+        dist = float(np.hypot(end[0] - start[0], end[1] - start[1]))
+        n = int(np.clip(dist / max(8.0, 1.5 * ball_r), 4, 14))
+        return humanize.drag_path(start, end, min_points=n, max_points=n + 2)
+
+    def _adb_drag(self, path, duration: float, hold: float) -> None:
+        try:
+            self.adb.drag_path(path, duration, end_hold_ms=hold)
+        except TypeError:  # sterownik bez przytrzymania (np. atrapa w testach)
+            self.adb.drag_path(path, duration)
 
     @staticmethod
     def _patch(frame: np.ndarray, x: int, y: int, r: int) -> np.ndarray:
@@ -1448,6 +1478,10 @@ class DustMineBot:
         finger: tuple[int, int] | None = None
         # ostatnia znana pozycja DROP - gdy kulki go chwilowo zasłonią
         last_drop: vision.Circle | None = self._last_drop
+        # licznik gry ("4 left") mówi, że kulki zostały, a bot żadnej nie
+        # widzi (np. schowana pod inną / w animacji) - ile razy czekano
+        waited_left = 0
+        retried_skipped = False
 
         while not self._stop:
             if time.monotonic() - start_time > cfg.max_seconds_per_game_screen:
@@ -1499,6 +1533,24 @@ class DustMineBot:
 
             candidates = [b for b in det.balls if not any(self._same_ball(b, s) for s in skipped)]
 
+            if det.drop is not None and not candidates:
+                left = vision.balls_left(frame)
+                if left:
+                    # gra pokazuje, że kulki zostały - nie kończ planszy
+                    if skipped and not retried_skipped:
+                        logger.info("[%s] gra pokazuje %d kulek do zebrania - ponawiam pominięte",
+                                    cfg.name, left)
+                        skipped = []
+                        attempts = []
+                        retried_skipped = True
+                        continue
+                    waited_left += 1
+                    if waited_left <= 10:  # ~3 s na animacje / odsłonięcie
+                        self._sleep(0.3)
+                        continue
+                    self._save_debug_frame(frame, f"gra pokazuje {left} kulek do zebrania, a bot żadnej nie widzi")
+                    logger.warning("[%s] kończę planszę mimo %d niezebranych kulek", cfg.name, left)
+                    return
             if det.drop is None or not candidates:
                 empty_count += 1
                 if empty_count >= cfg.empty_detections_to_exit:
@@ -1512,6 +1564,7 @@ class DustMineBot:
                 continue
 
             empty_count = 0
+            waited_left = 0
 
             if self._paused:
                 # czas pauzy nie liczy się do limitu max_seconds_per_game_screen

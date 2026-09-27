@@ -244,6 +244,17 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   a potem ustawia głębokość wg trybu. Sprawdzanie odbywa się co
   `depth_check_interval_min` minut, także gdy tryb głębokości to „nie
   zmieniaj”. Pusta nazwa = wyłączone.
+- **Dociąganie kulki do środka DROP** — gra przesuwa kulkę za palcem z
+  opóźnieniem, więc puszczenie palca od razu po dojechaniu upuszczało ją
+  przed środkiem. Teraz palec stoi na DROP `drag_end_hold_ms` (domyślnie
+  180–350 ms, GUI: Tempo → „Przytrzymanie na DROP”) z drobnym drżeniem, a
+  tor ma więcej punktów na dłuższej drodze (co najwyżej ~1.5 promienia
+  kulki między punktami). Bez `input motionevent` (prosty swipe) bot
+  przeciąga 1.5× wolniej i celuje odrobinę za środek. Celowa „ludzka”
+  pomyłka (`mistake_chance`) jest teraz widoczna w logu.
+- **Licznik „N left”** — bot czyta z nagłówka planszy, ile kulek zostało;
+  nie kończy planszy, dopóki gra pokazuje, że coś zostało (czeka ~3 s,
+  ponawia pominięte kulki, potem zapisuje zrzut do diagnozy).
 - **Zasłonięty DROP** — gdy kulki zasłaniają prawie cały okrąg DROP, a
   bot nie zna jeszcze jego położenia (np. zaraz po starcie), szuka go tam,
   gdzie zawsze leży na planszy: na środku, na ~79% wysokości panelu planszy.

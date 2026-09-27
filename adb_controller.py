@@ -269,7 +269,8 @@ class ADBController:
                     else "NIEDOSTĘPNE na tej wersji Androida - używam prostego swipe")
         return ok
 
-    def drag_path(self, points: list[tuple[int, int]], duration_ms: float) -> None:
+    def drag_path(self, points: list[tuple[int, int]], duration_ms: float,
+                  end_hold_ms: float = 0.0) -> None:
         """
         Przeciąga palcem po łamanej `points` jako JEDEN ciągły dotyk
         (DOWN na pierwszym punkcie, MOVE po kolejnych, UP na ostatnim),
@@ -279,6 +280,10 @@ class ADBController:
         wykonuje zwykły prosty swipe od pierwszego do ostatniego punktu.
         Cała sekwencja idzie jednym poleceniem `adb shell`, więc między
         punktami nie ma narzutu uruchamiania adb.exe.
+
+        end_hold_ms: jak długo palec stoi na ostatnim punkcie przed
+        puszczeniem (z drobnym drżeniem) - gra przesuwa obiekt za palcem z
+        opóźnieniem, a puszczenie od razu po dojechaniu upuszcza go przed celem.
         """
         if len(points) < 2:
             return
@@ -286,6 +291,15 @@ class ADBController:
             self._motionevent_ok = self._probe_motionevent()
         if not self._motionevent_ok:
             (x1, y1), (x2, y2) = points[0], points[-1]
+            if end_hold_ms > 0:
+                # zwykły swipe puszcza palec od razu po dojechaniu - wolniej
+                # (mniejsze opóźnienie kulki za palcem) i odrobinę za cel
+                dist = float(np.hypot(x2 - x1, y2 - y1))
+                if dist > 1:
+                    over = min(0.04 * dist, 15.0)
+                    x2 = int(round(x2 + (x2 - x1) / dist * over))
+                    y2 = int(round(y2 + (y2 - y1) / dist * over))
+                duration_ms = duration_ms * 1.5
             self.swipe(x1, y1, x2, y2, duration_ms=int(duration_ms))
             return
 
@@ -301,16 +315,26 @@ class ADBController:
             if sleep_s:
                 parts.append(f"sleep {sleep_s:.3f}")
             parts.append(f"input motionevent MOVE {self._s(x)} {self._s(y)}")
+        hold_calls = 0
+        if end_hold_ms > 0:
+            # palec stoi na celu: 2 drobne ruchy w miejscu (jak drżenie dłoni)
+            step = max(0.0, end_hold_ms / 1000.0 / 2 - self._input_latency_s)
+            for _ in range(2):
+                if step:
+                    parts.append(f"sleep {step:.3f}")
+                parts.append(f"input motionevent MOVE {self._s(x) + random.randint(-1, 1)} "
+                             f"{self._s(y) + random.randint(-1, 1)}")
+                hold_calls += 1
         parts.append(f"input motionevent UP {self._s(x)} {self._s(y)}")
 
         start = time.monotonic()
-        self._run(["shell", "; ".join(parts)], timeout=15 + 3 * duration_ms / 1000.0)
+        self._run(["shell", "; ".join(parts)], timeout=15 + 3 * (duration_ms + end_hold_ms) / 1000.0)
         elapsed = time.monotonic() - start
 
         # dopasuj szacunek opóźnienia jednego `input`, żeby kolejne
         # przeciągnięcia trwały bliżej zadanego czasu
-        calls = len(moves) + 2
-        measured = max(0.0, elapsed - sleep_s * len(moves)) / calls
+        calls = len(moves) + 2 + hold_calls
+        measured = max(0.0, elapsed - sleep_s * len(moves) - end_hold_ms / 1000.0 * (hold_calls > 0)) / calls
         self._input_latency_s = 0.7 * self._input_latency_s + 0.3 * measured
 
     # ------------------------------------------------------------------ #
