@@ -335,6 +335,9 @@ class BotConfig:
     # HUNT), sprawdź w Profile, czy wybrany jest loadout o tej nazwie, i w
     # razie potrzeby go wybierz. Pusta nazwa = nie sprawdzaj.
     loadout_name: str = "MAIN"
+    # Tryby "maksymalne": tyle walk z rzędu na tej samej głębokości (odczyt z
+    # nagłówka walki) = nie idzie w górę -> sprawdź / podkręć w Profile.
+    depth_repeat_fights: int = 3
     depth_check_interval_min: float = 15.0
     # Punkty do klikania jako obszary: (x, y, promień) - x i promień jako
     # ułamek szerokości ekranu, y jako ułamek wysokości. Bot klika w losowe
@@ -411,6 +414,7 @@ class BotConfig:
             ("processing_width", int),
             ("depth_below_max_pct", float),
             ("loadout_name", str),
+            ("depth_repeat_fights", int),
             ("depth_check_interval_min", float),
         ):
             if key in data and data[key] is not None:
@@ -506,6 +510,7 @@ class BotConfig:
             "processing_width": self.processing_width,
             "depth_below_max_pct": self.depth_below_max_pct,
             "loadout_name": self.loadout_name,
+            "depth_repeat_fights": self.depth_repeat_fights,
             "depth_check_interval_min": self.depth_check_interval_min,
             "nav_profile": list(self.nav_profile),
             "nav_craft": list(self.nav_craft),

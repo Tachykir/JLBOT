@@ -60,6 +60,10 @@ class PackOpener:
         self._last_depth_check: float | None = None
         self._depth_target_seen = None  # zmiana celu = sprawdź od razu
         self._known_max: int | None = None        # maks. odblokowana (tryb max_pct)
+        self._fight_depths: list[int] = []        # głębokość kolejnych walk (z nagłówka walki)
+        self._in_fight = False
+        self._no_fight_frames = 0
+        self._depth_due = False                   # nagłówek walki wskazał, że trzeba poprawić
         self._known_max_time = 0.0
         self._size = (0, 0)  # (W, H) ostatniej klatki
 
@@ -73,6 +77,8 @@ class PackOpener:
         if not cfg.auto_packs and not cfg.depth_enabled:
             return None
         self._size = (frame.shape[1], frame.shape[0])
+        if cfg.depth_enabled:
+            self._watch_fight_depth(frame)
 
         # Wynik walki liczymy raz na ekran i tylko wtedy, gdy log kończy się
         # napisem "Defeated." / "Victory." (sam szeroki przycisk na dole
@@ -104,11 +110,55 @@ class PackOpener:
                 return "defeats"
             if self._last_check is None or now - self._last_check >= cfg.packs_check_interval_min * 60:
                 return "check"
+        if cfg.depth_enabled and self._depth_due:
+            return "depth"
         if cfg.depth_enabled and (self._last_depth_check is None
                                    or self._depth_goal() != self._depth_target_seen
                                    or now - self._last_depth_check >= cfg.depth_check_interval_min * 60):
             return "depth"
         return None
+
+    def _watch_fight_depth(self, frame) -> None:
+        """
+        Czyta głębokość z nagłówka ekranu walki ("Depth 1137") - raz na
+        walkę - i zgłasza (self._depth_due) potrzebę sprawdzenia Profile:
+          - walka na innej głębokości niż ustawiona (stała / maks.−X%),
+          - głębokość 1 (np. przełączony loadout),
+          - tryby "maksymalne": ta sama głębokość `depth_repeat_fights`
+            walk z rzędu = nie idzie w górę, trzeba podkręcić.
+        """
+        cfg = self.bot.config
+        depth = screens.fight_depth(frame)
+        if depth is None:
+            # koniec walki: kilka klatek z rzędu bez nagłówka walki (pojedyncza
+            # nieczytelna klatka w trakcie walki nie liczy się jako nowa walka)
+            self._no_fight_frames += 1
+            if self._no_fight_frames >= 3:
+                self._in_fight = False
+            return
+        self._no_fight_frames = 0
+        if self._in_fight:
+            return
+        self._in_fight = True
+        self._fight_depths = (self._fight_depths + [depth])[-20:]
+        reason = None
+        want_one = cfg.depth_mode == "fixed" and cfg.farm_depth == 1
+        if depth == 1 and cfg.loadout_name.strip() and not want_one:
+            reason = "walka na głębokości 1"
+        elif cfg.depth_mode == "fixed" and cfg.farm_depth > 0 and depth != cfg.farm_depth:
+            reason = f"walka na głębokości {depth}, ustawiona {cfg.farm_depth}"
+        elif cfg.depth_mode == "max_pct" and self._known_max:
+            target = max(1, int(self._known_max * (1 - cfg.depth_below_max_pct / 100.0)))
+            if depth != target:
+                reason = f"walka na głębokości {depth}, cel {target}"
+        elif cfg.depth_mode in ("max", "max_normal"):
+            n = max(2, cfg.depth_repeat_fights)
+            last = self._fight_depths[-n:]
+            if len(last) == n and len(set(last)) == 1:
+                reason = f"{n} walk z rzędu na głębokości {depth} - podkręcam"
+        if reason and not self._depth_due:
+            logger.info("[%s] %s - sprawdzę wybór głębokości", cfg.name, reason)
+            self._depth_due = True
 
     # ------------------------------------------------------------------ #
     # Pomocnicze
@@ -218,6 +268,8 @@ class PackOpener:
         cfg = self.bot.config
         self._last_depth_check = time.monotonic()
         self._depth_target_seen = self._depth_goal()
+        self._depth_due = False
+        self._fight_depths = []
         if not cfg.depth_enabled:
             return True
         if not already_on_profile:

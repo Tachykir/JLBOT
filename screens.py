@@ -899,3 +899,59 @@ def pack_page_index(bgr: np.ndarray, buy: Rect) -> int | None:
             if len(xs) >= 2:
                 return xs.index(c)
     return None
+
+
+def fight_depth(bgr: np.ndarray) -> int | None:
+    """
+    Głębokość z nagłówka ekranu walki ("FORGOTTEN CRYPT" / "Depth 1137"):
+    wyśrodkowany wiersz u góry z dwoma słowami - "Depth" i liczbą. Mały,
+    cienki napis jest przed odczytem powiększany. None, gdy to nie ekran
+    walki albo nie da się odczytać.
+    """
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr[:int(0.12 * H)], cv2.COLOR_BGR2GRAY)
+    thr = float(np.median(gray)) + 45  # szary, cienki napis "Depth"
+    text = gray > thr
+    rows = np.where(text[:, int(0.15 * W):int(0.85 * W)].sum(axis=1) >= 2)[0]
+    lines = []
+    for r in rows:
+        if lines and r - lines[-1][1] <= 2:
+            lines[-1][1] = r
+        else:
+            lines.append([r, r])
+    for y1, y2 in lines:
+        if y2 - y1 < 0.006 * H:
+            continue
+        line = text[y1:y2 + 1]
+        comps = sorted((c for c in _components(line.astype(np.uint8)) if c[4] >= 3), key=lambda c: c[0])
+        if len(comps) < 5:
+            continue
+        x_mid = (comps[0][0] + comps[-1][0] + comps[-1][2]) / 2
+        if abs(x_mid - W / 2) > 0.08 * W:
+            continue
+        ch = max(c[3] for c in comps)
+        words, cur = [], [comps[0]]
+        for c in comps[1:]:
+            if c[0] - (cur[-1][0] + cur[-1][2]) > 0.6 * ch:
+                words.append(cur)
+                cur = [c]
+            else:
+                cur.append(c)
+        words.append(cur)
+        if len(words) != 2 or not (4 <= len(words[0]) <= 6) or len(words[1]) > 6:
+            continue
+        # powiększ oba słowa do ~36 px wysokości i odczytaj jeszcze raz
+        k = max(1.0, 36.0 / (y2 - y1 + 1))
+        crop = gray[max(0, y1 - 1):y2 + 2]
+        big = cv2.resize(crop, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC) > thr
+        def word_mask(wd):
+            x1 = int(wd[0][0] * k)
+            x2 = int((wd[-1][0] + wd[-1][2]) * k) + 1
+            return big[:, max(0, x1 - 1):x2 + 1]
+        first = read_word(word_mask(words[0]))
+        if first[:1] != "D" and len(words[0]) != 5:  # "Depth" (litery bywają niepewne)
+            continue
+        num = read_number(word_mask(words[1]))
+        if num is not None:
+            return num
+    return None

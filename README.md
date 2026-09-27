@@ -237,6 +237,13 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   tylko na widocznej karcie (szczegóły ~5×/s, miniatury 2×/s).
   Najwięcej daje jednak sam emulator: niższa rozdzielczość (np. 540×960)
   i FPS (np. 30) w ustawieniach LDPlayera.
+- **Głębokość z ekranu walki** — bot czyta „Depth N” z nagłówka każdej
+  walki. Gdy walka jest na innej głębokości niż ustawiona (stała /
+  maks. − X%), na głębokości 1 (loadout), albo w trybach maksymalnych
+  `depth_repeat_fights` (domyślnie 3) walk z rzędu jest na tej samej
+  głębokości, od razu sprawdza / podkręca wybór w Profile (nie czeka na
+  `depth_check_interval_min`). Przed odczytem Profile czeka, aż znikną
+  dymki z nagrodą po walce („+24 Dust”), które zasłaniają wybór głębokości.
 - **Loadout przy głębokości 1** (`loadout_name`, domyślnie `MAIN`, GUI:
   „Głębokość i paczki”) — gdy przy sprawdzaniu głębokości wybrana jest
   głębokość 1 (np. gra przełączyła loadout na HUNT), bot zawsze przewija Profile
