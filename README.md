@@ -250,6 +250,12 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   Packs, „+” do podanej liczby (odczytuje liczbę między „−” i „+”),
   cena, OPEN, karty, „Done”. Gdy gra ograniczy jeden zakup, kupuje
   kolejne partie; gdy zabraknie pyłu, kończy na tym, co się dało.
+- **Zakładka i paczka w Craft** — przed zakupem bot sprawdza po napisach,
+  czy wybrana jest zakładka LOOT PACKS (jeśli nie - klika ją) i paczka
+  SEEKER (nazwa nad „Loot Pack”, kropki pod kartą; jeśli nie - przewija
+  karuzelę do pierwszej paczki). Gdy SEEKER nie da się wybrać, nie kupuje.
+  Po otwieraniu paczek (automatycznym i „Otwórz X paczek”) wraca na
+  zakładkę Profile.
 - **„Not Enough Dust”** — okno z samym „OK” (zamiast CANCEL / OPEN) po
   kliknięciu ceny: bot klika OK i kończy otwieranie paczek (automatyczne
   i „Otwórz X paczek”). Takie okno z samym OK zamyka też w zwykłym trybie.

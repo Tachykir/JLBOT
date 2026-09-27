@@ -756,3 +756,103 @@ def find_loadouts(bgr: np.ndarray) -> list[Loadout]:
             name = read_word(text[rows[0]:end + 1])
         out.append(Loadout(name, c, selected))
     return out
+
+
+# --------------------------------------------------------------------- #
+# Craft: zakładki (LOOT PACKS / TARGETED / REFORGE) i wybrana paczka
+# --------------------------------------------------------------------- #
+
+def _text_mask(hsv: np.ndarray) -> np.ndarray:
+    return hsv[..., 2] > 140
+
+
+def find_craft_tabs(bgr: np.ndarray) -> list[Loadout]:
+    """
+    Zakładki w Craft (LOOT PACKS / TARGETED / REFORGE) - po napisach:
+    wiersz tekstu w górnej części ekranu z trzema grupami liter na środkach
+    trzech kolumn (i pustymi przerwami między nimi). Wybrana zakładka ma
+    kolorowy napis (unselected - szary). Nazwa bez spacji.
+    """
+    H, W = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    y1, y2 = int(0.08 * H), int(0.32 * H)
+    band = hsv[y1:y2]
+    mask = band[..., 2] > 90
+    letters = [c for c in _components(mask.astype(np.uint8))
+               if 0.006 * H <= c[3] <= 0.03 * H and c[2] <= 0.06 * W and c[4] >= 5]
+    rows: list[list] = []
+    for c in sorted(letters, key=lambda c: c[1] + c[3] / 2):
+        cy = c[1] + c[3] / 2
+        if rows and abs(cy - rows[-1][0]) < 0.006 * H:
+            rows[-1][1].append(c)
+        else:
+            rows.append([cy, [c]])
+    for _cy, row in rows:
+        groups = [[], [], []]
+        for c in row:
+            groups[min(2, int((c[0] + c[2] / 2) / (W / 3)))].append(c)
+        if not all(groups):
+            continue
+        ok = True
+        out = []
+        for i, g in enumerate(groups):
+            gx1 = min(c[0] for c in g)
+            gx2 = max(c[0] + c[2] for c in g)
+            if abs((gx1 + gx2) / 2 - (i + 0.5) * W / 3) > 0.08 * W or gx2 - gx1 > 0.3 * W:
+                ok = False
+                break
+            gy1 = min(c[1] for c in g)
+            gy2 = max(c[1] + c[3] for c in g)
+            sub = band[gy1:gy2, gx1:gx2]
+            text = mask[gy1:gy2, gx1:gx2]
+            selected = float(np.mean(sub[..., 1][text])) > 80 if text.any() else False
+            pad_x, pad_y = int(0.08 * W), int(0.02 * H)
+            rect = Rect(max(0, gx1 - pad_x), y1 + gy1 - pad_y, gx2 - gx1 + 2 * pad_x, gy2 - gy1 + 2 * pad_y)
+            out.append(Loadout(read_word(text), rect, selected))
+        if ok:
+            return out
+    return []
+
+
+def read_pack_name(bgr: np.ndarray, buy: Rect) -> str:
+    """Nazwa paczki (duży napis nad "Loot Pack") na karcie z przyciskiem ceny."""
+    H, W = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    y1, y2 = max(0, int(buy.y - 0.33 * H)), int(buy.y - 0.05 * H)
+    x1, x2 = max(0, int(buy.center[0] - 0.3 * W)), min(W, int(buy.center[0] + 0.3 * W))
+    mask = _text_mask(hsv[y1:y2, x1:x2])
+    comps = [c for c in _components(mask.astype(np.uint8)) if c[4] >= 6 and c[3] >= 0.011 * H]
+    # wiersze liter: grupy składowych o podobnej wysokości na tej samej linii
+    best: list = []
+    for c in comps:
+        row = [d for d in comps if abs((d[1] + d[3] / 2) - (c[1] + c[3] / 2)) < 0.3 * c[3]
+               and abs(d[3] - c[3]) < 0.3 * c[3] and d[2] < 1.5 * d[3]]
+        if len(row) >= 3 and (not best or c[3] > best[0][3]):
+            best = row
+    if not best:
+        return ""
+    ry1 = min(d[1] for d in best)
+    ry2 = max(d[1] + d[3] for d in best)
+    rx1 = min(d[0] for d in best)
+    rx2 = max(d[0] + d[2] for d in best)
+    return read_word(mask[ry1:ry2, rx1:rx2])
+
+
+def pack_page_index(bgr: np.ndarray, buy: Rect) -> int | None:
+    """Która paczka jest widoczna (0 = pierwsza): kropki pod kartą, aktywna
+    jest wydłużona ("pigułka")."""
+    H, W = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    y1, y2 = int(buy.y + 0.1 * H), min(H, int(buy.y + 0.3 * H))
+    band = hsv[y1:y2, :, 2]
+    mask = (band > float(np.median(band)) + 15).astype(np.uint8)
+    comps = [c for c in _components(mask) if 0.004 * H <= c[3] <= 0.02 * H and c[2] <= 0.08 * W]
+    for c in comps:
+        if c[2] >= 2.2 * c[3]:  # pigułka
+            row = sorted((d for d in comps if abs(d[1] - c[1]) < 0.01 * H and d[2] <= 2.5 * d[3] * 2.5),
+                         key=lambda d: d[0])
+            row = [d for d in row if d is c or d[2] <= 1.6 * d[3]] if len(row) > 1 else row
+            xs = sorted([c] + [d for d in row if d is not c], key=lambda d: d[0])
+            if len(xs) >= 2:
+                return xs.index(c)
+    return None

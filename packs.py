@@ -45,6 +45,12 @@ def _point_defaults():
     return POINT_DEFAULTS
 
 
+def _similar(a: str, b: str) -> bool:
+    """Odczytana nazwa ~ oczekiwana (OCR czasem myli pojedyncze litery)."""
+    import difflib
+    return bool(a) and difflib.SequenceMatcher(None, a.replace("?", "_"), b).ratio() >= 0.6
+
+
 class PackOpener:
     def __init__(self, bot):
         self.bot = bot
@@ -412,13 +418,25 @@ class PackOpener:
         return sel
 
     def _goto_loot_packs(self):
-        """Craft -> Loot Packs. Zwraca (klatka, przycisk z ceną) albo None."""
+        """
+        Craft -> zakładka LOOT PACKS -> paczka SEEKER. Zwraca (klatka,
+        przycisk z ceną) albo None. Zakładkę i paczkę sprawdza po napisach
+        (wybrana zakładka ma kolorowy napis; paczkę pokazują też kropki pod
+        kartą - SEEKER jest pierwsza).
+        """
         bot, cfg = self.bot, self.bot.config
         self._tap_nav("nav_craft")
         bot._sleep(random.uniform(0.8, 1.2))
         frame = self._frame()
+        tabs = screens.find_craft_tabs(frame)
+        if tabs and not tabs[0].selected:
+            logger.info("[%s] Craft: wybieram zakładkę LOOT PACKS (była %s)", cfg.name,
+                        next((t.name for t in tabs if t.selected), "?"))
+            self._tap_rect(tabs[0].rect)
+            bot._sleep(random.uniform(0.6, 0.9))
+            frame = self._frame()
         buy = screens.find_buy_button(frame)
-        if buy is None:
+        if buy is None and not tabs:
             self._tap_rel(cfg.craft_loot_packs_tab)
             bot._sleep(random.uniform(0.6, 0.9))
             frame = self._frame()
@@ -426,7 +444,41 @@ class PackOpener:
         if buy is None:
             logger.warning("[%s] nie znaleziono ekranu Loot Packs w zakładce Craft", cfg.name)
             return None
-        return frame, buy
+        return self._ensure_seeker(frame, buy)
+
+    def _ensure_seeker(self, frame, buy):
+        """Przewija karuzelę paczek do SEEKER (pierwszej). Zwraca (klatka,
+        przycisk z ceną) albo None, gdy nie udało się jej wybrać."""
+        bot, cfg = self.bot, self.bot.config
+        W, H = self._size
+        backwards = True  # palec w prawo = poprzednia paczka (SEEKER jest pierwsza)
+        for attempt in range(6):
+            index = screens.pack_page_index(frame, buy)
+            name = screens.read_pack_name(frame, buy)
+            # nazwa ważniejsza od kropek (te przy małej rozdzielczości bywają niepewne)
+            if (_similar(name, "SEEKER") if len(name) >= 4 else index == 0):
+                return frame, buy
+            if attempt == 3:
+                backwards = False  # nie pomogło - spróbuj w drugą stronę
+            if attempt == 0:
+                logger.info("[%s] Craft: widoczna paczka %s - przewijam do SEEKER", cfg.name, name or "?")
+            cy = buy.y - int(0.15 * H)
+            xa, xb = int(W * 0.25), int(W * 0.75)
+            if not backwards:
+                xa, xb = xb, xa
+            bot.adb.swipe(xa, cy, xb, cy + random.randint(-8, 8), duration_ms=random.randint(250, 400))
+            bot._sleep(random.uniform(0.6, 0.9))
+            frame = self._frame()
+            buy = screens.find_buy_button(frame) or buy
+        logger.warning("[%s] nie udało się wybrać paczki SEEKER - pomijam otwieranie", cfg.name)
+        return None
+
+    def _back_to_profile(self) -> None:
+        """Po paczkach wróć na zakładkę Profile (tam bot zwykle czeka)."""
+        if self._abort():
+            return
+        self._tap_nav("nav_profile")
+        self.bot._sleep(random.uniform(0.8, 1.2))
 
     def _plus_point(self, frame, buy):
         W, _H = self._size
@@ -537,6 +589,7 @@ class PackOpener:
             opened += qty
             bot.stats.pack_rounds += 1
             logger.info("[%s] otwarto %d paczek (%d/%d)", cfg.name, qty, opened, count)
+        self._back_to_profile()
         return opened
 
     def _open_cards(self) -> bool:
@@ -625,6 +678,4 @@ class PackOpener:
         logger.info("[%s] koniec otwierania paczek (%d rund) - wracam do walki", cfg.name, rounds)
         self.defeat_streak = 0
         self._last_check = time.monotonic()
-        if warning is None:
-            self._tap_nav("nav_profile")
-            bot._sleep(1.0)
+        self._back_to_profile()
