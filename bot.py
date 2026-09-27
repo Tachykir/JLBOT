@@ -881,8 +881,13 @@ class DustMineBot:
         empty = (not black and vision.is_empty_screen(frame)
                  and screens.find_reveal_card(frame) is None and screens.find_item_card(frame) is None)
         if not (black or empty):
-            self._black_screen_since = None
+            # pojedyncza "niepusta" klatka (np. pulsujący dymek) nie zeruje
+            # odliczania - dopiero kilka z rzędu
+            self._not_empty_frames = getattr(self, "_not_empty_frames", 0) + 1
+            if self._not_empty_frames >= 3:
+                self._black_screen_since = None
             return False
+        self._not_empty_frames = 0
 
         now = time.monotonic()
         if self._black_screen_since is None:
