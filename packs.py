@@ -275,8 +275,8 @@ class PackOpener:
     def ensure_loadout(self) -> bool:
         """
         Profile: wybiera loadout `loadout_name` (np. "MAIN"), jeśli wybrany
-        jest inny. Rząd kart loadoutów jest na górze strony - gdy go nie
-        widać, przewija do góry. True = przełączono loadout.
+        jest inny. Rząd kart loadoutów jest na górze strony - zawsze najpierw
+        przewija do góry. True = przełączono loadout.
         """
         bot, cfg = self.bot, self.bot.config
         want = cfg.loadout_name.strip().upper()
@@ -284,14 +284,20 @@ class PackOpener:
         def matches(name: str) -> bool:
             return len(name) == len(want) and all(a == b or a == "?" for a, b in zip(name, want))
 
-        cards = screens.find_loadouts(self._frame())
-        if not cards:
-            W, H = self._size
-            for _ in range(2):  # przewiń stronę do góry
-                bot.adb.swipe(int(W * 0.5), int(H * 0.35), int(W * 0.5), int(H * 0.75),
-                              duration_ms=random.randint(300, 450))
-                bot._sleep(random.uniform(0.6, 0.9))
+        # Profile jest zwykle przewinięty w dół (do CHOOSE DEPTH) - karty
+        # loadoutów bywają wtedy ucięte albo niewidoczne; zawsze najpierw
+        # przewiń stronę do góry
+        self._frame()  # aktualny rozmiar ekranu
+        W, H = self._size
+        cards = []
+        for attempt in range(3):
+            bot.adb.swipe(int(W * random.uniform(0.45, 0.55)), int(H * 0.35),
+                          int(W * random.uniform(0.45, 0.55)), int(H * 0.75),
+                          duration_ms=random.randint(300, 450))
+            bot._sleep(random.uniform(0.6, 0.9))
             cards = screens.find_loadouts(self._frame())
+            if cards:
+                break
         if not cards:
             logger.warning("[%s] głębokość 1 - nie znaleziono kart loadoutów w Profile", cfg.name)
             return False
