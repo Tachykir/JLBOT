@@ -1647,6 +1647,14 @@ class DustMineBot:
                     self._save_debug_frame(frame, f"gra pokazuje {left} kulek do zebrania, a bot żadnej nie widzi")
                     logger.warning("[%s] kończę planszę mimo %d niezebranych kulek", cfg.name, left)
                     return
+                if left is None and skipped and det.balls and not retried_skipped:
+                    # licznika nie da się odczytać, a kulki wciąż leżą -
+                    # jedna ponowna próba pominiętych przed końcem planszy
+                    logger.info("[%s] widać %d pominiętych kulek - ponawiam", cfg.name, len(det.balls))
+                    skipped = []
+                    attempts = []
+                    retried_skipped = True
+                    continue
             if det.drop is None or not candidates:
                 empty_count += 1
                 if empty_count >= cfg.empty_detections_to_exit:

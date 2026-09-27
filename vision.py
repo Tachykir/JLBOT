@@ -604,6 +604,9 @@ def is_black_screen(bgr: np.ndarray, brightness_threshold: float = 10.0) -> bool
     return float(gray.mean()) < brightness_threshold
 
 
+_DIGIT_LOOKALIKES = str.maketrans({"Z": "2", "O": "0", "D": "0", "I": "1", "L": "1", "S": "5", "B": "8", "G": "6"})
+
+
 def balls_left(bgr: np.ndarray) -> int | None:
     """
     Ile kulek zostało wg nagłówka planszy ("+0 dust · 4 left · +87 each"):
@@ -658,6 +661,9 @@ def balls_left(bgr: np.ndarray) -> int | None:
         x1 = min(c[0] for c in wd)
         x2 = max(c[0] + c[2] for c in wd)
         token = screens.read_word(line[:, x1:x2])
+        if any(ch_.isdigit() for ch_ in token):
+            # cyfry mylone z literami przy odczycie słowa ("+124" -> "?1Z4")
+            token = token.translate(_DIGIT_LOOKALIKES)
         digits = "".join(ch_ for ch_ in token if ch_.isdigit())
         # słowo jest liczbą, jeśli poza ewentualnym "+" składa się z cyfr
         if digits and len(digits) >= len(token) - 1:
