@@ -237,6 +237,13 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   tylko na widocznej karcie (szczegóły ~5×/s, miniatury 2×/s).
   Najwięcej daje jednak sam emulator: niższa rozdzielczość (np. 540×960)
   i FPS (np. 30) w ustawieniach LDPlayera.
+- **Loadout przy głębokości 1** (`loadout_name`, domyślnie `MAIN`, GUI:
+  „Głębokość i paczki”) — gdy przy sprawdzaniu głębokości wybrana jest
+  głębokość 1 (np. gra przełączyła loadout na HUNT), bot przewija Profile
+  do kart loadoutów, odczytuje ich nazwy i wybiera ten o podanej nazwie,
+  a potem ustawia głębokość wg trybu. Sprawdzanie odbywa się co
+  `depth_check_interval_min` minut, także gdy tryb głębokości to „nie
+  zmieniaj”. Pusta nazwa = wyłączone.
 - **Otwórz X paczek** (karta „Wszystkie instancje” → „📦 Otwórz paczki na
   wszystkich”) — pyta o liczbę (1–1000) i na każdej działającej
   instancji przy najbliższym ekranie z paskiem nawigacji: Craft → Loot

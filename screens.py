@@ -681,3 +681,77 @@ def find_depth_selector(bgr: np.ndarray) -> DepthSelector | None:
             return DepthSelector("big", left, right, [DepthTile(number, rect, True)],
                                  max(bottom, rect.y + rect.h), left_found, right_found)
     return None
+
+
+# --------------------------------------------------------------------- #
+# Profile: loadouty (HUNT / MAIN / #2 / #3 ...)
+# --------------------------------------------------------------------- #
+
+def read_word(mask: np.ndarray) -> str:
+    """Odczytuje słowo (wielkie litery, cyfry, "#") z maski jasnych pikseli."""
+    import digit_templates as dt
+    comps = [c for c in _components(mask.astype(np.uint8)) if c[4] >= 6]
+    if not comps:
+        return ""
+    max_h = max(c[3] for c in comps)
+    comps = sorted((c for c in comps if c[3] >= 0.6 * max_h), key=lambda c: c[0])
+    templates = list(zip(dt.TEMPLATES, dt.ASPECTS, dt.DIGITS)) + \
+        list(zip(dt.LETTER_TEMPLATES, dt.LETTER_ASPECTS, dt.LETTERS))
+    tw, th = dt.SIZE
+    out = ""
+    for x, y, w, h, _a in comps:
+        glyph = cv2.resize(mask[y:y + h, x:x + w].astype(np.float32), (tw, th), interpolation=cv2.INTER_AREA)
+        score, ch = min((float(np.abs(glyph - t).mean()) + 0.5 * abs(w / h - a), c) for t, a, c in templates)
+        out += ch if score <= 0.3 else "?"
+    return out
+
+
+@dataclass
+class Loadout:
+    name: str
+    rect: Rect
+    selected: bool
+
+
+def find_loadouts(bgr: np.ndarray) -> list[Loadout]:
+    """
+    Karty loadoutów w Profile (rząd zaokrąglonych kart pod kartą gracza):
+    nazwa z pierwszego wiersza tekstu karty, wybrana = cyjanowa obwódka.
+    Karta przycięta przy lewej krawędzi (przewinięty rząd) też się liczy.
+    """
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    bg = float(np.median(gray))
+    if bg > 40:
+        return []
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    panels = (cv2.medianBlur(gray, 5) > bg + 4).astype(np.uint8)
+    cards = [Rect(x, y, w, h) for x, y, w, h, area in _components(panels)
+             if 0.12 * W <= w <= 0.35 * W and 0.07 * H <= h <= 0.2 * H and y < 0.5 * H
+             and area >= 0.9 * w * h]
+    if len(cards) < 2:
+        return []
+    # jeden rząd: karty na tej samej wysokości
+    row_y = max(set(c.y for c in cards), key=lambda y: sum(abs(c.y - y) < 0.01 * H for c in cards))
+    cards = sorted((c for c in cards if abs(c.y - row_y) < 0.01 * H), key=lambda c: c.x)
+    cyan = cv2.inRange(hsv, (80, 90, 150), (100, 255, 255))
+    out = []
+    for c in cards:
+        ring = cyan[c.y:c.y + c.h, c.x:c.x + c.w].copy()
+        b = max(3, c.w // 25)
+        ring[b:-b, b:-b] = 0
+        selected = int((ring > 0).sum()) > 0.3 * (c.w + c.h)
+        # pierwszy wiersz tekstu (nazwa) w górnej części karty
+        top = hsv[c.y + int(0.1 * c.h):c.y + int(0.45 * c.h), c.x + b + 2:c.x + c.w - b - 2]
+        text = top[..., 2] > 150
+        rows = np.where(text.sum(axis=1) >= 2)[0]
+        name = ""
+        if rows.size:
+            end = rows[0]
+            for r in rows[1:]:
+                if r - end > 2:
+                    break
+                end = r
+            name = read_word(text[rows[0]:end + 1])
+        out.append(Loadout(name, c, selected))
+    return out

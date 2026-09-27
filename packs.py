@@ -215,6 +215,16 @@ class PackOpener:
         if sel is None:
             logger.warning("[%s] nie znaleziono wyboru głębokości (CHOOSE DEPTH) w Profile", cfg.name)
             return None
+        # głębokość 1 = zwykle przełączony loadout (np. HUNT) - wybierz właściwy
+        want_one = cfg.depth_mode == "fixed" and cfg.farm_depth == 1
+        if sel.current == 1 and cfg.loadout_name.strip() and not want_one:
+            if self.ensure_loadout():
+                self._open_profile()
+                sel = self._read_depth()
+                if sel is None:
+                    return None
+        if not (cfg.depth_mode in ("max", "max_normal", "max_pct") or cfg.farm_depth > 0):
+            return True  # samo pilnowanie loadoutu
         start = sel.current
 
         if cfg.depth_mode == "max":
@@ -255,6 +265,42 @@ class PackOpener:
             logger.warning("[%s] głębokości %d nie da się wybrać - zostaje %s (poza odblokowanym zakresem?)",
                            cfg.name, target, sel.current if sel is not None else None)
         return result
+
+    def ensure_loadout(self) -> bool:
+        """
+        Profile: wybiera loadout `loadout_name` (np. "MAIN"), jeśli wybrany
+        jest inny. Rząd kart loadoutów jest na górze strony - gdy go nie
+        widać, przewija do góry. True = przełączono loadout.
+        """
+        bot, cfg = self.bot, self.bot.config
+        want = cfg.loadout_name.strip().upper()
+
+        def matches(name: str) -> bool:
+            return len(name) == len(want) and all(a == b or a == "?" for a, b in zip(name, want))
+
+        cards = screens.find_loadouts(self._frame())
+        if not cards:
+            W, H = self._size
+            for _ in range(2):  # przewiń stronę do góry
+                bot.adb.swipe(int(W * 0.5), int(H * 0.35), int(W * 0.5), int(H * 0.75),
+                              duration_ms=random.randint(300, 450))
+                bot._sleep(random.uniform(0.6, 0.9))
+            cards = screens.find_loadouts(self._frame())
+        if not cards:
+            logger.warning("[%s] głębokość 1 - nie znaleziono kart loadoutów w Profile", cfg.name)
+            return False
+        target = next((c for c in cards if matches(c.name)), None)
+        if target is None:
+            logger.warning("[%s] głębokość 1 - nie znaleziono loadoutu %s (widoczne: %s)", cfg.name, want,
+                           ", ".join(c.name or "?" for c in cards))
+            return False
+        if target.selected:
+            return False
+        current = next((c.name for c in cards if c.selected), "?")
+        logger.warning("[%s] głębokość 1 i wybrany loadout %s - przełączam na %s", cfg.name, current, want)
+        self._tap_rect(target.rect)
+        bot._sleep(random.uniform(0.8, 1.2))
+        return True
 
     def _move_depth(self, sel, target: int | None):
         """Przesuwa wybór do `target` (None = jak najwyżej). Zwraca

@@ -328,6 +328,10 @@ class BotConfig:
     # minus depth_below_max_pct procent. Dla "max*" farm_depth jest pomijane.
     depth_mode: str = "fixed"
     depth_below_max_pct: float = 10.0
+    # Gdy wybrana głębokość spadnie do 1 (np. gra przełączyła loadout na
+    # HUNT), sprawdź w Profile, czy wybrany jest loadout o tej nazwie, i w
+    # razie potrzeby go wybierz. Pusta nazwa = nie sprawdzaj.
+    loadout_name: str = "MAIN"
     depth_check_interval_min: float = 15.0
     # Punkty do klikania jako obszary: (x, y, promień) - x i promień jako
     # ułamek szerokości ekranu, y jako ułamek wysokości. Bot klika w losowe
@@ -346,7 +350,7 @@ class BotConfig:
     # ------------------------------------------------------------------ #
     @property
     def depth_enabled(self) -> bool:
-        return self.depth_mode in DEPTH_AUTO_MODES or self.farm_depth > 0
+        return self.depth_mode in DEPTH_AUTO_MODES or self.farm_depth > 0 or bool(self.loadout_name.strip())
 
     @classmethod
     def from_dict(cls, data: dict) -> "BotConfig":
@@ -401,6 +405,7 @@ class BotConfig:
             ("depth_mode", str),
             ("processing_width", int),
             ("depth_below_max_pct", float),
+            ("loadout_name", str),
             ("depth_check_interval_min", float),
         ):
             if key in data and data[key] is not None:
@@ -494,6 +499,7 @@ class BotConfig:
             "depth_mode": self.depth_mode,
             "processing_width": self.processing_width,
             "depth_below_max_pct": self.depth_below_max_pct,
+            "loadout_name": self.loadout_name,
             "depth_check_interval_min": self.depth_check_interval_min,
             "nav_profile": list(self.nav_profile),
             "nav_craft": list(self.nav_craft),
