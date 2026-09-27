@@ -25,6 +25,12 @@ SIDE_W = 215                      # szerokość kolumny z opisem i przyciskami
 CARD_W = THUMB_W + SIDE_W + 28
 
 
+def format_play_time(seconds: float) -> str:
+    """Czas gry: "2 h 05 min" / "7 min"."""
+    m = int(seconds // 60)
+    return f"{m // 60} h {m % 60:02d} min" if m >= 60 else f"{m} min"
+
+
 class InstanceCard(QFrame):
     action = Signal(str, str)  # (nazwa instancji, akcja: start|pause|stop|salvage|details)
 
@@ -99,6 +105,7 @@ class InstanceCard(QFrame):
             f"<b>Gear</b> {num(getattr(stats, 'gear_level', None))} · "
             f"<b>Depth</b> {num(getattr(stats, 'depth', None))} · "
             f"<b>Dust</b> {num(getattr(stats, 'dust', None))}<br>"
+            f"<b>Czas gry</b> {format_play_time(getattr(stats, 'play_seconds', 0.0))}<br>"
             f"Plansze {stats.cycles} · Kulki {stats.balls_collected}<br>"
             f"Porażki {stats.defeats} · Dropy {stats.drops}<br>"
             f"Rozebrane {stats.salvaged} · Błędy {stats.errors}")

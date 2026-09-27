@@ -555,11 +555,15 @@ class BotStats:
     gear_level: Optional[int] = None   # GEAR LEVEL z Profile
     depth: Optional[int] = None        # głębokość walki / wybrana w Profile
     dust: Optional[int] = None         # pył z nagłówka ekranu Craft
+    # czas realnej gry (s) - bez przerw z harmonogramu i pauzy
+    play_seconds: float = 0.0
 
 
 class DustMineBot:
     activity = ""        # opis bieżącej czynności (patrz _act)
     _on_activity = None
+    _in_break = False     # czekanie na harmonogram (przerwa / poza oknem)
+    _play_tick_at = None  # (czas ostatniego ticku, czy wtedy trwała gra)
 
     def __init__(self, adb: ADBController, config: BotConfig,
                  on_frame: Optional[FrameCallback] = None,
@@ -607,7 +611,21 @@ class DustMineBot:
         self._last_foreground_check: float = 0.0
 
     def stop(self) -> None:
+        self._play_tick()
         self._stop_event.set()
+
+    def _play_tick(self) -> None:
+        """Dolicza do stats.play_seconds czas od poprzedniego ticku, jeśli
+        wtedy trwała gra (nie przerwa, nie pauza, bot nie zatrzymany).
+        Wołane przy każdym _sleep i przy zmianach stanu."""
+        now = time.monotonic()
+        prev = self._play_tick_at
+        if prev is not None and prev[1]:
+            delta = now - prev[0]
+            if 0 < delta <= 120:  # dłuższa luka = coś wisiało, nie liczymy
+                self.stats.play_seconds += delta
+        playing = not (self._in_break or self._paused or self._stop_event.is_set())
+        self._play_tick_at = (now, playing)
 
     @property
     def _stop(self) -> bool:
@@ -616,16 +634,21 @@ class DustMineBot:
     def _sleep(self, seconds: float) -> bool:
         """Śpi `seconds` sekund albo do wywołania stop(). Zwraca True, jeśli
         przerwano przez stop()."""
+        self._play_tick()
         return self._stop_event.wait(max(0.0, seconds))
 
     def pause(self) -> None:
         """Wstrzymuje klikanie/przeciąganie, ale wątek nadal robi
         screenshoty i wywołuje on_frame - przydatne w GUI do podglądu
         na żywo bez ingerowania w grę."""
+        self._play_tick()
         self._paused = True
+        self._play_tick()
 
     def resume(self) -> None:
+        self._play_tick()
         self._paused = False
+        self._play_tick()
 
     @property
     def is_paused(self) -> bool:
@@ -701,6 +724,18 @@ class DustMineBot:
         if decision.play:
             return
 
+        self._play_tick()
+        self._in_break = True
+        self._play_tick()
+        try:
+            self._wait_break(decision)
+        finally:
+            self._play_tick()
+            self._in_break = False
+            self._play_tick()
+
+    def _wait_break(self, decision: Decision) -> None:
+        cfg = self.config
         game_was_closed = False
         if cfg.close_game_during_break and cfg.game_package:
             try:
