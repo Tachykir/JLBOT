@@ -970,3 +970,40 @@ def fight_depth(bgr: np.ndarray) -> int | None:
         if num is not None:
             return num
     return None
+
+
+def find_chat_close(bgr: np.ndarray) -> tuple[int, int] | None:
+    """
+    Okno czatu (napis "CHAT" u góry po lewej, zakładki GLOBAL / RAID /
+    WHISPERS) - zwraca środek przycisku X w prawym górnym rogu.
+    """
+    H, W = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr[:int(0.1 * H)], cv2.COLOR_BGR2HSV)
+    bright = hsv[..., 2] > 170
+    # tytuł "CHAT"
+    left = bright[:, :int(0.4 * W)]
+    comps = [c for c in _components(left.astype(np.uint8)) if c[3] >= 0.015 * H and c[4] >= 10]
+    if not (3 <= len(comps) <= 6):
+        return None
+    comps.sort(key=lambda c: c[0])
+    y1 = min(c[1] for c in comps)
+    y2 = max(c[1] + c[3] for c in comps)
+    x1 = comps[0][0]
+    x2 = comps[-1][0] + comps[-1][2]
+    title = read_word(left[y1:y2, x1:x2])
+    import difflib
+    if difflib.SequenceMatcher(None, title.replace("?", "_"), "CHAT").ratio() < 0.74:
+        return None
+    # X po prawej, na wysokości tytułu
+    right_x = int(0.8 * W)
+    right = (hsv[:, right_x:, 2] > 120).astype(np.uint8)
+    best = None
+    for x, y, w, h, area in _components(right):
+        cy = y + h / 2
+        if 0.025 * W <= w <= 0.09 * W and 0.7 <= h / w <= 1.4 and abs(cy - (y1 + y2) / 2) < 0.03 * H:
+            if best is None or w * h > best[2] * best[3]:
+                best = (x, y, w, h)
+    if best is None:
+        return None
+    x, y, w, h = best
+    return int(right_x + x + w / 2), int(y + h / 2)

@@ -1053,6 +1053,8 @@ class DustMineBot:
             return "ekran dropu"
         if screens.find_center_button(frame) is not None:
             return "ekran z przyciskiem"
+        if screens.find_chat_close(frame) is not None:
+            return "otwarty czat"
         return None
 
     def _tap(self, x: int, y: int) -> None:
@@ -1223,6 +1225,12 @@ class DustMineBot:
 
     def _idle_click_point_inner(self, frame: np.ndarray) -> tuple[int, int] | None:
         cfg = self.config
+
+        # otwarty czat - zamknij go X w prawym górnym rogu
+        chat_x = screens.find_chat_close(frame)
+        if chat_x is not None:
+            logger.info("[%s] otwarty czat - zamykam", cfg.name)
+            return humanize.random_point_in_circle(*chat_x, 0.012 * frame.shape[1])
 
         # wybór przedmiotu z dropu (Replace / ... / Keep Current)
         rows = screens.find_drop_choice(frame)

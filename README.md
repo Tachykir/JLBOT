@@ -237,6 +237,8 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   tylko na widocznej karcie (szczegóły ~5×/s, miniatury 2×/s).
   Najwięcej daje jednak sam emulator: niższa rozdzielczość (np. 540×960)
   i FPS (np. 30) w ustawieniach LDPlayera.
+- **Czat** — gdy otworzy się okno czatu („CHAT”, zakładki GLOBAL / RAID /
+  WHISPERS), bot zamyka je przyciskiem X w prawym górnym rogu.
 - **Głębokość z ekranu walki** — bot czyta „Depth N” z nagłówka każdej
   walki. Gdy walka jest na innej głębokości niż ustawiona (stała /
   maks. − X%), na głębokości 1 (loadout), albo w trybach maksymalnych
