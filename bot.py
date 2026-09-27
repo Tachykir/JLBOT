@@ -318,6 +318,12 @@ class BotConfig:
     packs_check_interval_min: float = 30.0
     # Maksymalna liczba rund (max paczek + OPEN) w jednym podejściu.
     packs_max_rounds: int = 10
+    # Ile paczek otworzyć za jednym razem (0 = rundy po maks. 20, aż gear
+    # wystarczy / skończy się pył / packs_max_rounds).
+    packs_per_run: int = 0
+    # Paczki, gdy głębokość walki >= Gear Level + tyle (od tej granicy
+    # wrogowie dostają bonus "enemies +N% stronger"). 0 = nie sprawdzaj.
+    gear_depth_margin: int = 55
     # Ile razy kliknąć "+", gdy nie da się odczytać ustawionej liczby paczek
     # (normalnie bot dobija do maksimum 20; gra sama ogranicza też do pyłu).
     pack_plus_taps: int = 20
@@ -409,6 +415,8 @@ class BotConfig:
             ("packs_check_interval_min", float),
             ("packs_max_rounds", int),
             ("pack_plus_taps", int),
+            ("packs_per_run", int),
+            ("gear_depth_margin", int),
             ("farm_depth", int),
             ("depth_mode", str),
             ("processing_width", int),
@@ -505,6 +513,8 @@ class BotConfig:
             "packs_check_interval_min": self.packs_check_interval_min,
             "packs_max_rounds": self.packs_max_rounds,
             "pack_plus_taps": self.pack_plus_taps,
+            "packs_per_run": self.packs_per_run,
+            "gear_depth_margin": self.gear_depth_margin,
             "farm_depth": self.farm_depth,
             "depth_mode": self.depth_mode,
             "processing_width": self.processing_width,

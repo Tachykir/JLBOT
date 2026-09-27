@@ -63,6 +63,9 @@ class PackOpener:
         self._fight_depths: list[int] = []        # głębokość kolejnych walk (z nagłówka walki)
         self._packs_cooldown_until = 0.0          # nie próbuj paczek z ostrzeżenia przed tym czasem
         self._last_warn_probe = 0.0
+        self._gear: int | None = None             # Gear Level z Profile (po 2 zgodnych odczytach)
+        self._gear_candidate: int | None = None
+        self._packs_due = False                   # walka na głębokości >= gear + margines
         self._in_fight = False
         self._no_fight_frames = 0
         self._depth_due = False                   # nagłówek walki wskazał, że trzeba poprawić
@@ -79,7 +82,7 @@ class PackOpener:
         if not cfg.auto_packs and not cfg.depth_enabled:
             return None
         self._size = (frame.shape[1], frame.shape[0])
-        if cfg.depth_enabled:
+        if cfg.depth_enabled or cfg.auto_packs:
             self._watch_fight_depth(frame)
 
         # Wynik walki liczymy raz na ekran i tylko wtedy, gdy log kończy się
@@ -110,13 +113,17 @@ class PackOpener:
         if cfg.auto_packs:
             if self.defeat_streak >= cfg.packs_defeat_streak:
                 return "defeats"
+            if self._packs_due and now >= self._packs_cooldown_until:
+                return "gear"
             if self._last_check is None or now - self._last_check >= cfg.packs_check_interval_min * 60:
                 return "check"
             # Profile z ostrzeżeniem "enemies +N% stronger" jest widoczny na
             # co dzień (stąd bot klika JUST LOOT) - reaguj od razu, nie co
             # packs_check_interval_min; po nieudanej próbie (brak pyłu) przerwa
-            if now >= self._packs_cooldown_until and now - self._last_warn_probe >= 5:
+            if now - self._last_warn_probe >= 5:
                 self._last_warn_probe = now
+                self._note_gear(screens.read_gear_level(frame))
+            if now >= self._packs_cooldown_until and now - self._last_warn_probe < 0.5:
                 if screens.frontier_warning(frame) is True:
                     logger.info("[%s] Profile: wrogowie mają bonus - gear za słaby", cfg.name)
                     return "check"
@@ -127,6 +134,16 @@ class PackOpener:
                                    or now - self._last_depth_check >= cfg.depth_check_interval_min * 60):
             return "depth"
         return None
+
+    def _note_gear(self, value: int | None) -> None:
+        """Gear Level przyjmujemy dopiero po dwóch zgodnych odczytach."""
+        if value is None:
+            return
+        if value == self._gear_candidate and value != self._gear:
+            if self._gear is not None:
+                logger.info("[%s] Gear Level: %d -> %d", self.bot.config.name, self._gear, value)
+            self._gear = value
+        self._gear_candidate = value
 
     def _watch_fight_depth(self, frame) -> None:
         """
@@ -151,6 +168,13 @@ class PackOpener:
             return
         self._in_fight = True
         self._fight_depths = (self._fight_depths + [depth])[-20:]
+        if (cfg.auto_packs and cfg.gear_depth_margin > 0 and self._gear
+                and depth >= self._gear + cfg.gear_depth_margin and not self._packs_due):
+            logger.info("[%s] walka na głębokości %d >= Gear Level %d + %d - otworzę paczki",
+                        cfg.name, depth, self._gear, cfg.gear_depth_margin)
+            self._packs_due = True
+        if not cfg.depth_enabled:
+            return
         reason = None
         want_one = cfg.depth_mode == "fixed" and cfg.farm_depth == 1
         if depth == 1 and cfg.loadout_name.strip() and not want_one:
@@ -731,6 +755,7 @@ class PackOpener:
         bot, cfg = self.bot, self.bot.config
         bot._act({"depth": "Profile – sprawdzam głębokość i loadout",
                   "check": "Profile – sprawdzam, czy gear wystarcza",
+                  "gear": "Głębokość walki >= Gear Level + margines – idę otwierać paczki",
                   "defeats": f"{self.defeat_streak} porażek z rzędu – idę otwierać paczki"}.get(reason, reason))
         self._leave_result_screen()
         if reason == "depth":
@@ -747,8 +772,21 @@ class PackOpener:
             return
         if reason == "defeats":
             logger.warning("[%s] %d porażek z rzędu - otwieram paczki", cfg.name, self.defeat_streak)
+        elif reason == "gear":
+            logger.warning("[%s] głębokość walki >= Gear Level %s + %d - otwieram paczki",
+                           cfg.name, self._gear, cfg.gear_depth_margin)
         else:
             logger.warning("[%s] gear za słaby na tę głębokość - otwieram paczki", cfg.name)
+        self._packs_due = False
+
+        if cfg.packs_per_run > 0:
+            # stała liczba paczek za jednym razem
+            opened = self.open_count(cfg.packs_per_run)
+            self.defeat_streak = 0
+            self._last_check = time.monotonic()
+            self._packs_cooldown_until = self._last_check + (cfg.packs_check_interval_min * 60 if opened == 0 else 60)
+            self._gear_candidate = None  # gear się zmienił - odczytaj ponownie
+            return
 
         rounds = 0
         while rounds < cfg.packs_max_rounds and not self._abort():
@@ -765,4 +803,5 @@ class PackOpener:
         # nic nie otwarto (brak pyłu) - kolejna próba dopiero po zwykłym
         # interwale; po udanych rundach - po minucie (nowy pył z walk)
         self._packs_cooldown_until = self._last_check + (cfg.packs_check_interval_min * 60 if rounds == 0 else 60)
+        self._gear_candidate = None  # gear się zmienił - odczytaj ponownie
         self._back_to_profile()

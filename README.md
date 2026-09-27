@@ -252,6 +252,16 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   na każdym ekranie Profile (co ~5 s), a nie tylko co
   `packs_check_interval_min`. Gdy zabraknie pyłu, kolejna próba po
   `packs_check_interval_min`; po udanych rundach - po minucie.
+- **Paczki według Gear Level** (`gear_depth_margin`, domyślnie 55, GUI:
+  „Paczki, gdy głębokość ≥ Gear Level +”, 0 = wyłączone) — bot odczytuje
+  GEAR LEVEL ze statystyk na ekranie Profile (2 zgodne odczyty) i porównuje
+  z głębokością z nagłówka walki. Gdy głębokość ≥ Gear Level + margines,
+  idzie otwierać paczki — nie potrzebuje linii „enemies +N% stronger”,
+  którą po walce zasłaniają dymki „+Dust” / „+Raid XP”.
+- **Liczba paczek za jednym razem** (`packs_per_run`, GUI: „Otwieraj za
+  jednym razem”) — 0 = rundy po maks. 20 paczek, aż gear wystarczy
+  (`packs_max_rounds`); N > 0 = otwiera dokładnie N paczek (zakupy po
+  maks. 20) i wraca do walki.
 - **Głębokość z ekranu walki** — bot czyta „Depth N” z nagłówka każdej
   walki. Gdy walka jest na innej głębokości niż ustawiona (stała /
   maks. − X%), na głębokości 1 (loadout), albo w trybach maksymalnych

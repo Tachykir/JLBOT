@@ -922,6 +922,19 @@ class MainWindow(QMainWindow):
         self.field_packs_rounds.setToolTip("Jedna runda = maksymalna liczba paczek + przejrzenie kart")
         self.field_packs_rounds.valueChanged.connect(self._apply_config_fields)
         form.addRow("Maks. rund za jednym razem:", self.field_packs_rounds)
+        self.field_packs_per_run = QSpinBox(); self.field_packs_per_run.setRange(0, 1000)
+        self.field_packs_per_run.setSpecialValueText("aż gear wystarczy")
+        self.field_packs_per_run.setSuffix(" paczek")
+        self.field_packs_per_run.setToolTip("Ile paczek otworzyć za jednym razem. 0 = rundy po maks. 20 paczek, "
+                                            "aż wrogowie wrócą do normalnej siły / skończy się pył")
+        self.field_packs_per_run.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Otwieraj za jednym razem:", self.field_packs_per_run)
+        self.field_gear_margin = QSpinBox(); self.field_gear_margin.setRange(0, 1000)
+        self.field_gear_margin.setSpecialValueText("nie sprawdzaj")
+        self.field_gear_margin.setToolTip("Paczki, gdy głębokość walki (nagłówek walki) >= Gear Level (Profile) + tyle. "
+                                          "55 = granica, od której wrogowie mają bonus")
+        self.field_gear_margin.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Paczki, gdy głębokość ≥ Gear Level +", self.field_gear_margin)
 
         form.addRow(self._section("Pełny ekwipunek"))
         self.field_salvage_full = QCheckBox("Gdy ekwipunek pełny – rozbieraj przedmioty")
@@ -1164,6 +1177,7 @@ class MainWindow(QMainWindow):
                 self.field_depth_mode, self.field_farm_depth, self.field_depth_pct, self.field_depth_interval,
                 self.field_loadout, self.field_depth_repeat,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
+                self.field_packs_per_run, self.field_gear_margin,
                 self.field_salvage_full, self.field_salvage_items, self.field_salvage_hold_min,
                 self.field_salvage_hold_max,
                 self.field_black_timeout, self.field_fg_lost, self.field_settle,
@@ -1220,6 +1234,8 @@ class MainWindow(QMainWindow):
             self.field_packs_interval.setValue(int(cfg.packs_check_interval_min))
             self.field_packs_defeats.setValue(cfg.packs_defeat_streak)
             self.field_packs_rounds.setValue(cfg.packs_max_rounds)
+            self.field_packs_per_run.setValue(max(0, cfg.packs_per_run))
+            self.field_gear_margin.setValue(max(0, cfg.gear_depth_margin))
             self.field_salvage_full.setChecked(cfg.salvage_when_full)
             self.field_salvage_items.setValue(cfg.salvage_items)
             self.field_salvage_hold_min.setValue(cfg.salvage_hold_ms.min)
@@ -1252,8 +1268,10 @@ class MainWindow(QMainWindow):
         """Wyszarza pola, które przy obecnych ustawieniach nic nie robią."""
         enabled = self.field_name.isEnabled()
         packs = enabled and self.field_auto_packs.isChecked()
-        for w in (self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds):
+        for w in (self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
+                  self.field_packs_per_run, self.field_gear_margin):
             w.setEnabled(packs)
+        self.field_packs_rounds.setEnabled(packs and self.field_packs_per_run.value() == 0)
         fixed = self.field_depth_mode.currentData() in (None, "fixed")
         self.field_farm_depth.setEnabled(enabled and fixed)
         self.field_depth_pct.setEnabled(enabled and self.field_depth_mode.currentData() == "max_pct")
@@ -1371,6 +1389,8 @@ class MainWindow(QMainWindow):
         cfg.packs_check_interval_min = float(self.field_packs_interval.value())
         cfg.packs_defeat_streak = self.field_packs_defeats.value()
         cfg.packs_max_rounds = self.field_packs_rounds.value()
+        cfg.packs_per_run = self.field_packs_per_run.value()
+        cfg.gear_depth_margin = self.field_gear_margin.value()
         cfg.salvage_when_full = self.field_salvage_full.isChecked()
         cfg.salvage_items = self.field_salvage_items.value()
         cfg.salvage_hold_ms = RandomRange(self.field_salvage_hold_min.value(),

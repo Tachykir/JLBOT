@@ -1007,3 +1007,47 @@ def find_chat_close(bgr: np.ndarray) -> tuple[int, int] | None:
         return None
     x, y, w, h = best
     return int(right_x + x + w / 2), int(y + h / 2)
+
+
+def read_gear_level(bgr: np.ndarray) -> int | None:
+    """
+    Gear Level z Profile - blok statystyk "GEAR LEVEL / HEALTH / ATTACK":
+    wiersz trzech białych liczb w trzech kolumnach, nad nim szare etykiety
+    (lewa, "GEAR LEVEL", wyraźnie dłuższa od prawej "ATTACK" - tym różni
+    się od wiersza DEFENSE / ARMOR / RESIST). None, gdy bloku nie widać.
+    """
+    H, W = bgr.shape[:2]
+    y0, y1 = int(0.08 * H), int(0.75 * H)
+    hsv = cv2.cvtColor(bgr[y0:y1], cv2.COLOR_BGR2HSV)
+    white = ((hsv[..., 2] > 190) & (hsv[..., 1] < 70)).astype(np.uint8)
+    gray_lbl = ((hsv[..., 2] > 90) & (hsv[..., 2] <= 190) & (hsv[..., 1] < 70)).astype(np.uint8)
+    n, labels, stats, _c = cv2.connectedComponentsWithStats(white)
+    comps = [i for i in range(1, n) if 0.008 * H <= stats[i][3] <= 0.04 * H and stats[i][2] <= 0.08 * W]
+    rows: list[list[int]] = []
+    for i in sorted(comps, key=lambda i: stats[i][1] + stats[i][3] / 2):
+        cy = stats[i][1] + stats[i][3] / 2
+        if rows and abs(cy - (stats[rows[-1][0]][1] + stats[rows[-1][0]][3] / 2)) < 0.4 * stats[i][3]:
+            rows[-1].append(i)
+        else:
+            rows.append([i])
+    centers = (1 / 6, 1 / 2, 5 / 6)
+    for row in rows:
+        cols = [[i for i in row if abs(stats[i][0] + stats[i][2] / 2 - c * W) < 0.14 * W] for c in centers]
+        if not all(cols) or sum(len(c) for c in cols) != len(row):
+            continue
+        ry = min(stats[i][1] for i in row)
+        rh = max(stats[i][3] for i in row)
+        # etykiety nad liczbami
+        band = gray_lbl[max(0, ry - int(1.6 * rh)):max(0, ry - 2)]
+        if band.size == 0:
+            continue
+        def span(cx):
+            xs = np.nonzero(band[:, int((cx - 0.16) * W):int((cx + 0.16) * W)].any(axis=0))[0]
+            return (xs.max() - xs.min()) if xs.size else 0
+        left_w, right_w = span(1 / 6), span(5 / 6)
+        if not right_w or left_w < 1.4 * right_w:
+            # pierwszy wiersz trzech liczb to nie GEAR LEVEL (np. strona
+            # przewinięta i widać dopiero DEFENSE / RESIST) - nie zgaduj
+            return None
+        return read_number(np.isin(labels, cols[0]))
+    return None
