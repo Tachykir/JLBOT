@@ -61,6 +61,8 @@ class PackOpener:
         self._depth_target_seen = None  # zmiana celu = sprawdź od razu
         self._known_max: int | None = None        # maks. odblokowana (tryb max_pct)
         self._fight_depths: list[int] = []        # głębokość kolejnych walk (z nagłówka walki)
+        self._packs_cooldown_until = 0.0          # nie próbuj paczek z ostrzeżenia przed tym czasem
+        self._last_warn_probe = 0.0
         self._in_fight = False
         self._no_fight_frames = 0
         self._depth_due = False                   # nagłówek walki wskazał, że trzeba poprawić
@@ -110,6 +112,14 @@ class PackOpener:
                 return "defeats"
             if self._last_check is None or now - self._last_check >= cfg.packs_check_interval_min * 60:
                 return "check"
+            # Profile z ostrzeżeniem "enemies +N% stronger" jest widoczny na
+            # co dzień (stąd bot klika JUST LOOT) - reaguj od razu, nie co
+            # packs_check_interval_min; po nieudanej próbie (brak pyłu) przerwa
+            if now >= self._packs_cooldown_until and now - self._last_warn_probe >= 5:
+                self._last_warn_probe = now
+                if screens.frontier_warning(frame) is True:
+                    logger.info("[%s] Profile: wrogowie mają bonus - gear za słaby", cfg.name)
+                    return "check"
         if cfg.depth_enabled and self._depth_due:
             return "depth"
         if cfg.depth_enabled and (self._last_depth_check is None
@@ -733,6 +743,7 @@ class PackOpener:
             # po zmianie głębokości zmienia się też ostrzeżenie o sile wrogów
             warning = screens.frontier_warning(self._frame())
         if reason == "check" and warning is not True:
+            self._packs_cooldown_until = time.monotonic() + 60  # nie sprawdzaj w kółko
             return
         if reason == "defeats":
             logger.warning("[%s] %d porażek z rzędu - otwieram paczki", cfg.name, self.defeat_streak)
@@ -751,4 +762,7 @@ class PackOpener:
         logger.info("[%s] koniec otwierania paczek (%d rund) - wracam do walki", cfg.name, rounds)
         self.defeat_streak = 0
         self._last_check = time.monotonic()
+        # nic nie otwarto (brak pyłu) - kolejna próba dopiero po zwykłym
+        # interwale; po udanych rundach - po minucie (nowy pył z walk)
+        self._packs_cooldown_until = self._last_check + (cfg.packs_check_interval_min * 60 if rounds == 0 else 60)
         self._back_to_profile()

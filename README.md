@@ -247,6 +247,11 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   przerwa do 14:30”.
 - **Czat** — gdy otworzy się okno czatu („CHAT”, zakładki GLOBAL / RAID /
   WHISPERS), bot zamyka je przyciskiem X w prawym górnym rogu.
+- **Paczki od razu po ostrzeżeniu** — przy włączonym „Otwieraj paczki,
+  gdy gear jest za słaby” bot sprawdza ostrzeżenie „enemies +N% stronger”
+  na każdym ekranie Profile (co ~5 s), a nie tylko co
+  `packs_check_interval_min`. Gdy zabraknie pyłu, kolejna próba po
+  `packs_check_interval_min`; po udanych rundach - po minucie.
 - **Głębokość z ekranu walki** — bot czyta „Depth N” z nagłówka każdej
   walki. Gdy walka jest na innej głębokości niż ustawiona (stała /
   maks. − X%), na głębokości 1 (loadout), albo w trybach maksymalnych
