@@ -116,7 +116,7 @@ class InstanceCard(QFrame):
 
 class DashboardWidget(QWidget):
     card_action = Signal(str, str)   # (nazwa, akcja) - z kafelka
-    global_action = Signal(str)      # start_all|pause_all|resume_all|stop_all|salvage_all|restart_all
+    global_action = Signal(str)      # start_all|pause_all|resume_all|stop_all|salvage_all|packs_all|restart_all
     depth_all = Signal(str, int)     # (tryb głębokości, liczba: głębokość albo procent)
 
     def __init__(self, parent=None):
@@ -131,6 +131,7 @@ class DashboardWidget(QWidget):
             ("▶ Wznów wszystkie", "resume_all", "Wznów wszystkie wstrzymane instancje"),
             ("■ Stop wszystkich", "stop_all", "Zatrzymaj wszystkie instancje"),
             ("🧹 Rozbierz na wszystkich", "salvage_all", "Rozbierz przedmioty na wszystkich działających instancjach"),
+            ("📦 Otwórz paczki na wszystkich", "packs_all", "Otwórz podaną liczbę paczek na wszystkich działających instancjach"),
             ("🔄 Restart gry na wszystkich", "restart_all", "Zrestartuj grę na wszystkich działających instancjach"),
         ):
             b = QPushButton(text)

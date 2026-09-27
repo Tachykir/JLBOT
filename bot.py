@@ -553,6 +553,7 @@ class DustMineBot:
         self._inventory_full = False            # po "Inventory Full": Salvage na ekranie dropu
         self._inventory_salvage_pending = False # potem: rozebrać przedmioty w Inventory
         self._forced_salvage: int | None = None # ręczne żądanie z GUI: ile przedmiotów
+        self._forced_packs: int | None = None   # ręczne żądanie z GUI: ile paczek otworzyć
         self._last_decision: Decision | None = None
 
         # Watchdog czarnego ekranu: znacznik czasu (time.monotonic()),
@@ -596,6 +597,11 @@ class DustMineBot:
         Inventory (domyślnie config.salvage_items). Wykonywane w wątku bota
         przy najbliższym ekranie z paskiem nawigacji (JUST LOOT)."""
         self._forced_salvage = int(count) if count else self.config.salvage_items
+
+    def request_packs(self, count: int) -> None:
+        """Ręczne żądanie otwarcia `count` paczek (Craft -> Loot Packs).
+        Wykonywane w wątku bota przy najbliższym ekranie z paskiem nawigacji."""
+        self._forced_packs = max(1, int(count))
 
     def request_restart_app(self) -> None:
         """
@@ -953,6 +959,13 @@ class DustMineBot:
             kind = self._enabled_kind(det, frame)
             if kind is not None:
                 self._note_unknown(None)
+            if kind is None and not self._paused and self._forced_packs and screens.find_just_loot(frame):
+                count, self._forced_packs = self._forced_packs, None
+                logger.warning("[%s] zlecono otwarcie %d paczek", cfg.name, count)
+                opened = self._packs.open_count(count)
+                logger.info("[%s] ręczne otwieranie paczek zakończone: %d/%d", cfg.name, opened, count)
+                last_click = 0.0
+                continue
             if kind is None and not self._paused:
                 reason = self._packs.observe(frame)
                 if reason is not None:

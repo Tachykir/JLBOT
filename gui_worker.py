@@ -175,6 +175,11 @@ class BotWorker(QThread):
         if self._bot is not None:
             self._bot.request_salvage(count)
 
+    def request_packs(self, count: int) -> None:
+        """Zgłasza otwarcie `count` paczek (wykonywane w wątku bota)."""
+        if self._bot is not None:
+            self._bot.request_packs(count)
+
     def request_restart_app(self) -> None:
         """Zgłasza żądanie ręcznego restartu gry (force-stop + start).
         Wykonywane bezpiecznie wewnątrz wątku bota, nie tutaj."""

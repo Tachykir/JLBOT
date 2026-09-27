@@ -237,6 +237,12 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   tylko na widocznej karcie (szczegóły ~5×/s, miniatury 2×/s).
   Najwięcej daje jednak sam emulator: niższa rozdzielczość (np. 540×960)
   i FPS (np. 30) w ustawieniach LDPlayera.
+- **Otwórz X paczek** (karta „Wszystkie instancje” → „📦 Otwórz paczki na
+  wszystkich”) — pyta o liczbę (1–1000) i na każdej działającej
+  instancji przy najbliższym ekranie z paskiem nawigacji: Craft → Loot
+  Packs, „+” do podanej liczby (odczytuje liczbę między „−” i „+”),
+  cena, OPEN, karty, „Done”. Gdy gra ograniczy jeden zakup, kupuje
+  kolejne partie; gdy zabraknie pyłu, kończy na tym, co się dało.
 - **Ekran „Pack Opened”** — przycisk „Done” po kartach z paczki jest
   klikany w procedurze paczek i w zwykłym trybie.
 - **Szybkie klikanie kart** — seria kliknięć „+” i przeklikiwanie kart z

@@ -362,9 +362,8 @@ class PackOpener:
                 return after
         return sel
 
-    def open_round(self) -> bool:
-        """Jedna runda: max paczek, OPEN, wszystkie karty. False = nie
-        otworzono (za mało pyłu albo nie znaleziono ekranu)."""
+    def _goto_loot_packs(self):
+        """Craft -> Loot Packs. Zwraca (klatka, przycisk z ceną) albo None."""
         bot, cfg = self.bot, self.bot.config
         self._tap_nav("nav_craft")
         bot._sleep(random.uniform(0.8, 1.2))
@@ -377,17 +376,30 @@ class PackOpener:
             buy = screens.find_buy_button(frame)
         if buy is None:
             logger.warning("[%s] nie znaleziono ekranu Loot Packs w zakładce Craft", cfg.name)
-            return False
+            return None
+        return frame, buy
 
+    def _plus_point(self, frame, buy):
         W, _H = self._size
-        plus = screens.find_plus_button(frame, buy) or (int(buy.center[0] + 0.06 * W), int(buy.y - 1.05 * buy.h))
-        if self._abort():
-            return False
-        # wszystkie "+" jedną serią (jedno polecenie ADB zamiast 25)
-        bot._tap_many([humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W)
-                       for _ in range(cfg.pack_plus_taps)], (0.04, 0.12))
+        return screens.find_plus_button(frame, buy) or (int(buy.center[0] + 0.06 * W), int(buy.y - 1.05 * buy.h))
 
-        bot._sleep(random.uniform(0.25, 0.5))
+    def _read_quantity(self, frame, buy) -> int | None:
+        """Liczba paczek między "−" i "+" (cyfry czcionki gry)."""
+        W, H = frame.shape[1], frame.shape[0]
+        px, py = self._plus_point(frame, buy)
+        x1 = int(2 * buy.center[0] - px + 0.03 * W)
+        x2 = int(px - 0.03 * W)
+        if x2 - x1 < 5:
+            return None
+        region = frame[max(0, py - int(0.02 * H)):py + int(0.02 * H), x1:x2]
+        hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+        return screens.read_number(cv2.inRange(hsv, (0, 0, 170), (180, 70, 255)) > 0)
+
+    def _buy_and_open(self, buy) -> bool:
+        """Klik w cenę, OPEN w oknie potwierdzenia, przejrzenie kart.
+        False = brak okna potwierdzenia (za mało pyłu)."""
+        bot, cfg = self.bot, self.bot.config
+        W, _H = self._size
         frame = self._frame()
         buy = screens.find_buy_button(frame) or buy
         self._tap_rect(buy)
@@ -403,7 +415,69 @@ class PackOpener:
         bot._sleep(random.uniform(0.2, 0.5))
         bot._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.012 * W))
         bot._sleep(random.uniform(0.8, 1.2))
+        self._open_cards()
+        return True
 
+    def open_round(self) -> bool:
+        """Jedna runda: max paczek, OPEN, wszystkie karty. False = nie
+        otworzono (za mało pyłu albo nie znaleziono ekranu)."""
+        bot, cfg = self.bot, self.bot.config
+        found = self._goto_loot_packs()
+        if found is None or self._abort():
+            return False
+        frame, buy = found
+        W, _H = self._size
+        plus = self._plus_point(frame, buy)
+        # wszystkie "+" jedną serią (jedno polecenie ADB zamiast 25)
+        bot._tap_many([humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W)
+                       for _ in range(cfg.pack_plus_taps)], (0.04, 0.12))
+        bot._sleep(random.uniform(0.25, 0.5))
+        return self._buy_and_open(buy)
+
+    def open_count(self, count: int) -> int:
+        """
+        Otwiera `count` paczek (ręczne zlecenie z GUI): ustawia liczbę
+        "+", kupuje, OPEN, karty - i powtarza, jeśli gra ograniczyła
+        jeden zakup (maks. na raz albo pył). Zwraca liczbę otwartych.
+        """
+        bot, cfg = self.bot, self.bot.config
+        opened = 0
+        for _ in range(50):
+            if opened >= count or self._abort():
+                break
+            found = self._goto_loot_packs()
+            if found is None:
+                break
+            frame, buy = found
+            W, _H = self._size
+            want = count - opened
+            have = self._read_quantity(frame, buy) or 1
+            plus = self._plus_point(frame, buy)
+            taps = max(0, want - have)
+            if taps:
+                bot._tap_many([humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W)
+                               for _ in range(taps)], (0.04, 0.12))
+                bot._sleep(random.uniform(0.25, 0.5))
+                frame = self._frame()
+            qty = self._read_quantity(frame, buy)
+            if qty is None:
+                qty = min(want, have + taps)
+            if qty > want:
+                # było już więcej niż trzeba (np. zostało z poprzedniego razu) - "−"
+                mx = int(2 * buy.center[0] - plus[0])
+                bot._tap_many([humanize.random_point_in_circle(mx, plus[1], 0.015 * W)
+                               for _ in range(qty - want)], (0.04, 0.12))
+                bot._sleep(random.uniform(0.25, 0.5))
+                qty = want
+            if not self._buy_and_open(buy):
+                break
+            opened += qty
+            bot.stats.pack_rounds += 1
+            logger.info("[%s] otwarto %d paczek (%d/%d)", cfg.name, qty, opened, count)
+        return opened
+
+    def _open_cards(self) -> bool:
+        bot, cfg = self.bot, self.bot.config
         # Karty: przedmiot z auto-upgrade ma przycisk "Next Card", zwykły
         # drop - napis "TAP ANYWHERE TO CONTINUE" bez przycisku. Klikamy
         # przycisk, jeśli jest, a w przeciwnym razie pusty obszar u góry

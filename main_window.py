@@ -1639,6 +1639,24 @@ class MainWindow(QMainWindow):
                 self.instance_list.setCurrentItem(entry.list_item)
             self.main_tabs.setCurrentIndex(1)
 
+    def _packs_entries(self, entries: list) -> None:
+        """Ręczne otwarcie X paczek na działających instancjach."""
+        running = [e for e in entries if self._running(e) and e.status != "paused"]
+        if not running:
+            QMessageBox.information(self, "Otwórz paczki", "Brak działających (niewstrzymanych) instancji.")
+            return
+        count, ok = QInputDialog.getInt(
+            self, "Otwórz paczki",
+            f"Ile paczek otworzyć na każdej z {len(running)} instancji?\n"
+            "Bot zrobi to przy najbliższym ekranie z paskiem nawigacji (Craft → Loot Packs). "
+            "Gdy zabraknie pyłu, otworzy tyle, ile się da.",
+            10, 1, 1000, 1)
+        if not ok:
+            return
+        for e in running:
+            e.worker.request_packs(count)
+        self._log_local(f"Zlecono otwarcie {count} paczek na {len(running)} instancjach")
+
     def _on_global_action(self, action: str) -> None:
         entries = list(self.instances.values())
         if action == "start_all":
@@ -1652,6 +1670,8 @@ class MainWindow(QMainWindow):
                     self._set_paused(e, pause)
         elif action == "salvage_all":
             self._salvage_entries(entries)
+        elif action == "packs_all":
+            self._packs_entries(entries)
         elif action == "restart_all":
             running = [e for e in entries if self._running(e) and e.config.game_package]
             if not running:
