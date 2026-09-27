@@ -1219,8 +1219,16 @@ class DustMineBot:
             px, py, pr = cfg.card_tap_anywhere
             x, y = humanize.random_point_in_circle(px * w, py * h, pr * w)
             if item.x <= x <= item.x + item.w and item.y <= y <= item.y + item.h:
-                # punkt wypadł na karcie - kliknij nad nią
-                x, y = humanize.random_point_in_circle(w / 2, item.y / 2, 0.08 * w)
+                # punkt wypadł na karcie - kliknij obok niej: nad (poniżej
+                # paska statusu), pod albo z boku, gdzie jest najwięcej miejsca
+                above = item.y - 0.06 * h
+                below = h - (item.y + item.h) - 0.03 * h
+                if above >= 0.06 * h:
+                    x, y = humanize.random_point_in_circle(w / 2, 0.06 * h + above / 2, min(0.08 * w, above / 3))
+                elif below >= 0.06 * h:
+                    x, y = humanize.random_point_in_circle(w / 2, item.y + item.h + below / 2, min(0.08 * w, below / 3))
+                else:
+                    x, y = humanize.random_point_in_circle(item.x / 2, item.y + item.h / 2, max(2.0, item.x / 4))
             return x, y
         # okno informacyjne z samym "OK" (np. "Not Enough Dust") - zamknij
         info = screens.find_open_dialog(frame)

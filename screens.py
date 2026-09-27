@@ -321,7 +321,9 @@ def find_item_card(bgr: np.ndarray) -> Rect | None:
     """
     H, W = bgr.shape[:2]
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    edges = np.concatenate((gray[:int(0.12 * H)].ravel(), gray[int(0.88 * H):].ravel()))
+    # tło z pasków po bokach (karta legendary/mythic bywa prawie na całą
+    # wysokość, więc góra i dół ekranu nie zawsze są tłem)
+    edges = np.concatenate((gray[:, :int(0.05 * W)].ravel(), gray[:, int(0.95 * W):].ravel()))
     bg = float(np.median(edges))
     if bg > 40:
         return None
