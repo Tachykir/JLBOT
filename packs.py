@@ -36,6 +36,9 @@ import screens
 
 logger = logging.getLogger("bot")
 
+# Najwięcej paczek w jednym zakupie (gra nie pozwala ustawić więcej "+").
+MAX_PACKS_PER_BUY = 20
+
 # (import z bot.py opóźniony do użycia - bot.py importuje ten moduł)
 def _point_defaults():
     from bot import POINT_DEFAULTS
@@ -428,10 +431,16 @@ class PackOpener:
         frame, buy = found
         W, _H = self._size
         plus = self._plus_point(frame, buy)
-        # wszystkie "+" jedną serią (jedno polecenie ADB zamiast 25)
-        bot._tap_many([humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W)
-                       for _ in range(cfg.pack_plus_taps)], (0.04, 0.12))
-        bot._sleep(random.uniform(0.25, 0.5))
+        # Gra pamięta ustawioną liczbę, dopóki nie zmieni się zakładka - przy
+        # kolejnej rundzie zwykle jest już 20 i nic nie trzeba klikać. Gdy
+        # liczby nie da się odczytać: pack_plus_taps kliknięć (domyślnie 20).
+        qty = self._read_quantity(frame, buy)
+        taps = cfg.pack_plus_taps if qty is None else max(0, MAX_PACKS_PER_BUY - qty)
+        if taps:
+            # wszystkie "+" jedną serią (jedno polecenie ADB)
+            bot._tap_many([humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W)
+                           for _ in range(taps)], (0.04, 0.12))
+            bot._sleep(random.uniform(0.25, 0.5))
         return self._buy_and_open(buy)
 
     def open_count(self, count: int) -> int:
@@ -450,7 +459,7 @@ class PackOpener:
                 break
             frame, buy = found
             W, _H = self._size
-            want = count - opened
+            want = min(count - opened, MAX_PACKS_PER_BUY)
             have = self._read_quantity(frame, buy) or 1
             plus = self._plus_point(frame, buy)
             taps = max(0, want - have)

@@ -183,7 +183,7 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   „CHOOSE DEPTH” gra pisze „enemies +N% stronger — find newer gear”
   zamiast „enemies at normal strength”) albo po `packs_defeat_streak`
   (domyślnie 5) porażkach z rzędu, bot idzie do Craft → Loot Packs,
-  klika „+” do maksimum, przycisk z ceną, OPEN, przewija karty
+  ustawia „+” na maksimum 20 (odczytuje liczbę - gdy już jest 20, nie klika), przycisk z ceną, OPEN, przewija karty
   („Next Card” albo klik przy „TAP ANYWHERE TO CONTINUE”) i sprawdza Profile ponownie — aż wrogowie wrócą do
   normalnej siły, skończy się pył (brak okna potwierdzenia) albo minie
   `packs_max_rounds` rund. Profile jest sprawdzany co

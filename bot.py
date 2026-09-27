@@ -315,8 +315,9 @@ class BotConfig:
     packs_check_interval_min: float = 30.0
     # Maksymalna liczba rund (max paczek + OPEN) w jednym podejściu.
     packs_max_rounds: int = 10
-    # Ile razy kliknąć "+" (gra sama ogranicza do maksimum / dostępnego pyłu).
-    pack_plus_taps: int = 25
+    # Ile razy kliknąć "+", gdy nie da się odczytać ustawionej liczby paczek
+    # (normalnie bot dobija do maksimum 20; gra sama ogranicza też do pyłu).
+    pack_plus_taps: int = 20
     # Farmienie na wybranej głębokości: bot ustawia ją w Profile ("CHOOSE
     # DEPTH") strzałkami / kafelkiem i pilnuje co depth_check_interval_min
     # minut. 0 = nie zmieniaj głębokości.
