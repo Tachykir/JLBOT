@@ -544,9 +544,13 @@ class BotStats:
 
 
 class DustMineBot:
+    activity = ""        # opis bieżącej czynności (patrz _act)
+    _on_activity = None
+
     def __init__(self, adb: ADBController, config: BotConfig,
                  on_frame: Optional[FrameCallback] = None,
-                 on_schedule: Optional[ScheduleCallback] = None):
+                 on_schedule: Optional[ScheduleCallback] = None,
+                 on_activity: Optional[Callable[[str, str], None]] = None):
         self.adb = adb
         self.config = config
         self.stats = BotStats()
@@ -557,6 +561,9 @@ class DustMineBot:
         self._paused = False
         self._on_frame = on_frame
         self._on_schedule = on_schedule
+        # dokładny opis tego, co bot robi w tej chwili (GUI: status instancji)
+        self._on_activity = on_activity
+        self.activity = ""
         self._planner = SchedulePlanner(config)
         self._packs = PackOpener(self)
         self._fishing_frames = 0
@@ -693,6 +700,10 @@ class DustMineBot:
             decision = self._check_schedule()
             if decision.play:
                 break
+            try:
+                self._act("Harmonogram: " + decision.describe())
+            except Exception:
+                self._act("Harmonogram: przerwa")
             wait = cfg.schedule_poll_interval
             if decision.until is not None:
                 # obudź się dokładnie na koniec przerwy, a nie do 15 s później
@@ -751,6 +762,7 @@ class DustMineBot:
         żądanie restartu z GUI. Zwraca True przy powodzeniu.
         """
         cfg = self.config
+        self._act(f"Restart gry – {reason}")
         if not cfg.game_package:
             logger.warning(
                 "[%s] nie można zrestartować gry - brak 'game_package' w konfiguracji tej instancji.",
@@ -834,6 +846,7 @@ class DustMineBot:
         if cfg.foreground_lost_timeout <= 0:
             return False
 
+        self._act(f"Gra nie jest na wierzchu ({foreground}) – czekam, potem restart")
         if self._game_away_since is None:
             self._game_away_since = now
             logger.info("[%s] gra nie jest na pierwszym planie (%s) - restart za %.0fs, jeśli nie wróci",
@@ -899,6 +912,8 @@ class DustMineBot:
             return False
 
         elapsed = now - self._black_screen_since
+        self._act(f"{'Czarny' if black else 'Pusty'} ekran – restart gry za "
+                  f"{max(0.0, cfg.black_screen_timeout - elapsed):.0f} s")
         if elapsed < cfg.black_screen_timeout:
             # log co ~30s, żeby było widać że odliczanie faktycznie trwa
             if now - self._last_black_log >= 30:
@@ -1029,6 +1044,17 @@ class DustMineBot:
             self._sleep(cfg.idle_poll_interval)
         return None
 
+    def _act(self, text: str) -> None:
+        """Ustawia opis bieżącej czynności (widoczny w GUI jako status)."""
+        if text == self.activity:
+            return
+        self.activity = text
+        if self._on_activity is not None:
+            try:
+                self._on_activity(self.config.name, text)
+            except Exception:
+                pass
+
     def _region(self) -> tuple[int, int, int, int] | None:
         """board_region (piksele urządzenia) w układzie pomniejszonego zrzutu."""
         r = self.config.board_region
@@ -1130,6 +1156,7 @@ class DustMineBot:
             if rows and len(rows) == 4:
                 cx, cy = rows[DROP_CHOICES["salvage"][1]].center
                 logger.info("[%s] drop po walce - przytrzymuję Salvage (pełny ekwipunek)", cfg.name)
+                self._act("Pełny ekwipunek – przytrzymuję Salvage na dropie")
                 self._hold(*humanize.random_point_in_circle(cx, cy, 0.03 * W), cfg.salvage_hold_ms.sample())
                 self._inventory_full = False
                 self._inventory_salvage_pending = True
@@ -1146,6 +1173,7 @@ class DustMineBot:
         listy (po każdym lista przesuwa się w górę)."""
         cfg = self.config
         target = count if count else cfg.salvage_items
+        self._act(f"Inventory – rozbieranie {target} przedmiotów")
         self._packs._tap_nav("nav_inventory")
         self._sleep(random.uniform(1.2, 1.8))
         done = misses = 0
@@ -1165,6 +1193,7 @@ class DustMineBot:
             self._hold(*humanize.random_point_in_circle(x, y, 0.012 * frame.shape[1]), cfg.salvage_hold_ms.sample())
             done += 1
             self.stats.salvaged += 1
+            self._act(f"Inventory – rozbieram przedmioty ({done}/{target})")
             self._sleep(humanize.human_delay(0.6, 1.4))
         logger.info("[%s] rozebrano %d przedmiotów z Inventory", cfg.name, done)
 
@@ -1230,6 +1259,7 @@ class DustMineBot:
         chat_x = screens.find_chat_close(frame)
         if chat_x is not None:
             logger.info("[%s] otwarty czat - zamykam", cfg.name)
+            self._act("Otwarty czat – zamykam (X)")
             return humanize.random_point_in_circle(*chat_x, 0.012 * frame.shape[1])
 
         # wybór przedmiotu z dropu (Replace / ... / Keep Current)
@@ -1240,8 +1270,10 @@ class DustMineBot:
                 # niepełny odczyt (np. klatka w trakcie animacji) - nie zgaduj,
                 # który wiersz to Keep Current (ostatni widoczny mógłby być
                 # Salvage); poczekaj na następną klatkę
+                self._act("Ekran dropu – czekam na pełny panel wyboru")
                 return None
             row = rows[index]
+            self._act(f"Ekran dropu – wybieram „{label}”")
             now = time.monotonic()
             if now - self._last_drop_choice > 5.0:  # licz raz na ekran, nie na każde ponowienie
                 self.stats.drops += 1
@@ -1253,12 +1285,14 @@ class DustMineBot:
         # zakryta karta dropu - "tap anywhere to reveal"
         card = screens.find_reveal_card(frame)
         if card is not None:
+            self._act("Ekran dropu – odkrywam kartę „?”")
             cx, cy = card.center
             return humanize.random_point_in_circle(cx, cy, min(card.w, card.h) * 0.3)
         # odkryta karta z paczki - "tap anywhere to continue" (np. gdy
         # otwieranie paczek zostało przerwane albo paczki otwarto ręcznie)
         item = screens.find_item_card(frame)
         if item is not None:
+            self._act("Karta przedmiotu – przeklikuję dalej")
             h, w = frame.shape[:2]
             px, py, pr = cfg.card_tap_anywhere
             x, y = humanize.random_point_in_circle(px * w, py * h, pr * w)
@@ -1278,21 +1312,36 @@ class DustMineBot:
         info = screens.find_open_dialog(frame)
         if info is not None and info.buttons == 1:
             logger.info("[%s] okno informacyjne - klikam OK", cfg.name)
+            self._act("Okno informacyjne – klikam OK")
             return humanize.random_point_in_circle(*info.open_button, 0.012 * frame.shape[1])
         # "Pack Opened" -> "Done" (ekran po kartach z paczki)
         done = screens.find_center_button(frame)
         if done is not None:
+            self._act("Paczki otwarte – klikam „Done”")
             cx, cy = done.center
             return humanize.random_point_in_circle(cx, cy, min(done.w, done.h) * 0.3)
         if cfg.idle_target == "just_loot":
             button = screens.find_just_loot(frame)
             if button is not None:
+                self._act("Ekran główny – klikam JUST LOOT (nowa walka)")
                 return humanize.random_point_in_circle(button.x, button.y, button.r * 0.45)
             proceed = screens.find_wide_bottom_button(frame)
             if proceed is not None:
+                result = ("wygrana" if screens.has_victory_text(frame, proceed)
+                          else "porażka" if screens.has_defeat_text(frame, proceed) else "")
+                self._act(f"Koniec walki{' (' + result + ')' if result else ''} – klikam PROCEED")
                 cx, cy = proceed.center
                 return humanize.random_point_in_circle(cx, cy, min(proceed.w, proceed.h) * 0.3)
+            depth = screens.fight_depth(frame)
+            if depth is not None:
+                # trwająca walka - nic nie klikamy, czekamy na wynik
+                self._act(f"Walka na głębokości {depth} – czekam na wynik")
+                self._note_unknown(None)
+                return None
             # nic nie rozpoznano
+            since = getattr(self, "_unknown_since", None)
+            if not self.activity.startswith(("Pusty ekran", "Czarny ekran")):  # watchdog ma ważniejszy opis
+                self._act("Nieznany ekran" + (f" ({time.monotonic() - since:.0f} s)" if since else ""))
             self._unknown_hit = True
             self._note_unknown(frame)
             if not cfg.idle_fallback_enabled:
@@ -1367,6 +1416,7 @@ class DustMineBot:
                 return
 
             radius = det.tile_size * 0.25
+            self._act(f"Depth Collapse – klikam kafelki ({len(det.tile_taps)} na ekranie)")
             for x, y in self._tap_order(det.tile_taps):
                 if self._stop or self._paused:
                     break
@@ -1392,6 +1442,7 @@ class DustMineBot:
         if self._on_frame is not None:
             self._on_frame(cfg.name, frame, det, "fishing")
         b = det.cast_button
+        self._act("Fishing Hole – klikam CAST (pomijam minigrę)")
         # (czas reakcji na minigrę jest już odczekany w run())
         cx, cy = b.center
         self._tap(*humanize.random_point_in_circle(cx, cy, min(b.w, b.h) * 0.3))
@@ -1514,6 +1565,8 @@ class DustMineBot:
         # widzi (np. schowana pod inną / w animacji) - ile razy czekano
         waited_left = 0
         retried_skipped = False
+        board_drags = 0
+        self._act("Dust Mine – plansza z kulkami, zaczynam zbierać")
 
         while not self._stop:
             if time.monotonic() - start_time > cfg.max_seconds_per_game_screen:
@@ -1577,6 +1630,7 @@ class DustMineBot:
                         retried_skipped = True
                         continue
                     waited_left += 1
+                    self._act(f"Dust Mine – gra pokazuje {left} kulek, czekam aż się pokażą")
                     if waited_left <= 10:  # ~3 s na animacje / odsłonięcie
                         self._sleep(0.3)
                         continue
@@ -1626,6 +1680,9 @@ class DustMineBot:
             logger.debug("[%s] przeciągam kulkę (%d,%d) -> DROP (%d,%d)",
                          cfg.name, ball.x, ball.y, drop.x, drop.y)
 
+            board_drags += 1
+            self._act(f"Dust Mine – przeciągam kulkę do DROP (na planszy {len(det.balls)}, "
+                      f"przeciągnięcie {board_drags})")
             finger = self._drag_ball(ball, drop)
             self.stats.drags += 1
             balls_before_drag = len(det.balls)

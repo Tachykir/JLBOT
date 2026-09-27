@@ -113,6 +113,7 @@ class InstanceEntry:
         self.last_preview: float = 0.0
         self.last_scale: float = 1.0   # piksele urządzenia na piksel last_frame
         self.schedule_text: str = ""
+        self.activity: str = ""          # dokładny opis tego, co bot robi teraz
         self.list_item: QListWidgetItem | None = None
         self.snapshot_worker: SnapshotWorker | None = None
 
@@ -1089,6 +1090,8 @@ class MainWindow(QMainWindow):
 
     def _format_list_label(self, entry: InstanceEntry) -> str:
         status_pl = STATUS_LABELS_PL.get(entry.status, entry.status)
+        if entry.status in ("idle", "collecting", "debris", "fishing") and entry.activity:
+            status_pl = entry.activity  # dokładnie, co bot robi w tej chwili
         if entry.status in ("break", "offline") and entry.schedule_text:
             status_pl = entry.schedule_text
         elif entry.status in ("idle", "collecting", "debris", "fishing", "paused") and entry.schedule_text:
@@ -1100,7 +1103,7 @@ class MainWindow(QMainWindow):
             return
         entry.list_item.setText(self._format_list_label(entry))
         entry.list_item.setForeground(QColor(STATUS_COLORS.get(entry.status, "#ddd")))
-        entry.list_item.setToolTip(f"{entry.config.name} ({entry.serial})")
+        entry.list_item.setToolTip(f"{entry.config.name} ({entry.serial})" + (f"\n{entry.activity}" if entry.activity else ""))
         if entry.config.name == self.selected_name:
             self.btn_pause.setText("▶ Wznów" if entry.status == "paused" else "⏸ Pauza")
         self._update_dashboard(entry)
@@ -1590,6 +1593,8 @@ class MainWindow(QMainWindow):
         worker.stats_updated.connect(self._on_stats_updated)
         worker.connection_failed.connect(self._on_connection_failed)
         worker.schedule_changed.connect(self._on_schedule_changed)
+        worker.activity_changed.connect(self._on_activity_changed)
+        entry.activity = ""
         entry.schedule_text = ""
         entry.worker = worker
         worker.start()
@@ -1845,6 +1850,14 @@ class MainWindow(QMainWindow):
         if entry is None:
             return
         entry.status = status
+        self._refresh_list_item(entry)
+
+    @Slot(str, str)
+    def _on_activity_changed(self, name: str, text: str) -> None:
+        entry = self.instances.get(name)
+        if entry is None:
+            return
+        entry.activity = text
         self._refresh_list_item(entry)
 
     @Slot(str, str)

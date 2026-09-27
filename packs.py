@@ -367,6 +367,7 @@ class PackOpener:
             return False
         current = next((c.name for c in cards if c.selected), "?")
         logger.warning("[%s] głębokość 1 i wybrany loadout %s - przełączam na %s", cfg.name, current, want)
+        bot._act(f"Profile – przełączam loadout {current} → {want}")
         self._tap_rect(target.rect)
         bot._sleep(random.uniform(0.8, 1.2))
         return True
@@ -411,6 +412,9 @@ class PackOpener:
                         sel = self._read_depth()
                 return (True if target is None else False), sel
 
+            bot = self.bot
+            bot._act(f"Profile – ustawiam głębokość: {current if current is not None else '?'} → "
+                     f"{target if target is not None else 'maks.'}")
             tile = next((t for t in sel.tiles if t.number == target), None) if target is not None else None
             if sel.kind == "tiles" and tile is not None:
                 self._tap_rect(tile.rect)
@@ -594,6 +598,7 @@ class PackOpener:
         """Jedna runda: max paczek, OPEN, wszystkie karty. False = nie
         otworzono (za mało pyłu albo nie znaleziono ekranu)."""
         bot, cfg = self.bot, self.bot.config
+        bot._act("Craft – kupuję i otwieram paczki SEEKER (maks. 20)")
         found = self._goto_loot_packs()
         if found is None or self._abort():
             return False
@@ -629,6 +634,7 @@ class PackOpener:
             frame, buy = found
             W, _H = self._size
             want = min(count - opened, MAX_PACKS_PER_BUY)
+            bot._act(f"Craft – otwieram paczki ({opened}/{count})")
             have = self._read_quantity(frame, buy) or 1
             plus = self._plus_point(frame, buy)
             taps = max(0, want - have)
@@ -691,6 +697,7 @@ class PackOpener:
                 self._tap_rect(done)
                 bot._sleep(random.uniform(0.5, 0.8))
                 continue
+            bot._act(f"Paczki – przeklikuję karty ({cards})")
             button = screens.find_wide_bottom_button(frame)
             if button is not None:
                 self._tap_rect(button)
@@ -712,6 +719,9 @@ class PackOpener:
     # ------------------------------------------------------------------ #
     def run(self, reason: str) -> None:
         bot, cfg = self.bot, self.bot.config
+        bot._act({"depth": "Profile – sprawdzam głębokość i loadout",
+                  "check": "Profile – sprawdzam, czy gear wystarcza",
+                  "defeats": f"{self.defeat_streak} porażek z rzędu – idę otwierać paczki"}.get(reason, reason))
         self._leave_result_screen()
         if reason == "depth":
             self.ensure_depth()

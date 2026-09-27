@@ -237,6 +237,14 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   tylko na widocznej karcie (szczegóły ~5×/s, miniatury 2×/s).
   Najwięcej daje jednak sam emulator: niższa rozdzielczość (np. 540×960)
   i FPS (np. 30) w ustawieniach LDPlayera.
+- **Dokładny status** — zamiast ogólnego „czekanie / zbieranie” lista
+  instancji i kafelki w „Wszystkie instancje” pokazują, co bot robi w tej
+  chwili, np. „Walka na głębokości 1137 – czekam na wynik”, „Ekran dropu –
+  wybieram „Keep Current””, „Dust Mine – przeciągam kulkę do DROP (na
+  planszy 4, przeciągnięcie 2)”, „Profile – ustawiam głębokość: 1100 →
+  990”, „Paczki – przeklikuję karty (45)”, „Inventory – rozbieram
+  przedmioty (3/10)”, „Pusty ekran – restart gry za 12 s”, „Harmonogram:
+  przerwa do 14:30”.
 - **Czat** — gdy otworzy się okno czatu („CHAT”, zakładki GLOBAL / RAID /
   WHISPERS), bot zamyka je przyciskiem X w prawym górnym rogu.
 - **Głębokość z ekranu walki** — bot czyta „Depth N” z nagłówka każdej

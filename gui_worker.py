@@ -79,6 +79,7 @@ class BotWorker(QThread):
     status_changed = Signal(str, str)       # (instance_name, status)  status: connecting|idle|collecting|debris|fishing|paused|break|offline|stopped|error
     schedule_changed = Signal(str, str)     # (instance_name, opis stanu harmonogramu, np. "przerwa do 10:19")
     stats_updated = Signal(str, object)     # (instance_name, BotStats)
+    activity_changed = Signal(str, str)     # (instance_name, dokładny opis bieżącej czynności)
     connection_failed = Signal(str, str)    # (instance_name, error_message)
 
     def __init__(self, config: BotConfig, serial: str, parent=None):
@@ -119,7 +120,8 @@ class BotWorker(QThread):
                 return
 
             bot = DustMineBot(adb, self.config, on_frame=self._handle_frame,
-                              on_schedule=self._handle_schedule)
+                              on_schedule=self._handle_schedule,
+                              on_activity=lambda _n, text: self.activity_changed.emit(self.name, text))
             self._bot = bot
             # Stop mógł zostać kliknięty w trakcie łączenia (zanim bot istniał).
             if self._stop_requested.is_set():
