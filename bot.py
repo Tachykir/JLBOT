@@ -551,6 +551,10 @@ class BotStats:
     drops: int = 0
     salvaged: int = 0
     pack_rounds: int = 0
+    # ostatnie odczyty z ekranu gry (None = jeszcze nie odczytano)
+    gear_level: Optional[int] = None   # GEAR LEVEL z Profile
+    depth: Optional[int] = None        # głębokość walki / wybrana w Profile
+    dust: Optional[int] = None         # pył z nagłówka ekranu Craft
 
 
 class DustMineBot:

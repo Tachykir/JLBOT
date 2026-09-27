@@ -93,7 +93,12 @@ class InstanceCard(QFrame):
         if stats is None:
             self.stats.setText("")
             return
+        def num(v):
+            return "?" if v is None else f"{v:,}".replace(",", " ")
         self.stats.setText(
+            f"<b>Gear</b> {num(getattr(stats, 'gear_level', None))} · "
+            f"<b>Depth</b> {num(getattr(stats, 'depth', None))} · "
+            f"<b>Dust</b> {num(getattr(stats, 'dust', None))}<br>"
             f"Plansze {stats.cycles} · Kulki {stats.balls_collected}<br>"
             f"Porażki {stats.defeats} · Dropy {stats.drops}<br>"
             f"Rozebrane {stats.salvaged} · Błędy {stats.errors}")

@@ -1051,3 +1051,44 @@ def read_gear_level(bgr: np.ndarray) -> int | None:
             return None
         return read_number(np.isin(labels, cols[0]))
     return None
+
+
+def read_dust(bgr: np.ndarray) -> int | None:
+    """
+    Ilość pyłu z nagłówka ekranu Craft ("129 Dust"): kolorowa liczba w
+    górnej części ekranu, pierwsze słowo wiersza. None, gdy go nie widać.
+    Wywołujący powinien upewnić się, że to ekran Craft (find_craft_tabs).
+    """
+    H, W = bgr.shape[:2]
+    y1 = int(0.12 * H)
+    hsv = cv2.cvtColor(bgr[:y1], cv2.COLOR_BGR2HSV)
+    # kolor zależy od motywu (żółty / błękitny) - każdy nasycony, jasny
+    yellow = ((hsv[..., 1] > 100) & (hsv[..., 2] > 170)).astype(np.uint8)
+    allc = [c for c in _components(yellow) if c[4] >= 3 and c[3] <= 0.05 * H]
+    comps = [c for c in allc if c[4] >= 10 and c[3] >= 0.012 * H]
+    if not comps:
+        return None
+    # najwyższy wiersz znaków (duży napis z ilością pyłu)
+    big = max(c[3] for c in comps)
+    first = min((c for c in comps if c[3] >= 0.6 * big), key=lambda c: c[0])
+    top, bottom = first[1], first[1] + first[3]
+    # razem z przecinkami ("6,445") - inaczej przerwa przy przecinku
+    # wygląda jak odstęp między słowami
+    line = sorted((c for c in allc if c[1] < bottom and c[1] + c[3] > top and c[0] >= first[0]),
+                  key=lambda c: c[0])
+    word = [line[0]]
+    for c in line[1:]:
+        if c[0] - (word[-1][0] + word[-1][2]) > 0.6 * big:
+            break
+        word.append(c)
+    x1 = min(c[0] for c in word)
+    x2 = max(c[0] + c[2] for c in word)
+    ya = max(0, min(c[1] for c in word) - 2)
+    yb = max(c[1] + c[3] for c in word) + 3
+    return read_number(yellow[ya:yb, x1:x2])
+
+
+def is_craft_screen(bgr: np.ndarray) -> bool:
+    """Ekran Craft: trzy zakładki, pierwsza to LOOT PACKS."""
+    tabs = find_craft_tabs(bgr)
+    return bool(tabs) and len(tabs) == 3 and any(k in tabs[0].name for k in ("PACK", "LOOT", "LOO"))

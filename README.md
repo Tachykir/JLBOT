@@ -252,6 +252,11 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   na każdym ekranie Profile (co ~5 s), a nie tylko co
   `packs_check_interval_min`. Gdy zabraknie pyłu, kolejna próba po
   `packs_check_interval_min`; po udanych rundach - po minucie.
+- **Gear / Depth / Dust na podglądzie wszystkich** — kafelek instancji
+  pokazuje ostatnie odczyty z gry: GEAR LEVEL (statystyki na Profile),
+  głębokość (nagłówek walki albo wybór głębokości na Profile) i pył
+  (nagłówek ekranu Craft - odczytywany, gdy bot jest w Craft, np. przy
+  otwieraniu paczek). „?” = jeszcze nie odczytano.
 - **Paczki według Gear Level** (`gear_depth_margin`, domyślnie 55, GUI:
   „Paczki, gdy głębokość ≥ Gear Level +”, 0 = wyłączone) — bot odczytuje
   GEAR LEVEL ze statystyk na ekranie Profile (2 zgodne odczyty) i porównuje

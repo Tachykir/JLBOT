@@ -63,6 +63,8 @@ class PackOpener:
         self._fight_depths: list[int] = []        # głębokość kolejnych walk (z nagłówka walki)
         self._packs_cooldown_until = 0.0          # nie próbuj paczek z ostrzeżenia przed tym czasem
         self._last_warn_probe = 0.0
+        self._last_info_probe = 0.0     # odczyt Gear Level / głębokości / pyłu do podglądu
+        self._last_depth_probe = 0.0
         self._gear: int | None = None             # Gear Level z Profile (po 2 zgodnych odczytach)
         self._gear_candidate: int | None = None
         self._packs_due = False                   # walka na głębokości >= gear + margines
@@ -79,11 +81,11 @@ class PackOpener:
         """Wywoływane na każdej klatce idle. Liczy porażki z rzędu i mówi,
         czy pora na procedurę: "defeats" | "check" | None."""
         cfg = self.bot.config
+        self._size = (frame.shape[1], frame.shape[0])
+        self._probe_info(frame)
         if not cfg.auto_packs and not cfg.depth_enabled:
             return None
-        self._size = (frame.shape[1], frame.shape[0])
-        if cfg.depth_enabled or cfg.auto_packs:
-            self._watch_fight_depth(frame)
+        self._watch_fight_depth(frame)
 
         # Wynik walki liczymy raz na ekran i tylko wtedy, gdy log kończy się
         # napisem "Defeated." / "Victory." (sam szeroki przycisk na dole
@@ -122,7 +124,6 @@ class PackOpener:
             # packs_check_interval_min; po nieudanej próbie (brak pyłu) przerwa
             if now - self._last_warn_probe >= 5:
                 self._last_warn_probe = now
-                self._note_gear(screens.read_gear_level(frame))
             if now >= self._packs_cooldown_until and now - self._last_warn_probe < 0.5:
                 if screens.frontier_warning(frame) is True:
                     logger.info("[%s] Profile: wrogowie mają bonus - gear za słaby", cfg.name)
@@ -135,6 +136,32 @@ class PackOpener:
             return "depth"
         return None
 
+    def _probe_info(self, frame) -> None:
+        """Odczyty do podglądu wszystkich instancji (BotStats): Gear Level i
+        wybrana głębokość z Profile, pył z Craft (co ~5 s), głębokość walki
+        (co ~2 s, gdy nie czyta jej już _watch_fight_depth)."""
+        cfg, stats = self.bot.config, self.bot.stats
+        now = time.monotonic()
+        if not (cfg.auto_packs or cfg.depth_enabled) and now - self._last_depth_probe >= 2:
+            self._last_depth_probe = now
+            depth = screens.fight_depth(frame)
+            if depth is not None:
+                stats.depth = depth
+        if now - self._last_info_probe < 5 or screens.find_just_loot(frame) is None:
+            return
+        self._last_info_probe = now
+        self._note_gear(screens.read_gear_level(frame))
+        selector = screens.find_depth_selector(frame)
+        if selector is not None and selector.current is not None:
+            stats.depth = selector.current
+        self._note_dust(frame)
+
+    def _note_dust(self, frame) -> None:
+        if screens.is_craft_screen(frame):
+            dust = screens.read_dust(frame)
+            if dust is not None:
+                self.bot.stats.dust = dust
+
     def _note_gear(self, value: int | None) -> None:
         """Gear Level przyjmujemy dopiero po dwóch zgodnych odczytach."""
         if value is None:
@@ -143,6 +170,7 @@ class PackOpener:
             if self._gear is not None:
                 logger.info("[%s] Gear Level: %d -> %d", self.bot.config.name, self._gear, value)
             self._gear = value
+            self.bot.stats.gear_level = value
         self._gear_candidate = value
 
     def _watch_fight_depth(self, frame) -> None:
@@ -164,6 +192,7 @@ class PackOpener:
                 self._in_fight = False
             return
         self._no_fight_frames = 0
+        self.bot.stats.depth = depth
         if self._in_fight:
             return
         self._in_fight = True
@@ -536,6 +565,7 @@ class PackOpener:
             self._tap_rect(tabs[0].rect)
             bot._sleep(random.uniform(0.6, 0.9))
             frame = self._frame()
+        self._note_dust(frame)
         buy = screens.find_buy_button(frame)
         if buy is None and not tabs:
             self._tap_rel(cfg.craft_loot_packs_tab)
@@ -714,6 +744,7 @@ class PackOpener:
             button = screens.find_wide_bottom_button(frame)
             if button is None:
                 if screens.find_buy_button(frame) is not None and screens.find_open_dialog(frame) is None:
+                    self._note_dust(frame)
                     logger.info("[%s] otwarto paczki (%d kliknięć w karty)", cfg.name, cards)
                     return True
             if cards >= 1000:
