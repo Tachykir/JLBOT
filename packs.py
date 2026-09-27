@@ -707,9 +707,15 @@ class PackOpener:
         deadline = time.monotonic() + 1800
         while time.monotonic() < deadline and not self._abort():
             frame = self._frame()
-            if screens.find_buy_button(frame) is not None and screens.find_open_dialog(frame) is None:
-                logger.info("[%s] otwarto paczki (%d kliknięć w karty)", cfg.name, cards)
-                return True
+            W, H = self._size
+            px, py, pr = cfg.card_tap_anywhere
+            # najpierw szybki test przycisku "Next Card" (legendary/mythic
+            # i przedmioty z auto-upgrade) - wtedy nie ma ekranu paczek
+            button = screens.find_wide_bottom_button(frame)
+            if button is None:
+                if screens.find_buy_button(frame) is not None and screens.find_open_dialog(frame) is None:
+                    logger.info("[%s] otwarto paczki (%d kliknięć w karty)", cfg.name, cards)
+                    return True
             if cards >= 1000:
                 logger.warning("[%s] ponad %d kart - przerywam", cfg.name, cards)
                 return True
@@ -725,24 +731,30 @@ class PackOpener:
                 unchanged = 0
             prev = small
 
-            done = screens.find_center_button(frame)
-            if done is not None:
-                # "Pack Opened" - "Done" po ostatniej karcie
-                self._tap_rect(done)
-                bot._sleep(random.uniform(0.5, 0.8))
-                continue
+            if button is None:
+                done = screens.find_center_button(frame)
+                if done is not None:
+                    # "Pack Opened" - "Done" po ostatniej karcie
+                    self._tap_rect(done)
+                    bot._sleep(random.uniform(0.5, 0.8))
+                    continue
             bot._act(f"Paczki – przeklikuję karty ({cards})")
-            button = screens.find_wide_bottom_button(frame)
             if button is not None:
-                self._tap_rect(button)
-                cards += 1
-                bot._sleep(random.uniform(0.15, 0.35))
+                # "Next Card" i od razu kliknięcie w pusty obszar u góry:
+                # jeśli następna karta to zwykły drop ("tap anywhere"),
+                # przejdzie bez czekania na kolejny zrzut ekranu. Drugie
+                # kliknięcie nie trafia w przycisk - po ostatniej karcie w
+                # tym miejscu ekranu paczek jest JUST LOOT.
+                cx, cy = button.center
+                first = humanize.random_point_in_circle(cx, cy, min(button.w, button.h) * 0.3)
+                second = humanize.random_point_in_circle(px * W, py * H, pr * W)
+                bot._tap_many([first, second], (0.12, 0.25))
+                cards += 2
+                bot._sleep(random.uniform(0.05, 0.12))
             else:
                 # "tap anywhere": 2-3 szybkie kliknięcia na jeden zrzut
                 # ekranu - ten obszar jest pusty także na ekranie paczek,
                 # więc nadmiarowe kliknięcie po ostatniej karcie nic nie robi
-                W, H = self._size
-                px, py, pr = cfg.card_tap_anywhere
                 n = random.randint(2, 3)
                 bot._tap_many([humanize.random_point_in_circle(px * W, py * H, pr * W) for _ in range(n)],
                               (0.12, 0.3))
