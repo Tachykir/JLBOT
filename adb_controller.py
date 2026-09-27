@@ -412,14 +412,46 @@ class ADBController:
         """
         if activity_name:
             component = activity_name if "/" in activity_name else f"{package_name}/{activity_name}"
-            self._run(["shell", "am", "start", "-n", component])
         else:
-            self._run([
-                "shell", "monkey",
-                "-p", package_name,
-                "-c", "android.intent.category.LAUNCHER",
-                "1",
-            ])
+            # activity uruchomieniowa z systemu - `monkey` bywa niedostępny
+            # (np. LDPlayer 14: "monkey: inaccessible or not found")
+            component = self._launcher_component(package_name)
+        if component:
+            result = self._run(["shell", "am", "start", "-n", component])
+            out = (result.stdout or b"").decode(errors="replace")
+            if "Error" not in out:
+                return
+            logger.info("[%s] am start %s: %s", self.serial, component, out.strip()[:200])
+        self._run([
+            "shell", "monkey",
+            "-p", package_name,
+            "-c", "android.intent.category.LAUNCHER",
+            "1",
+        ])
+
+    def _launcher_component(self, package_name: str) -> str | None:
+        """Activity uruchomieniowa pakietu ("pakiet/.MainActivity") wg
+        systemu (`cmd package resolve-activity`), zapamiętana po pierwszym
+        odczycie. None, gdy nie udało się jej ustalić."""
+        cache = self.__dict__.setdefault("_launcher_cache", {})
+        if package_name in cache:
+            return cache[package_name]
+        component = None
+        try:
+            result = self._run(["shell", "cmd", "package", "resolve-activity", "--brief",
+                                "-a", "android.intent.action.MAIN",
+                                "-c", "android.intent.category.LAUNCHER", package_name])
+            for line in (result.stdout or b"").decode(errors="replace").splitlines()[::-1]:
+                line = line.strip()
+                if line.startswith(package_name + "/"):
+                    component = line
+                    break
+        except ADBError as e:
+            logger.info("[%s] resolve-activity nie zadziałało: %s", self.serial, e)
+        if component:
+            cache[package_name] = component
+            logger.info("[%s] activity startowa gry: %s", self.serial, component)
+        return component
 
     def restart_app(self, package_name: str, activity_name: str | None = None, wait_s: float = 2.0) -> None:
         """
