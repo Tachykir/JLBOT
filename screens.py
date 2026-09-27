@@ -160,9 +160,24 @@ def find_just_loot(bgr: np.ndarray) -> Circle | None:
         # na zmierzonych ekranach) - wyżej bywają np. kulki Dust Mine
         if abs(cx - W / 2) > 0.12 * W or cy < 0.86 * H:
             continue
+        # pasek nawigacji ma nad sobą poziomą linię przez całą szerokość
+        # (~1.3 promienia nad środkiem przycisku); kulka Dust Mine na dole
+        # planszy wygląda podobnie, ale takiej linii nad nią nie ma
+        if not _nav_separator(bgr, cx, cy, r):
+            continue
         if best is None or r > best.r:
             best = Circle(int(cx), int(cy), int(r))
     return best
+
+
+def _nav_separator(bgr: np.ndarray, cx: float, cy: float, r: float) -> bool:
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr[max(0, int(cy - 2.4 * r)):int(cy - 0.8 * r)], cv2.COLOR_BGR2GRAY).astype(np.int16)
+    if gray.shape[0] < 5:
+        return False
+    cols = np.r_[0:max(1, int(cx - 1.3 * r)), min(W, int(cx + 1.3 * r)):W]
+    diff = np.abs(gray[3:, cols] - gray[:-3, cols]) >= 4
+    return bool(diff.mean(axis=1).max() >= 0.8)
 
 
 # --------------------------------------------------------------------- #
