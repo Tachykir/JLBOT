@@ -563,6 +563,7 @@ class BotStats:
 class DustMineBot:
     activity = ""        # opis bieżącej czynności (patrz _act)
     _on_activity = None
+    _on_frame = None
     _in_break = False     # czekanie na harmonogram (przerwa / poza oknem)
     _play_tick_at = None  # (czas ostatniego ticku, czy wtedy trwała gra)
 
@@ -1133,6 +1134,25 @@ class DustMineBot:
             return "otwarty czat"
         return None
 
+    def _look(self, rect) -> None:
+        """Zaznacza na podglądzie GUI element, który bot znalazł i klika."""
+        mark = getattr(self.adb, "mark", None)
+        if mark is not None and rect is not None:
+            mark("rect", [(rect.x, rect.y), (rect.x + rect.w, rect.y + rect.h)])
+
+    _last_preview_emit = 0.0
+
+    def _preview(self, frame: np.ndarray) -> None:
+        """Klatka z menu gry (paczki, Profile, Inventory) do podglądu GUI -
+        najwyżej ~4 razy na sekundę, bez żadnej detekcji."""
+        if self._on_frame is None:
+            return
+        now = time.monotonic()
+        if now - self._last_preview_emit < 0.25:
+            return
+        self._last_preview_emit = now
+        self._on_frame(self.config.name, frame, vision.DetectionResult(None, []), "menu")
+
     def _tap(self, x: int, y: int) -> None:
         """Tapnięcie "jak palcem": dotyk trwa tap_hold_ms i lekko się
         przesuwa (swipe o ~1 px z czasem trwania = przytrzymanie). Działa
@@ -1229,6 +1249,7 @@ class DustMineBot:
         done = misses = 0
         while done < target and not self._stop and not self._paused:
             frame = self.adb.screenshot()
+            self._preview(frame)
             buttons = screens.find_salvage_buttons(frame)
             if not buttons:
                 misses += 1

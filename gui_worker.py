@@ -90,6 +90,7 @@ class BotWorker(QThread):
         # działającej instancji, a sygnały muszą trafiać pod stały klucz
         self.name = config.name
         self.scale = 1.0  # piksele urządzenia na piksel klatki (pomniejszanie zrzutów)
+        self.trace: list = []  # (czas, rodzaj, punkty) - patrz ADBController.mark
         self._bot: DustMineBot | None = None
         self._stop_requested = threading.Event()
         self._last_status: str | None = None
@@ -146,6 +147,8 @@ class BotWorker(QThread):
 
         self._set_status("paused" if self._bot.is_paused else mode)
         self.scale = getattr(self._bot.adb, "scale", 1.0)
+        # ostatnie kliknięcia / przeciągnięcia do narysowania na podglądzie
+        self.trace = list(getattr(self._bot.adb, "trace", None) or [])
         self.frame_ready.emit(self.name, frame, det, mode)
         self.stats_updated.emit(self.name, self._bot.stats)
 

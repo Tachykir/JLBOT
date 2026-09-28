@@ -257,6 +257,13 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   głębokość (nagłówek walki albo wybór głębokości na Profile) i pył
   (nagłówek ekranu Craft - odczytywany, gdy bot jest w Craft, np. przy
   otwieraniu paczek). „?” = jeszcze nie odczytano.
+- **Podgląd: co bot widzi i robi** (karta szczegółów) — na pasku u góry
+  opis bieżącej czynności, a na obrazie ostatnie akcje (znikają po ~2.5 s):
+  żółte ramki = element, który bot znalazł i klika, pomarańczowe kółka =
+  kliknięcia, błękitne linie ze strzałką = przeciągnięcia / przewijanie.
+  Podgląd odświeża się także w menu gry (paczki, Profile, Inventory - status
+  „menu gry”). Bot tylko zapisuje współrzędne akcji; rysuje GUI (najwyżej
+  ~5 razy na sekundę, tylko na widocznej karcie), więc nie spowalnia bota.
 - **Czas gry** na kafelku instancji — czas realnej gry od startu bota,
   bez przerw z harmonogramu (przerwy, poza oknem, limit dzienny) i bez
   pauzy.

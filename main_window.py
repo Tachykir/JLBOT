@@ -60,6 +60,7 @@ STATUS_COLORS = {
     "collecting": "#5cb85c",
     "debris": "#e0a040",
     "fishing": "#40c8e0",
+    "menu": "#8fd18f",
     "paused": "#aaaaaa",
     "break": "#b58bd6",
     "offline": "#8a7f6a",
@@ -90,6 +91,7 @@ STATUS_LABELS_PL = {
     "collecting": "zbieranie",
     "debris": "Depth Collapse",
     "fishing": "Fishing Hole",
+    "menu": "menu gry",
     "paused": "wstrzymany",
     "break": "przerwa",
     "offline": "offline",
@@ -1842,7 +1844,8 @@ class MainWindow(QMainWindow):
         if (name == self.selected_name and self.main_tabs.currentIndex() == 1
                 and now - entry.last_preview >= 0.2):
             entry.last_preview = now
-            self.preview.update_frame(frame, det, entry.last_scale)
+            self.preview.update_frame(frame, det, entry.last_scale,
+                                      trace=getattr(entry.worker, "trace", None), activity=entry.activity)
         # miniatury w przeglądzie - najwyżej 2 razy na sekundę na instancję
         if now - entry.last_thumb >= 0.5 and self.main_tabs.currentIndex() == 0:
             entry.last_thumb = now

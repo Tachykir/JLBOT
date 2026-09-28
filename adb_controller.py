@@ -101,6 +101,15 @@ class ADBController:
 
     max_width = 0     # domyślnie pełna rozdzielczość (patrz __init__)
     scale = 1.0
+    # ostatnie akcje (czas, rodzaj, punkty we współrzędnych zrzutu) - do
+    # rysowania na podglądzie w GUI; zapis jest tani i nie spowalnia bota
+    trace = None
+
+    def mark(self, kind: str, points) -> None:
+        if self.trace is None:
+            import collections
+            self.trace = collections.deque(maxlen=40)
+        self.trace.append((time.monotonic(), kind, [(int(x), int(y)) for x, y in points]))
 
     def __init__(self, serial: str, adb_path: str | None = None, connect_timeout: float = 10.0):
         self.serial = serial
@@ -218,6 +227,7 @@ class ADBController:
         return int(round(v * self.scale))
 
     def tap(self, x: int, y: int) -> None:
+        self.mark("tap", [(x, y)])
         self._run(["shell", "input", "tap", str(self._s(x)), str(self._s(y))])
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 400) -> None:
@@ -227,6 +237,7 @@ class ADBController:
         może wymagać minimalnego czasu trwania, żeby uznać to za drag
         a nie klik; 300-600ms zwykle działa dobrze dla mechanik drag&drop.
         """
+        self.mark("tap" if abs(x2 - x1) + abs(y2 - y1) <= 4 else "swipe", [(x1, y1), (x2, y2)])
         self._run([
             "shell", "input", "swipe",
             str(self._s(x1)), str(self._s(y1)), str(self._s(x2)), str(self._s(y2)),
@@ -242,6 +253,8 @@ class ADBController:
         """
         if not taps:
             return
+        for x, y, _h in taps:
+            self.mark("tap", [(x, y)])
         parts = []
         for i, (x, y, hold) in enumerate(taps):
             if i and i - 1 < len(gaps_s) and gaps_s[i - 1] > 0:
@@ -287,6 +300,8 @@ class ADBController:
         """
         if len(points) < 2:
             return
+        step = max(1, len(points) // 16)
+        self.mark("drag", list(points[::step]) + [points[-1]])
         if self._motionevent_ok is None:
             self._motionevent_ok = self._probe_motionevent()
         if not self._motionevent_ok:

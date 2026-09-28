@@ -20,6 +20,7 @@ do tego, czego bot używa w ADB tap/swipe.
 
 from __future__ import annotations
 
+import time
 from enum import Enum, auto
 
 import cv2
@@ -100,13 +101,17 @@ class PreviewWidget(QLabel):
 
     # ------------------------------------------------------------------ #
     def update_frame(self, frame_bgr: np.ndarray, det: vision.DetectionResult | None,
-                     scale: float = 1.0) -> None:
+                     scale: float = 1.0, trace=None, activity: str = "") -> None:
         # scale: ile pikseli urządzenia na piksel klatki (bot pracuje na
         # pomniejszonych zrzutach); idle_point / board_region są w pikselach
         # urządzenia
         self._scale = scale or 1.0
         self._last_frame = frame_bgr
         self._last_det = det
+        # ostatnie akcje bota (kliknięcia, przeciągnięcia, znalezione
+        # elementy) i opis bieżącej czynności - rysowane na podglądzie
+        self._trace = list(trace or [])
+        self._activity = activity or ""
         self._src_size = (frame_bgr.shape[1], frame_bgr.shape[0])
         self._redraw()
 
@@ -163,7 +168,32 @@ class PreviewWidget(QLabel):
             cv2.putText(vis, label, (min(x + r + 4, w - 120), y + 5), cv2.FONT_HERSHEY_SIMPLEX,
                         max(0.4, w / 1400), color, 2)
 
+        self._draw_trace(vis)
         return vis
+
+    def _draw_trace(self, vis: np.ndarray) -> None:
+        """Co bot ostatnio zrobił: znalezione elementy (żółte ramki),
+        kliknięcia (pomarańczowe kółka) i przeciągnięcia (błękitne linie ze
+        strzałką). Świeże akcje grubsze, starsze niż ~2.5 s znikają."""
+        now = time.monotonic()
+        h, w = vis.shape[:2]
+        r = max(6, int(0.025 * w))
+        for t, kind, pts in getattr(self, "_trace", []):
+            age = now - t
+            if age > 2.5 or not pts:
+                continue
+            thick = 3 if age < 0.8 else 1
+            if kind == "rect" and len(pts) == 2:
+                cv2.rectangle(vis, pts[0], pts[1], (0, 230, 255), thick)
+            elif kind == "tap":
+                cv2.circle(vis, pts[0], r, (0, 140, 255), thick)
+                cv2.circle(vis, pts[0], 2, (0, 140, 255), -1)
+            elif len(pts) >= 2:
+                cv2.polylines(vis, [np.array(pts, dtype=np.int32)], False, (255, 220, 0), thick)
+                seg = max(1.0, float(np.hypot(pts[-1][0] - pts[-2][0], pts[-1][1] - pts[-2][1])))
+                cv2.arrowedLine(vis, pts[-2], pts[-1], (255, 220, 0), max(2, thick),
+                                tipLength=min(0.5, 0.03 * w / seg))
+                cv2.circle(vis, pts[0], 4, (255, 220, 0), -1)
 
     def _redraw(self) -> None:
         if self._last_frame is None:
@@ -192,6 +222,20 @@ class PreviewWidget(QLabel):
             rect = QRect(self._drag_start_widget - QPoint(ox, oy),
                          self._drag_current_widget - QPoint(ox, oy))
             painter.drawRect(rect.normalized())
+            painter.end()
+
+        activity = getattr(self, "_activity", "")
+        if activity:
+            # opis czynności na pasku u góry podglądu (Qt - polskie znaki)
+            painter = QPainter(scaled)
+            font = painter.font()
+            font.setPointSize(9)
+            font.setBold(True)
+            painter.setFont(font)
+            band = QRect(0, 0, scaled.width(), 34)
+            painter.fillRect(band, QColor(0, 0, 0, 170))
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(band.adjusted(6, 2, -6, -2), Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, activity)
             painter.end()
 
         self.setPixmap(scaled)

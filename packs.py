@@ -232,6 +232,7 @@ class PackOpener:
     def _frame(self):
         frame = self.bot.adb.screenshot()
         self._size = (frame.shape[1], frame.shape[0])
+        self.bot._preview(frame)
         return frame
 
     def _tap_rel(self, point: tuple[float, float, float]) -> None:
@@ -278,6 +279,7 @@ class PackOpener:
         self.bot._tap(x, y)
 
     def _tap_rect(self, rect) -> None:
+        self.bot._look(rect)
         cx, cy = rect.center
         self.bot._tap(*humanize.random_point_in_circle(cx, cy, min(rect.w, rect.h) * 0.3))
 
