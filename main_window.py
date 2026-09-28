@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, Slot, QTime
 from PySide6.QtCore import QUrl
+import theme
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QGridLayout,
@@ -540,6 +541,16 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         action("▶▶ Start wszystkich", self._start_all, "Uruchom bota na wszystkich instancjach")
         action("■■ Stop wszystkich", self._stop_all, "Zatrzymaj bota na wszystkich instancjach")
+        tb.addSeparator()
+        tb.addWidget(QLabel(" 🌓 Motyw: "))
+        self.theme_combo = QComboBox()
+        for key, label in theme.THEMES.items():
+            self.theme_combo.addItem(label, key)
+        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(theme.saved_theme())))
+        self.theme_combo.setToolTip("Tryb jasny / ciemny okna programu (zapamiętywany)")
+        self.theme_combo.currentIndexChanged.connect(
+            lambda _i: theme.apply_theme(self.theme_combo.currentData()))
+        tb.addWidget(self.theme_combo)
 
     def _build_instances_panel(self) -> QWidget:
         panel = QWidget()
@@ -2007,6 +2018,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO,
                          format="%(asctime)s [%(levelname)s] %(message)s")
     app = QApplication(sys.argv)
+    theme.apply_theme(theme.saved_theme(), save=False)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

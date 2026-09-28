@@ -267,6 +267,9 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
 - **Settings** — gdy otworzy się ekran ustawień gry (Music / Sound effects
   / Auto Salvage), bot klika „Close” w prawym górnym rogu. Wiersze Auto
   Salvage (COMMON / RARE / ...) nie są brane za panel wyboru dropu.
+- **Motyw jasny / ciemny** — lista „🌓 Motyw” na pasku narzędzi:
+  Systemowy / Jasny / Ciemny. Wybór jest zapamiętywany (ustawienie
+  programu, nie config.json) i przywracany przy następnym uruchomieniu.
 - **Czas gry** na kafelku instancji — czas realnej gry od startu bota,
   bez przerw z harmonogramu (przerwy, poza oknem, limit dzienny) i bez
   pauzy.
