@@ -369,6 +369,38 @@ def find_item_card(bgr: np.ndarray) -> Rect | None:
         if find_just_loot(bgr) is not None:
             return None  # ekran z paskiem nawigacji (np. Loot Packs)
         return Rect(int(x), int(y), int(w), int(h))
+    return _find_outlined_card(bgr, gray, bg)
+
+
+def _find_outlined_card(bgr: np.ndarray, gray: np.ndarray, bg: float) -> Rect | None:
+    """
+    Karta "PRISMATIC" (legendary / mythic): wnętrze ciemniejsze od tła
+    ekranu (granatowe, z wzorem), więc nie da się jej znaleźć jako jaśniejszego
+    prostokąta. Szukamy obwódki w kolorze rzadkości: cienkiej, kolorowej
+    ramki, której wszystkie cztery boki są prawie ciągłe.
+    """
+    H, W = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    colored = ((hsv[..., 1] > 70) & (hsv[..., 2] > 90)).astype(np.uint8)
+    colored = cv2.morphologyEx(colored, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    for x, y, w, h, area in _components(colored):
+        if not (0.4 * W <= w <= 0.88 * W and 0.9 <= h / w <= 2.3):
+            continue
+        if abs(x + w / 2 - W / 2) > 0.05 * W or area > 0.3 * w * h:
+            continue
+        box = colored[y:y + h, x:x + w]
+        t = max(3, int(0.01 * W))
+        r = int(0.06 * w)  # zaokrąglone rogi - boki sprawdzamy bez nich
+        sides = (box[:t, r:w - r].any(axis=0), box[h - t:, r:w - r].any(axis=0),
+                 box[r:h - r, :t].any(axis=1), box[r:h - r, w - t:].any(axis=1))
+        if min(float(side.mean()) for side in sides) < 0.85:
+            continue
+        inner = gray[y + 8:y + h - 8, x + 8:x + w - 8]
+        if inner.size == 0 or not (0.003 <= float((inner > 120).mean()) <= 0.2):
+            continue
+        if find_just_loot(bgr) is not None:
+            return None
+        return Rect(int(x), int(y), int(w), int(h))
     return None
 
 
