@@ -229,7 +229,7 @@ def _edge_lines(lines: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]
     return edges
 
 
-def find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
+def _find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
     """
     Panel wyboru po wygranej walce (Replace / Equip & Salvage / Salvage /
     Keep Current): >=4 długie linie poziome w równych odstępach w dolnej
@@ -289,6 +289,16 @@ def find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
     while len(rows) > 3 and not centered(rows[0]):
         rows = rows[1:]
     return rows[-4:] if len(rows) > 4 else rows
+
+
+def find_drop_choice(bgr: np.ndarray):
+    """Panel wyboru dropu (patrz _find_drop_choice). Ekran Settings z
+    wierszami auto-salvage (COMMON / RARE / ...) wygląda podobnie - nigdy
+    nie jest panelem dropu."""
+    rows = _find_drop_choice(bgr)
+    if rows and find_settings_close(bgr) is not None:
+        return []
+    return rows
 
 
 def find_reveal_card(bgr: np.ndarray) -> Rect | None:
@@ -1092,3 +1102,53 @@ def is_craft_screen(bgr: np.ndarray) -> bool:
     """Ekran Craft: trzy zakładki, pierwsza to LOOT PACKS."""
     tabs = find_craft_tabs(bgr)
     return bool(tabs) and len(tabs) == 3 and any(k in tabs[0].name for k in ("PACK", "LOOT", "LOO"))
+
+
+def find_settings_close(bgr: np.ndarray) -> tuple[int, int] | None:
+    """
+    Ekran Settings (tytuł u góry po lewej, "Close" u góry po prawej, pod
+    spodem przełączniki Music / Sound effects / ...) - zwraca środek
+    napisu "Close". Rozpoznanie po co najmniej 3 przełącznikach (pigułki
+    ~2.2:1) jeden pod drugim przy prawej krawędzi i napisie w prawym
+    górnym rogu na wysokości dużego tytułu.
+    """
+    H, W = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    v = hsv[..., 2]
+    # przełączniki: jasne (szary tor / błękitna gałka) pigułki przy prawej krawędzi
+    x0 = int(0.7 * W)
+    pills = []
+    for x, y, w, h, area in _components((v[:, x0:] > 60).astype(np.uint8)):
+        if not (0.1 * W <= w <= 0.2 * W and 1.8 <= w / max(h, 1) <= 2.8):
+            continue
+        if area < 0.6 * w * h or x0 + x + w < 0.9 * W:
+            continue
+        pills.append((x0 + x, y, w, h))
+    if len(pills) < 3:
+        return None
+    xs = [p[0] + p[2] / 2 for p in pills]
+    if max(xs) - min(xs) > 0.03 * W:
+        return None
+    top_pill = min(p[1] for p in pills)
+    # tytuł (duży, biały) po lewej i "Close" po prawej, powyżej przełączników
+    y1 = min(int(0.14 * H), top_pill)
+    bright = (v[:y1] > 120) & (hsv[:y1, :, 1] < 80)
+    comps = [c for c in _components(bright[:, :int(0.5 * W)].astype(np.uint8))
+             if c[3] >= 0.01 * H and c[4] >= 10]
+    if not comps:
+        return None
+    # wiersz tytułu = wiersz najwyższej litery (wyżej bywa zegar paska stanu)
+    tallest = max(comps, key=lambda c: c[3])
+    ty = tallest[1] + tallest[3] / 2
+    title = [c for c in comps if abs(c[1] + c[3] / 2 - ty) < 0.02 * H]
+    if len(title) < 4 or tallest[3] < 0.014 * H:
+        return None
+    right = [c for c in _components(bright[:, int(0.7 * W):].astype(np.uint8))
+             if c[4] >= 6 and abs(c[1] + c[3] / 2 - ty) < 0.025 * H]
+    if len(right) < 3:
+        return None
+    rx1 = min(c[0] for c in right) + int(0.7 * W)
+    rx2 = max(c[0] + c[2] for c in right) + int(0.7 * W)
+    ry1 = min(c[1] for c in right)
+    ry2 = max(c[1] + c[3] for c in right)
+    return (rx1 + rx2) // 2, (ry1 + ry2) // 2

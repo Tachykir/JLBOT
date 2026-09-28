@@ -1132,6 +1132,8 @@ class DustMineBot:
             return "ekran z przyciskiem"
         if screens.find_chat_close(frame) is not None:
             return "otwarty czat"
+        if screens.find_settings_close(frame) is not None:
+            return "otwarte Settings"
         return None
 
     def _look(self, rect) -> None:
@@ -1332,6 +1334,13 @@ class DustMineBot:
             logger.info("[%s] otwarty czat - zamykam", cfg.name)
             self._act("Otwarty czat – zamykam (X)")
             return humanize.random_point_in_circle(*chat_x, 0.012 * frame.shape[1])
+
+        # otwarte Settings - zamknij napisem "Close" w prawym górnym rogu
+        close = screens.find_settings_close(frame)
+        if close is not None:
+            logger.info("[%s] otwarte Settings - zamykam", cfg.name)
+            self._act("Otwarte Settings – klikam Close")
+            return humanize.random_point_in_circle(*close, 0.015 * frame.shape[1])
 
         # wybór przedmiotu z dropu (Replace / ... / Keep Current)
         rows = screens.find_drop_choice(frame)
