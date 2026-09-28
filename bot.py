@@ -1394,6 +1394,13 @@ class DustMineBot:
             logger.info("[%s] okno informacyjne - klikam OK", cfg.name)
             self._act("Okno informacyjne – klikam OK")
             return humanize.random_point_in_circle(*info.open_button, 0.012 * frame.shape[1])
+        if info is not None and info.cancel_button is not None and screens.find_drop_choice(frame) is None:
+            # okno potwierdzenia (np. "Open Seeker Pack ×20?"), które zostało
+            # po przerwanym otwieraniu paczek - CANCEL (nie wydawaj pyłu bez
+            # procedury paczek; ta i tak ponowi zakup)
+            logger.info("[%s] okno potwierdzenia poza procedurą - klikam CANCEL", cfg.name)
+            self._act("Okno potwierdzenia – klikam CANCEL")
+            return humanize.random_point_in_circle(*info.cancel_button, 0.012 * frame.shape[1])
         # "Pack Opened" -> "Done" (ekran po kartach z paczki)
         done = screens.find_center_button(frame)
         if done is not None:

@@ -89,6 +89,7 @@ class Dialog:
     box: Rect
     open_button: tuple[int, int]
     buttons: int = 2   # liczba przycisków (słów) w dolnym wierszu; 1 = samo "OK"
+    cancel_button: tuple[int, int] | None = None  # pierwsze słowo (CANCEL), gdy przycisków >= 2
 
 
 def find_open_dialog(bgr: np.ndarray) -> Dialog | None:
@@ -129,7 +130,11 @@ def find_open_dialog(bgr: np.ndarray) -> Dialog | None:
     wx1, wx2 = words[-1]
     rows = np.where(colored[:, wx1:wx2 + 1].any(axis=1))[0]
     cy = by1 + int(rows.mean()) if rows.size else box.y + int(box.h * 0.85)
-    return Dialog(box, (int(box.x + (wx1 + wx2) // 2), int(cy)), len(words))
+    cancel = None
+    if len(words) >= 2:
+        cx1, cx2 = words[0]
+        cancel = (int(box.x + (cx1 + cx2) // 2), int(cy))
+    return Dialog(box, (int(box.x + (wx1 + wx2) // 2), int(cy)), len(words), cancel)
 
 
 # --------------------------------------------------------------------- #

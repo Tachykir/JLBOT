@@ -666,8 +666,9 @@ class PackOpener:
         self._tap_rect(buy)
         dialog = None
         # okno pojawia się po krótkiej animacji
+        # (na wolniejszym emulatorze okno potrafi przyjść po 2-3 s)
         dialog = screens.find_open_dialog(
-            self._wait_for(lambda f: screens.find_open_dialog(f) is not None, 1.6, 0.2))
+            self._wait_for(lambda f: screens.find_open_dialog(f) is not None, 4.0, 0.2))
         if dialog is None:
             logger.info("[%s] brak okna potwierdzenia - prawdopodobnie za mało pyłu", cfg.name)
             return False
