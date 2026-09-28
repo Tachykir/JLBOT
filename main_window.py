@@ -28,6 +28,7 @@ import numpy as np
 from PySide6.QtCore import Qt, Slot, QTime
 from PySide6.QtCore import QUrl
 import theme
+from version import APP_VERSION
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QGridLayout,
@@ -1504,7 +1505,7 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         name = self._config_path.name if self._config_path else "nowa konfiguracja"
-        self.setWindowTitle(f"Dust Mine Bot – {name}{' *' if self._dirty else ''}")
+        self.setWindowTitle(f"Dust Mine Bot {APP_VERSION} – {name}{' *' if self._dirty else ''}")
 
     def _rename_entry(self, entry: InstanceEntry, new_name: str) -> None:
         old_name = entry.config.name
