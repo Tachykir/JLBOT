@@ -551,6 +551,7 @@ class BotStats:
     drops: int = 0
     salvaged: int = 0
     pack_rounds: int = 0
+    packs_opened: int = 0              # otwarte paczki (suma zakupów)
     # ostatnie odczyty z ekranu gry (None = jeszcze nie odczytano)
     gear_level: Optional[int] = None   # GEAR LEVEL z Profile
     depth: Optional[int] = None        # głębokość walki / wybrana w Profile

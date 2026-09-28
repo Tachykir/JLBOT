@@ -650,13 +650,17 @@ class PackOpener:
         hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
         return screens.read_number(cv2.inRange(hsv, (0, 0, 170), (180, 70, 255)) > 0)
 
-    def _buy_and_open(self, buy) -> bool:
+    def _buy_and_open(self, buy, qty_hint: int | None = None) -> bool:
         """Klik w cenę, OPEN w oknie potwierdzenia, przejrzenie kart.
         False = brak okna potwierdzenia (za mało pyłu)."""
         bot, cfg = self.bot, self.bot.config
         W, _H = self._size
         frame = self._frame()
         buy = screens.find_buy_button(frame) or buy
+        # ile paczek kupujemy (licznik w GUI) - odczyt z ekranu, inaczej podpowiedź
+        qty = self._read_quantity(frame, buy)
+        if not qty or qty > MAX_PACKS_PER_BUY:
+            qty = qty_hint or 1
         self._tap_rect(buy)
         dialog = None
         # okno pojawia się po krótkiej animacji
@@ -676,6 +680,7 @@ class PackOpener:
         bot._sleep(random.uniform(0.1, 0.25))
         bot._tap(*humanize.random_point_in_circle(*dialog.open_button, 0.012 * W))
         bot._sleep(random.uniform(0.35, 0.5))
+        bot.stats.packs_opened += qty
         self._open_cards()
         return True
 
@@ -699,8 +704,9 @@ class PackOpener:
             # wszystkie "+" jedną serią (jedno polecenie ADB)
             bot._tap_many([humanize.random_point_in_circle(plus[0], plus[1], 0.015 * W)
                            for _ in range(taps)], (0.04, 0.12))
-            bot._sleep(random.uniform(0.25, 0.5))
-        return self._buy_and_open(buy)
+            bot._sleep(random.uniform(0.15, 0.25))
+        hint = MAX_PACKS_PER_BUY if qty is None else min(MAX_PACKS_PER_BUY, qty + taps)
+        return self._buy_and_open(buy, qty_hint=hint)
 
     def open_count(self, count: int) -> int:
         """
@@ -738,7 +744,7 @@ class PackOpener:
                                for _ in range(qty - want)], (0.04, 0.12))
                 bot._sleep(random.uniform(0.15, 0.25))
                 qty = want
-            if not self._buy_and_open(buy):
+            if not self._buy_and_open(buy, qty_hint=qty):
                 break
             opened += qty
             bot.stats.pack_rounds += 1

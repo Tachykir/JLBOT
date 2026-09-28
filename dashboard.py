@@ -108,6 +108,7 @@ class InstanceCard(QFrame):
             f"<b>Czas gry</b> {format_play_time(getattr(stats, 'play_seconds', 0.0))}<br>"
             f"Plansze {stats.cycles} · Kulki {stats.balls_collected}<br>"
             f"Porażki {stats.defeats} · Dropy {stats.drops}<br>"
+            f"Paczki {getattr(stats, 'packs_opened', 0)}<br>"
             f"Rozebrane {stats.salvaged} · Błędy {stats.errors}")
 
     def set_running(self, running: bool, paused: bool) -> None:

@@ -80,7 +80,7 @@ _POINTS = [
 _STAT_FIELDS = [
     ("cycles", "Plansze"), ("balls_collected", "Kulki"), ("drags", "Przeciągnięcia"),
     ("debris_games", "Depth Collapse"), ("fishing_skipped", "Fishing pominięte"), ("defeats", "Porażki"),
-    ("pack_rounds", "Rundy paczek"), ("drops", "Dropy po walce"), ("salvaged", "Rozebrane"),
+    ("pack_rounds", "Rundy paczek"), ("packs_opened", "Otwarte paczki"), ("drops", "Dropy po walce"), ("salvaged", "Rozebrane"),
     ("restarts", "Restarty gry"), ("errors", "Błędy"),
 ]
 
