@@ -155,12 +155,26 @@ def find_just_loot(bgr: np.ndarray) -> Circle | None:
     best = None
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        if not (0.09 * W <= w <= 0.4 * W and 0.85 <= w / h <= 1.18):
+        # na ekranach bez dolnego marginesu koło jest ucięte krawędzią
+        # ekranu - wtedy średnicę daje szerokość, a środek liczymy od góry
+        clipped = y0 + y + h >= H - 2 and w > h
+        if not (0.09 * W <= w <= 0.4 * W and 0.85 <= w / h <= (1.7 if clipped else 1.18)):
             continue
-        r = (w + h) / 4
-        if cv2.contourArea(c) < 0.85 * np.pi * r * r:
-            continue
-        cx, cy = x + w / 2, y0 + y + h / 2
+        if clipped:
+            r = w / 2
+            if h < 1.2 * r:
+                continue  # widać mniej niż ~60% koła
+            # pole widocznej części koła (odcinek koła ucięty cięciwą)
+            d = h - r
+            visible = r * r * np.arccos(-d / r) + d * np.sqrt(max(0.0, r * r - d * d))
+            if cv2.contourArea(c) < 0.85 * visible:
+                continue
+            cx, cy = x + w / 2, y0 + y + r
+        else:
+            r = (w + h) / 4
+            if cv2.contourArea(c) < 0.85 * np.pi * r * r:
+                continue
+            cx, cy = x + w / 2, y0 + y + h / 2
         # przycisk siedzi w pasku nawigacji na samym dole (91-96% wysokości
         # na zmierzonych ekranach) - wyżej bywają np. kulki Dust Mine
         if abs(cx - W / 2) > 0.12 * W or cy < 0.86 * H:
