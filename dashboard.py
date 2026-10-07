@@ -146,6 +146,8 @@ class DashboardWidget(QWidget):
             ("🧹 Rozbierz na wszystkich", "salvage_all", "Rozbierz przedmioty na wszystkich działających instancjach"),
             ("📦 Otwórz paczki na wszystkich", "packs_all", "Otwórz podaną liczbę paczek na wszystkich działających instancjach"),
             ("🔄 Restart gry na wszystkich", "restart_all", "Zrestartuj grę na wszystkich działających instancjach"),
+            ("⚡ Turbo", "turbo_on", "Tryb turbo (maksymalna szybkość) na wszystkich instancjach"),
+            ("🐢 Normalne tempo", "turbo_off", "Wyłącz tryb turbo na wszystkich instancjach (wraca tempo z zakładki Tempo)"),
         ):
             b = QPushButton(text)
             b.setToolTip(tip)

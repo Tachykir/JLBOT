@@ -190,6 +190,12 @@ class BotConfig:
     # 100% skuteczności wygląda nieludzko. 0 = wyłączone.
     mistake_chance: float = 0.03
 
+    # Tryb turbo: maksymalna szybkość zamiast "ludzkiego" tempa - zamiast
+    # ustawień z zakładki Tempo bot używa TURBO_TIMING (minimalne przerwy,
+    # krótkie przeciągnięcia, bez pomyłek), a pozostałe stałe przerwy
+    # skraca TURBO_SLEEP_FACTOR razy. Ustawienia Tempo zostają nietknięte.
+    turbo: bool = False
+
     # Odstęp między kolejnymi przeciągnięciami kulek (żeby gra
     # zdążyła zarejestrować i zaktualizować UI przed kolejną akcją).
     # Losowany zakres (s).
@@ -399,6 +405,7 @@ class BotConfig:
             ("black_screen_timeout", float),
             ("black_screen_brightness_threshold", float),
             ("restart_settle_delay", float),
+            ("turbo", bool),
             ("foreground_check_interval", float),
             ("foreground_lost_timeout", float),
             ("max_drag_attempts_per_ball", int),
@@ -501,6 +508,7 @@ class BotConfig:
             "black_screen_timeout": self.black_screen_timeout,
             "black_screen_brightness_threshold": self.black_screen_brightness_threshold,
             "restart_settle_delay": self.restart_settle_delay,
+            "turbo": self.turbo,
             "foreign_app_packages": list(self.foreign_app_packages),
             "foreground_check_interval": self.foreground_check_interval,
             "foreground_lost_timeout": self.foreground_lost_timeout,
@@ -534,6 +542,24 @@ def unknown_screens_dir() -> Path:
     w wersji zbudowanej, obok bot.py przy uruchamianiu ze źródeł)."""
     base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
     return base / "unknown_screens"
+
+
+# Tempo w trybie turbo (BotConfig.turbo) - zamiast pól z zakładki Tempo.
+# Przeciągnięcie musi nadal trwać chwilę (gra przesuwa kulkę za palcem z
+# opóźnieniem), więc nie schodzimy do zera.
+TURBO_TIMING = {
+    "reaction_delay": RandomRange(0.0, 0.03),
+    "between_drags_delay": RandomRange(0.02, 0.06),
+    "drag_duration_ms": RandomRange(200, 280),
+    "drag_end_hold_ms": RandomRange(90, 140),
+    "tap_hold_ms": RandomRange(10, 25),
+    "mistake_chance": 0.0,
+    "idle_click_interval": RandomRange(0.15, 0.25),
+    "idle_poll_interval": 0.1,
+    "tile_tap_delay": RandomRange(0.01, 0.03),
+}
+# pozostałe przerwy (_sleep) w turbo są tyle razy krótsze
+TURBO_SLEEP_FACTOR = 0.3
 
 
 @dataclass
@@ -633,11 +659,20 @@ class DustMineBot:
     def _stop(self) -> bool:
         return self._stop_event.is_set()
 
-    def _sleep(self, seconds: float) -> bool:
+    def _sleep(self, seconds: float, fixed: bool = False) -> bool:
         """Śpi `seconds` sekund albo do wywołania stop(). Zwraca True, jeśli
-        przerwano przez stop()."""
+        przerwano przez stop(). W trybie turbo przerwy są krótsze, chyba że
+        `fixed` (np. czekanie na start gry po restarcie, przerwa harmonogramu)."""
         self._play_tick()
+        if not fixed and getattr(self.config, "turbo", False):
+            seconds *= TURBO_SLEEP_FACTOR
         return self._stop_event.wait(max(0.0, seconds))
+
+    def _t(self, name: str):
+        """Ustawienie tempa: z TURBO_TIMING w trybie turbo, inaczej z configu."""
+        if getattr(self.config, "turbo", False) and name in TURBO_TIMING:
+            return TURBO_TIMING[name]
+        return getattr(self.config, name)
 
     def pause(self) -> None:
         """Wstrzymuje klikanie/przeciąganie, ale wątek nadal robi
@@ -759,7 +794,7 @@ class DustMineBot:
             if decision.until is not None:
                 # obudź się dokładnie na koniec przerwy, a nie do 15 s później
                 wait = min(wait, max(1.0, (decision.until - dt.datetime.now()).total_seconds()))
-            self._sleep(wait)
+            self._sleep(wait, fixed=True)
 
         if self._stop:
             return
@@ -771,7 +806,7 @@ class DustMineBot:
             try:
                 self.adb.start_app(cfg.game_package, cfg.game_activity)
                 logger.info("[%s] uruchomiono grę na start sesji", cfg.name)
-                self._sleep(cfg.restart_settle_delay)
+                self._sleep(cfg.restart_settle_delay, fixed=True)
             except ADBError as e:
                 logger.error("[%s] nie udało się uruchomić gry po przerwie: %s", cfg.name, e)
 
@@ -831,7 +866,7 @@ class DustMineBot:
         self._black_screen_since = None
         self._game_away_since = None
         self.stats.restarts += 1
-        self._sleep(cfg.restart_settle_delay)
+        self._sleep(cfg.restart_settle_delay, fixed=True)
         # po restarcie od razu sprawdź pierwszy plan przy kolejnej klatce
         self._last_foreground_check = 0.0
         return True
@@ -1004,7 +1039,7 @@ class DustMineBot:
         cfg = self.config
         self._apply_performance()  # zmiana ustawienia w GUI działa od następnej pętli
         last_click = 0.0
-        next_click_delay = humanize.human_delay(cfg.idle_click_interval.min, cfg.idle_click_interval.max)
+        next_click_delay = humanize.human_delay(self._t("idle_click_interval").min, self._t("idle_click_interval").max)
         while not self._stop:
             # Koniec sesji sprawdzamy tylko tutaj (w idle), a nie w trakcie
             # zbierania kulek - rozpoczęta plansza zawsze jest dokończona.
@@ -1090,9 +1125,9 @@ class DustMineBot:
                     if point is not None:
                         self._tap(*point)
                 last_click = now
-                next_click_delay = humanize.human_delay(cfg.idle_click_interval.min, cfg.idle_click_interval.max)
+                next_click_delay = humanize.human_delay(self._t("idle_click_interval").min, self._t("idle_click_interval").max)
 
-            self._sleep(cfg.idle_poll_interval)
+            self._sleep(self._t("idle_poll_interval"), fixed=True)
         return None
 
     def _act(self, text: str) -> None:
@@ -1159,7 +1194,7 @@ class DustMineBot:
         """Tapnięcie "jak palcem": dotyk trwa tap_hold_ms i lekko się
         przesuwa (swipe o ~1 px z czasem trwania = przytrzymanie). Działa
         na każdej wersji Androida."""
-        hold = self.config.tap_hold_ms.sample()
+        hold = self._t("tap_hold_ms").sample()
         if hold <= 0:
             self.adb.tap(x, y)
             return
@@ -1172,8 +1207,11 @@ class DustMineBot:
         poleceniem ADB; przerwy losowe z zakresu `gap` (sekundy)."""
         if not points:
             return
-        holds = [max(1, int(self.config.tap_hold_ms.sample())) for _ in points]
+        holds = [max(1, int(self._t("tap_hold_ms").sample())) for _ in points]
         gaps = [humanize.human_delay(*gap) for _ in points[1:]]
+        if getattr(self.config, "turbo", False):
+            # serie kliknięć szybciej, ale z odstępem, który gra jeszcze rejestruje
+            gaps = [max(0.03, g * TURBO_SLEEP_FACTOR) for g in gaps]
         self.adb.tap_sequence([(x, y, h) for (x, y), h in zip(points, holds)], gaps)
 
     def _hold(self, x: int, y: int, hold_ms: float) -> None:
@@ -1272,11 +1310,11 @@ class DustMineBot:
 
     def _react(self) -> None:
         """Czas reakcji na nowy ekran (plansza / minigra)."""
-        rd = self.config.reaction_delay
+        rd = self._t("reaction_delay")
         self._sleep(humanize.human_delay(rd.min, rd.max))
 
     def _mistake(self) -> bool:
-        return random.random() < self.config.mistake_chance
+        return random.random() < self._t("mistake_chance")
 
     def _note_unknown(self, frame: np.ndarray | None) -> None:
         """Liczy, jak długo ekran pozostaje nierozpoznany (frame=None =
@@ -1516,7 +1554,7 @@ class DustMineBot:
                 else:
                     self._tap(*humanize.random_point_in_circle(x, y, radius))
                 tapped += 1
-                self._sleep(humanize.human_delay(cfg.tile_tap_delay.min, cfg.tile_tap_delay.max))
+                self._sleep(humanize.human_delay(self._t("tile_tap_delay").min, self._t("tile_tap_delay").max))
 
     def _skip_fishing(self) -> None:
         """Minigra "Fishing Hole": od razu klika CAST (bez celowania),
@@ -1565,14 +1603,14 @@ class DustMineBot:
         """Przeciąga kulkę do DROP zgodnie z drag_style. Zwraca punkt,
         w którym puszczono palec."""
         cfg = self.config
-        duration = cfg.drag_duration_ms.sample()
+        duration = self._t("drag_duration_ms").sample()
         if cfg.drag_style == "straight" and np.hypot(ball.x - drop.x, ball.y - drop.y) >= drop.r:
             self.adb.swipe(ball.x, ball.y, drop.x, drop.y, duration_ms=int(duration))
             return drop.x, drop.y
 
         start = humanize.random_point_in_circle(ball.x, ball.y, ball.r * 0.4)
         end = humanize.random_point_in_circle(drop.x, drop.y, drop.r * 0.3)
-        hold = cfg.drag_end_hold_ms.sample()
+        hold = self._t("drag_end_hold_ms").sample()
         if self._mistake():
             # puszczenie kulki tuż obok DROP - zostanie, bot spróbuje ponownie
             a = random.uniform(0, 2 * np.pi)
@@ -1782,4 +1820,4 @@ class DustMineBot:
             self.stats.drags += 1
             balls_before_drag = len(det.balls)
 
-            self._sleep(humanize.human_delay(cfg.between_drags_delay.min, cfg.between_drags_delay.max))
+            self._sleep(humanize.human_delay(self._t("between_drags_delay").min, self._t("between_drags_delay").max))

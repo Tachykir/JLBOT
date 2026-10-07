@@ -270,6 +270,14 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
 - **Motyw jasny / ciemny** — lista „🌓 Motyw” na pasku narzędzi:
   Systemowy / Jasny / Ciemny. Wybór jest zapamiętywany (ustawienie
   programu, nie config.json) i przywracany przy następnym uruchomieniu.
+- **Tryb turbo** (`turbo`, GUI: zakładka Tempo „⚡ Tryb turbo” albo przyciski
+  „⚡ Turbo” / „🐢 Normalne tempo” w „Wszystkie instancje”) — maksymalna
+  szybkość: czas reakcji ~0, przeciągnięcie kulki 0.2–0.28 s, przerwy między
+  przeciągnięciami 0.02–0.06 s, tapnięcia 10–25 ms, bez celowych pomyłek,
+  pozostałe stałe przerwy ~3× krótsze (czekanie na ekrany i tak reaguje od
+  razu). Nie zmienia czekania po restarcie gry ani przerw harmonogramu.
+  Ustawienia z zakładki Tempo zostają zapisane i wracają po wyłączeniu.
+  Turbo celowo rezygnuje z „ludzkiego” rytmu.
 - **Czas gry** na kafelku instancji — czas realnej gry od startu bota,
   bez przerw z harmonogramu (przerwy, poza oknem, limit dzienny) i bez
   pauzy.

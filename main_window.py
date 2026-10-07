@@ -807,6 +807,12 @@ class MainWindow(QMainWindow):
         w.setLayout(form)
         form.addRow(self._hint("Każda wartość jest losowana z zakresu \"od–do\", żeby rytm nie był "
                                "mechaniczny. Takie same \"od\" i \"do\" = stała wartość."))
+        self.field_turbo = QCheckBox("⚡ Tryb turbo – maksymalna szybkość (ignoruje poniższe ustawienia)")
+        self.field_turbo.setToolTip("Minimalne przerwy i czas reakcji, krótkie przeciągnięcia (ok. 0.2–0.3 s), "
+                                    "bez celowych pomyłek, pozostałe stałe przerwy ~3× krótsze. Ustawienia "
+                                    "poniżej zostają zapisane i wracają po wyłączeniu turbo.")
+        self.field_turbo.toggled.connect(self._apply_config_fields)
+        form.addRow(self.field_turbo)
 
         self.field_idle_interval_min, self.field_idle_interval_max, box = self._range_row(0.1, 30.0, 0.1, " s")
         form.addRow("Odstęp między kliknięciami:", box)
@@ -1186,7 +1192,7 @@ class MainWindow(QMainWindow):
                 self.field_drag_ms_min, self.field_drag_ms_max, self.field_hold_end_min, self.field_hold_end_max,
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
-                self.field_mistake, self.field_proc_width,
+                self.field_mistake, self.field_proc_width, self.field_turbo,
                 self.field_play_debris, self.field_skip_fishing,
                 self.field_depth_mode, self.field_farm_depth, self.field_depth_pct, self.field_depth_interval,
                 self.field_loadout, self.field_depth_repeat,
@@ -1245,6 +1251,7 @@ class MainWindow(QMainWindow):
             self.field_depth_repeat.setValue(max(2, cfg.depth_repeat_fights))
             self.field_depth_interval.setValue(max(1, int(cfg.depth_check_interval_min)))
             self.field_auto_packs.setChecked(cfg.auto_packs)
+            self.field_turbo.setChecked(bool(cfg.turbo))
             self.field_packs_interval.setValue(int(cfg.packs_check_interval_min))
             self.field_packs_defeats.setValue(cfg.packs_defeat_streak)
             self.field_packs_rounds.setValue(cfg.packs_max_rounds)
@@ -1400,6 +1407,7 @@ class MainWindow(QMainWindow):
         cfg.depth_repeat_fights = self.field_depth_repeat.value()
         cfg.depth_check_interval_min = float(self.field_depth_interval.value())
         cfg.auto_packs = self.field_auto_packs.isChecked()
+        cfg.turbo = self.field_turbo.isChecked()
         cfg.packs_check_interval_min = float(self.field_packs_interval.value())
         cfg.packs_defeat_streak = self.field_packs_defeats.value()
         cfg.packs_max_rounds = self.field_packs_rounds.value()
@@ -1738,6 +1746,16 @@ class MainWindow(QMainWindow):
             self._salvage_entries(entries)
         elif action == "packs_all":
             self._packs_entries(entries)
+        elif action in ("turbo_on", "turbo_off"):
+            on = action == "turbo_on"
+            for e in entries:
+                e.config.turbo = on  # działające boty biorą to od razu
+            if self.selected_name in self.instances:
+                self.field_turbo.blockSignals(True)
+                self.field_turbo.setChecked(on)
+                self.field_turbo.blockSignals(False)
+            self._mark_dirty()
+            self._log_local(f"Tryb turbo {'włączony' if on else 'wyłączony'} na {len(entries)} instancjach")
         elif action == "restart_all":
             running = [e for e in entries if self._running(e) and e.config.game_package]
             if not running:
