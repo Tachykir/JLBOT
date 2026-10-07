@@ -911,6 +911,14 @@ class MainWindow(QMainWindow):
                                            "(odczyt z nagłówka walki), bot od razu sprawdza / podkręca głębokość")
         self.field_depth_repeat.valueChanged.connect(self._apply_config_fields)
         form.addRow("Podkręć po tylu walkach na tej samej:", self.field_depth_repeat)
+        self.field_depth_push = QSpinBox(); self.field_depth_push.setRange(0, 50)
+        self.field_depth_push.setSpecialValueText("wyłączone")
+        self.field_depth_push.setSuffix("× „›”")
+        self.field_depth_push.setToolTip("Po każdej walce, przed JUST LOOT: tyle szybkich kliknięć strzałki „›” "
+                                         "(wyższa głębokość). Na maks. odblokowanej strzałka jest przygaszona i "
+                                         "bot jej nie klika. Nie działa z trybem stałej głębokości ani maks. − X%.")
+        self.field_depth_push.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Po każdej walce zwiększ głębokość:", self.field_depth_push)
         self.field_loadout = QLineEdit()
         self.field_loadout.setPlaceholderText("puste = nie sprawdzaj")
         self.field_loadout.setToolTip("Gdy wybrana głębokość spadnie do 1 (np. gra przełączyła loadout na "
@@ -1195,7 +1203,7 @@ class MainWindow(QMainWindow):
                 self.field_mistake, self.field_proc_width, self.field_turbo,
                 self.field_play_debris, self.field_skip_fishing,
                 self.field_depth_mode, self.field_farm_depth, self.field_depth_pct, self.field_depth_interval,
-                self.field_loadout, self.field_depth_repeat,
+                self.field_loadout, self.field_depth_repeat, self.field_depth_push,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
                 self.field_packs_per_run, self.field_gear_margin,
                 self.field_salvage_full, self.field_salvage_items, self.field_salvage_hold_min,
@@ -1249,6 +1257,7 @@ class MainWindow(QMainWindow):
             self.field_depth_pct.setValue(int(round(cfg.depth_below_max_pct)))
             self.field_loadout.setText(cfg.loadout_name)
             self.field_depth_repeat.setValue(max(2, cfg.depth_repeat_fights))
+            self.field_depth_push.setValue(max(0, cfg.depth_push_taps))
             self.field_depth_interval.setValue(max(1, int(cfg.depth_check_interval_min)))
             self.field_auto_packs.setChecked(cfg.auto_packs)
             self.field_turbo.setChecked(bool(cfg.turbo))
@@ -1297,6 +1306,9 @@ class MainWindow(QMainWindow):
         self.field_farm_depth.setEnabled(enabled and fixed)
         self.field_depth_pct.setEnabled(enabled and self.field_depth_mode.currentData() == "max_pct")
         self.field_depth_repeat.setEnabled(enabled and self.field_depth_mode.currentData() in ("max", "max_normal"))
+        mode = self.field_depth_mode.currentData()
+        self.field_depth_push.setEnabled(enabled and mode != "max_pct"
+                                         and not (mode in (None, "fixed") and self.field_farm_depth.value() > 0))
         self.field_depth_interval.setEnabled(enabled and (not fixed or self.field_farm_depth.value() > 0
                                                           or bool(self.field_loadout.text().strip())))
         fallback = self.field_idle_fallback.isChecked() or not self.field_idle_just_loot.isChecked()
@@ -1405,6 +1417,7 @@ class MainWindow(QMainWindow):
         cfg.depth_below_max_pct = float(self.field_depth_pct.value())
         cfg.loadout_name = self.field_loadout.text().strip().upper()
         cfg.depth_repeat_fights = self.field_depth_repeat.value()
+        cfg.depth_push_taps = self.field_depth_push.value()
         cfg.depth_check_interval_min = float(self.field_depth_interval.value())
         cfg.auto_packs = self.field_auto_packs.isChecked()
         cfg.turbo = self.field_turbo.isChecked()

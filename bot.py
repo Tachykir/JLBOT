@@ -350,6 +350,13 @@ class BotConfig:
     # Tryby "maksymalne": tyle walk z rzędu na tej samej głębokości (odczyt z
     # nagłówka walki) = nie idzie w górę -> sprawdź / podkręć w Profile.
     depth_repeat_fights: int = 3
+    # Po każdej walce: tyle szybkich kliknięć strzałki "›" (wyższa
+    # głębokość) na ekranie z wyborem głębokości, zanim bot kliknie JUST
+    # LOOT. 0 = wyłączone. Strzałka przestaje działać na maks. odblokowanej
+    # głębokości (wtedy jest przygaszona i bot jej nie klika). Nie działa
+    # z trybami, które same pilnują konkretnej głębokości (stała > 0,
+    # maks. minus X%).
+    depth_push_taps: int = 0
     depth_check_interval_min: float = 15.0
     # Punkty do klikania jako obszary: (x, y, promień) - x i promień jako
     # ułamek szerokości ekranu, y jako ułamek wysokości. Bot klika w losowe
@@ -366,6 +373,16 @@ class BotConfig:
     # ------------------------------------------------------------------ #
     # Serializacja do/z JSON (jedno miejsce dla GUI i manager.py)
     # ------------------------------------------------------------------ #
+    @property
+    def depth_push_enabled(self) -> bool:
+        """Klikanie "›" po walce - nie w trybach, które same ustawiają
+        konkretną głębokość (zaraz by ją cofnęły)."""
+        if self.depth_push_taps <= 0:
+            return False
+        if self.depth_mode == "max_pct":
+            return False
+        return not (self.depth_mode == "fixed" and self.farm_depth > 0)
+
     @property
     def depth_enabled(self) -> bool:
         return self.depth_mode in DEPTH_AUTO_MODES or self.farm_depth > 0 or bool(self.loadout_name.strip())
@@ -430,6 +447,7 @@ class BotConfig:
             ("depth_below_max_pct", float),
             ("loadout_name", str),
             ("depth_repeat_fights", int),
+            ("depth_push_taps", int),
             ("depth_check_interval_min", float),
         ):
             if key in data and data[key] is not None:
@@ -529,6 +547,7 @@ class BotConfig:
             "depth_below_max_pct": self.depth_below_max_pct,
             "loadout_name": self.loadout_name,
             "depth_repeat_fights": self.depth_repeat_fights,
+            "depth_push_taps": self.depth_push_taps,
             "depth_check_interval_min": self.depth_check_interval_min,
             "nav_profile": list(self.nav_profile),
             "nav_craft": list(self.nav_craft),
@@ -1171,6 +1190,26 @@ class DustMineBot:
             return "otwarte Settings"
         return None
 
+    _push_depth_pending = False
+
+    def _push_depth(self, frame: np.ndarray) -> bool:
+        """Po walce: depth_push_taps szybkich kliknięć strzałki "›" przy
+        wyborze głębokości. False = nie kliknięto (brak selektora albo
+        strzałka przygaszona - już maks. odblokowana)."""
+        cfg = self.config
+        sel = screens.find_depth_selector(frame)
+        if sel is None or not sel.right_found:
+            return False
+        r = sel.right
+        cx, cy = r.center
+        n = cfg.depth_push_taps
+        self._look(r)
+        self._act(f"Po walce – {n}× „›” (wyższa głębokość)")
+        self._tap_many([humanize.random_point_in_circle(cx, cy, min(r.w, r.h) * 0.25) for _ in range(n)],
+                       (0.05, 0.12))
+        self._sleep(random.uniform(0.15, 0.3))
+        return True
+
     def _look(self, rect) -> None:
         """Zaznacza na podglądzie GUI element, który bot znalazł i klika."""
         mark = getattr(self.adb, "mark", None)
@@ -1447,11 +1486,17 @@ class DustMineBot:
             return humanize.random_point_in_circle(cx, cy, min(done.w, done.h) * 0.3)
         if cfg.idle_target == "just_loot":
             button = screens.find_just_loot(frame)
+            if button is not None and self._push_depth_pending and cfg.depth_push_enabled:
+                self._push_depth_pending = False
+                if self._push_depth(frame):
+                    self._note_unknown(None)
+                    return None  # JUST LOOT na następnej klatce
             if button is not None:
                 self._act("Ekran główny – klikam JUST LOOT (nowa walka)")
                 return humanize.random_point_in_circle(button.x, button.y, button.r * 0.45)
             proceed = screens.find_wide_bottom_button(frame)
             if proceed is not None:
+                self._push_depth_pending = True  # koniec walki - potem "›"
                 result = ("wygrana" if screens.has_victory_text(frame, proceed)
                           else "porażka" if screens.has_defeat_text(frame, proceed) else "")
                 self._act(f"Koniec walki{' (' + result + ')' if result else ''} – klikam PROCEED")
@@ -1460,6 +1505,7 @@ class DustMineBot:
             depth = screens.fight_depth(frame)
             if depth is not None:
                 # trwająca walka - nic nie klikamy, czekamy na wynik
+                self._push_depth_pending = True
                 self._act(f"Walka na głębokości {depth} – czekam na wynik")
                 self._note_unknown(None)
                 return None

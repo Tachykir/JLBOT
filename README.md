@@ -278,6 +278,12 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   razu). Nie zmienia czekania po restarcie gry ani przerw harmonogramu.
   Ustawienia z zakładki Tempo zostają zapisane i wracają po wyłączeniu.
   Turbo celowo rezygnuje z „ludzkiego” rytmu.
+- **Zwiększanie głębokości po walce** (`depth_push_taps`, GUI: „Głębokość i
+  paczki” → „Po każdej walce zwiększ głębokość”, 0 = wyłączone) — po każdej
+  walce, przed kliknięciem JUST LOOT, bot klika szybko N razy strzałkę „›”
+  przy wyborze głębokości. Na maks. odblokowanej głębokości strzałka jest
+  przygaszona i bot jej nie klika. Nie działa w trybach „stała głębokość”
+  (> 0) i „maks. − X%”, bo one same ustawiają konkretną głębokość.
 - **Czas gry** na kafelku instancji — czas realnej gry od startu bota,
   bez przerw z harmonogramu (przerwy, poza oknem, limit dzienny) i bez
   pauzy.
