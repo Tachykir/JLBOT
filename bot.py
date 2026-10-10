@@ -1532,18 +1532,11 @@ class DustMineBot:
             if disabled is not None:
                 # np. "JUST HUNT" w wydarzeniu HUNT bez walk - wróć na swój loadout
                 self._note_unknown(None)
-                want = cfg.loadout_name.strip().upper()
-                if want:
-                    import difflib
-                    cards = screens.find_loadouts(frame)
-                    target = max(cards, key=lambda c: difflib.SequenceMatcher(None, c.name, want).ratio(), default=None)
-                    if (target is not None and not target.selected
-                            and difflib.SequenceMatcher(None, target.name, want).ratio() >= 0.75):
-                        logger.info("[%s] przycisk walki nieaktywny (np. HUNT bez walk) - wybieram loadout %s",
-                                    cfg.name, want)
-                        self._act(f"Przycisk walki nieaktywny – wybieram loadout {want}")
-                        r = target.rect
-                        return humanize.random_point_in_circle(r.x + r.w / 2, r.y + r.h / 2, min(r.w, r.h) * 0.2)
+                now = time.monotonic()
+                if cfg.loadout_name.strip() and now - getattr(self, "_loadout_tried", 0.0) > 15:
+                    self._loadout_tried = now
+                    if self._packs.select_loadout("przycisk walki nieaktywny (np. HUNT bez walk)"):
+                        return None
                 self._act("Przycisk walki nieaktywny (np. HUNT bez walk) – czekam")
                 return None
             # nic nie rozpoznano

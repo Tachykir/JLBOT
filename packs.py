@@ -410,48 +410,98 @@ class PackOpener:
                            cfg.name, target, sel.current if sel is not None else None)
         return result
 
+    @staticmethod
+    def _loadout_matches(name: str, want: str) -> bool:
+        if len(name) == len(want) and all(a == b or a == "?" for a, b in zip(name, want)):
+            return True
+        import difflib
+        return bool(name) and difflib.SequenceMatcher(None, name, want).ratio() >= 0.75
+
+    def _stable_loadouts(self, tries: int = 4):
+        """Karty loadoutów z dwóch zrzutów pod rząd, które się zgadzają -
+        rząd kart (i cała strona) przewija się z bezwładnością, a kliknięcie
+        w pozycję z klatki w trakcie ruchu trafia w sąsiednią kartę (np. HUNT)."""
+        bot = self.bot
+        prev = screens.find_loadouts(self._frame())
+        for _ in range(tries):
+            bot._sleep(random.uniform(0.25, 0.35), fixed=True)
+            cards = screens.find_loadouts(self._frame())
+            if cards and len(cards) == len(prev) and all(
+                    abs(a.rect.x - b.rect.x) <= 3 and abs(a.rect.y - b.rect.y) <= 3 for a, b in zip(cards, prev)):
+                return cards
+            prev = cards
+        return []
+
+    def select_loadout(self, reason: str) -> bool:
+        """
+        Wybiera loadout `loadout_name` z rzędu kart widocznego na ekranie.
+        Klika tylko w kartę, której nazwę odczytano, z nieruchomej klatki,
+        a potem sprawdza, czy wybrała się właściwa (jeśli nie - np. HUNT -
+        próbuje jeszcze raz). True = właściwy loadout jest wybrany.
+        """
+        bot, cfg = self.bot, self.bot.config
+        want = cfg.loadout_name.strip().upper()
+        if not want:
+            return False
+        for attempt in range(3):
+            cards = self._stable_loadouts()
+            if not cards:
+                logger.warning("[%s] %s - nie znaleziono kart loadoutów", cfg.name, reason)
+                return False
+            target = next((c for c in cards if self._loadout_matches(c.name, want)), None)
+            if target is None:
+                logger.warning("[%s] %s - nie znaleziono loadoutu %s (widoczne: %s)", cfg.name, reason, want,
+                               ", ".join(c.name or "?" for c in cards))
+                return False
+            if target.selected:
+                return True
+            current = next((c.name or "?" for c in cards if c.selected), "?")
+            logger.warning("[%s] %s, wybrany loadout %s - przełączam na %s", cfg.name, reason, current, want)
+            bot._act(f"Profile – przełączam loadout {current} → {want}")
+            r = target.rect
+            # środek karty, mały rozrzut - z dala od sąsiednich kart
+            bot._tap(*humanize.random_point_in_circle(r.x + r.w / 2, r.y + r.h / 2, min(r.w, r.h) * 0.12))
+            # sprawdź, co się wybrało
+            deadline = time.monotonic() + 2.5
+            while time.monotonic() < deadline and not self._abort():
+                bot._sleep(0.3, fixed=True)
+                now_cards = screens.find_loadouts(self._frame())
+                sel = next((c for c in now_cards if c.selected), None)
+                if sel is not None and self._loadout_matches(sel.name, want):
+                    return True
+                if sel is not None and sel.name and not self._loadout_matches(sel.name, want) and sel.name != current:
+                    logger.warning("[%s] zamiast %s wybrał się loadout %s - poprawiam", cfg.name, want, sel.name)
+                    break
+        logger.warning("[%s] nie udało się wybrać loadoutu %s", cfg.name, want)
+        return False
+
     def ensure_loadout(self) -> bool:
         """
         Profile: wybiera loadout `loadout_name` (np. "MAIN"), jeśli wybrany
         jest inny. Rząd kart loadoutów jest na górze strony - zawsze najpierw
         przewija do góry. True = przełączono loadout.
         """
-        bot, cfg = self.bot, self.bot.config
-        want = cfg.loadout_name.strip().upper()
-
-        def matches(name: str) -> bool:
-            return len(name) == len(want) and all(a == b or a == "?" for a, b in zip(name, want))
-
+        bot = self.bot
+        if not bot.config.loadout_name.strip():
+            return False
         # Profile jest zwykle przewinięty w dół (do CHOOSE DEPTH) - karty
         # loadoutów bywają wtedy ucięte albo niewidoczne; zawsze najpierw
         # przewiń stronę do góry
         self._frame()  # aktualny rozmiar ekranu
         W, H = self._size
-        cards = []
         for attempt in range(3):
             bot.adb.swipe(int(W * random.uniform(0.45, 0.55)), int(H * 0.35),
                           int(W * random.uniform(0.45, 0.55)), int(H * 0.75),
                           duration_ms=random.randint(300, 450))
-            bot._sleep(random.uniform(0.45, 0.6))
-            cards = screens.find_loadouts(self._frame())
-            if cards:
+            bot._sleep(random.uniform(0.45, 0.6), fixed=True)  # strona przewija się z bezwładnością
+            if screens.find_loadouts(self._frame()):
                 break
-        if not cards:
-            logger.warning("[%s] głębokość 1 - nie znaleziono kart loadoutów w Profile", cfg.name)
+        cards = screens.find_loadouts(self._frame())
+        want = bot.config.loadout_name.strip().upper()
+        before = next((c for c in cards if self._loadout_matches(c.name, want)), None)
+        if before is not None and before.selected:
             return False
-        target = next((c for c in cards if matches(c.name)), None)
-        if target is None:
-            logger.warning("[%s] głębokość 1 - nie znaleziono loadoutu %s (widoczne: %s)", cfg.name, want,
-                           ", ".join(c.name or "?" for c in cards))
-            return False
-        if target.selected:
-            return False
-        current = next((c.name for c in cards if c.selected), "?")
-        logger.warning("[%s] głębokość 1 i wybrany loadout %s - przełączam na %s", cfg.name, current, want)
-        bot._act(f"Profile – przełączam loadout {current} → {want}")
-        self._tap_rect(target.rect)
-        bot._sleep(random.uniform(0.5, 0.7))
-        return True
+        return self.select_loadout("głębokość 1")
 
     def _move_depth(self, sel, target: int | None):
         """Przesuwa wybór do `target` (None = jak najwyżej). Zwraca
