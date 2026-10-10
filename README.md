@@ -284,6 +284,13 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   przy wyborze głębokości. Na maks. odblokowanej głębokości strzałka jest
   przygaszona i bot jej nie klika. Nie działa w trybach „stała głębokość”
   (> 0) i „maks. − X%”, bo one same ustawiają konkretną głębokość.
+- **Nowe ekrany gry (październik)** — DROP na planszy Dust Mine leży w
+  losowym miejscu (bot szuka go w samym panelu planszy i nie używa pozycji
+  z poprzedniej planszy); panel dropu z wyróżnionym, wyższym wierszem
+  „Equip & Salvage current item”; ekran startowy (żółte logo), „Loading your
+  save…” i czarny ekran = bot czeka; „Create your account” = bot nic nie
+  klika (ostrzeżenie w logu); przygaszony przycisk „JUST HUNT” (wydarzenie
+  HUNT bez walk) = bot wybiera loadout `loadout_name` (domyślnie MAIN).
 - **Czas gry** na kafelku instancji — czas realnej gry od startu bota,
   bez przerw z harmonogramu (przerwy, poza oknem, limit dzienny) i bez
   pauzy.

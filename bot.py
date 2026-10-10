@@ -1122,6 +1122,7 @@ class DustMineBot:
             if kind == "dust":
                 logger.info("[%s] wykryto ekran gry: DROP=%s, kulki=%d",
                             cfg.name, det.drop.center if det.drop else None, len(det.balls))
+                self._board_drop = det.drop  # DROP tej planszy - zapas, gdy kulki go zasłonią
                 return kind
             if kind == "debris":
                 logger.info("[%s] wykryto minigrę Depth Collapse: %d kafelków", cfg.name, len(det.tile_taps))
@@ -1509,6 +1510,42 @@ class DustMineBot:
                 self._act(f"Walka na głębokości {depth} – czekam na wynik")
                 self._note_unknown(None)
                 return None
+            if screens.is_splash_screen(frame) or screens.is_loading_save(frame) or vision.is_black_screen(frame):
+                # start gry / "Loading your save…" - czekamy (zawieszenie łapie
+                # watchdog pustego / czarnego ekranu)
+                if not self.activity.startswith(("Pusty ekran", "Czarny ekran")):
+                    self._act("Gra się ładuje – czekam")
+                self._note_unknown(None)
+                return None
+            if screens.is_login_screen(frame):
+                # "Create your account" - nic nie klikamy: "Play as Guest"
+                # założyłby nowe konto
+                now = time.monotonic()
+                if now - getattr(self, "_login_warned", 0.0) > 60:
+                    self._login_warned = now
+                    logger.warning("[%s] ekran zakładania konta / logowania - bot nic nie klika, "
+                                   "sprawdź grę (jeśli to nie chwilowe ładowanie)", cfg.name)
+                self._act("Ekran konta / logowania – nic nie klikam, sprawdź grę")
+                self._note_unknown(None)
+                return None
+            disabled = screens.find_disabled_action_button(frame)
+            if disabled is not None:
+                # np. "JUST HUNT" w wydarzeniu HUNT bez walk - wróć na swój loadout
+                self._note_unknown(None)
+                want = cfg.loadout_name.strip().upper()
+                if want:
+                    import difflib
+                    cards = screens.find_loadouts(frame)
+                    target = max(cards, key=lambda c: difflib.SequenceMatcher(None, c.name, want).ratio(), default=None)
+                    if (target is not None and not target.selected
+                            and difflib.SequenceMatcher(None, target.name, want).ratio() >= 0.75):
+                        logger.info("[%s] przycisk walki nieaktywny (np. HUNT bez walk) - wybieram loadout %s",
+                                    cfg.name, want)
+                        self._act(f"Przycisk walki nieaktywny – wybieram loadout {want}")
+                        r = target.rect
+                        return humanize.random_point_in_circle(r.x + r.w / 2, r.y + r.h / 2, min(r.w, r.h) * 0.2)
+                self._act("Przycisk walki nieaktywny (np. HUNT bez walk) – czekam")
+                return None
             # nic nie rozpoznano
             since = getattr(self, "_unknown_since", None)
             if not self.activity.startswith(("Pusty ekran", "Czarny ekran")):  # watchdog ma ważniejszy opis
@@ -1731,7 +1768,11 @@ class DustMineBot:
         balls_before_drag: int | None = None
         finger: tuple[int, int] | None = None
         # ostatnia znana pozycja DROP - gdy kulki go chwilowo zasłonią
-        last_drop: vision.Circle | None = self._last_drop
+        # DROP leży w innym miejscu na każdej planszy - pozycję z poprzedniej
+        # planszy zapominamy (pamiętamy tylko w obrębie tej, gdy kulki go zasłonią)
+        last_drop: vision.Circle | None = getattr(self, "_board_drop", None)
+        self._board_drop = None
+        self._last_drop = last_drop
         # licznik gry ("4 left") mówi, że kulki zostały, a bot żadnej nie
         # widzi (np. schowana pod inną / w animacji) - ile razy czekano
         waited_left = 0

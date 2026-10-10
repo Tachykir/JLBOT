@@ -105,7 +105,9 @@ def find_open_dialog(bgr: np.ndarray) -> Dialog | None:
     white = cv2.morphologyEx(white, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
     box = None
     for x, y, w, h, area in _components(white):
-        if w >= 0.55 * W and 0.06 * H <= h <= 0.5 * H and area >= 0.85 * w * h:
+        # okno systemowe jest na środku ekranu (biała karta z nazwą gracza
+        # u góry Profile ma podobny kształt)
+        if w >= 0.55 * W and 0.06 * H <= h <= 0.5 * H and area >= 0.85 * w * h and 0.25 * H <= y + h / 2 <= 0.75 * H:
             if box is None or w * h > box.w * box.h:
                 box = Rect(x, y, w, h)
     if box is None:
@@ -273,6 +275,27 @@ def _find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
             fills.append(float(((row >= 26) & (row <= 90)).mean()))
         return min(fills) < 0.5
     lines = [ln for ln in lines if thin(ln)]
+    # linia nad wyróżnionym wierszem (np. "Equip & Salvage current item")
+    # bywa ledwo widoczna (o 4-6 jaśniejsza od panelu zamiast ~20) - przy
+    # podwójnym odstępie szukaj w środku wiersza równo jaśniejszego od sąsiadów
+    faint = []
+    for a, b in zip(lines, lines[1:]):
+        if not (0.09 * H < b[0] - a[0] <= 0.22 * H):
+            continue
+        if abs(a[1] - b[1]) > 0.05 * W and abs(a[2] - b[2]) > 0.05 * W:
+            continue
+        xa, xb = max(a[1], b[1]) + int(0.04 * W), min(a[2], b[2]) - int(0.04 * W)
+        if xb - xa < 0.5 * W:
+            continue
+        seg = gray[:, xa:xb].astype(np.int16)
+        for y in range(a[0] + int(0.03 * H), b[0] - int(0.03 * H)):
+            row, up, down = seg[y], seg[y - 2], seg[y + 2]
+            if (float(((row - up) >= 3).mean()) > 0.9 and float(((row - down) >= 3).mean()) > 0.9
+                    and float(np.ptp(row)) <= 4):
+                faint.append((y, min(a[1], b[1]), max(a[2], b[2])))
+                break
+    if faint:
+        lines = sorted(lines + faint)
     best: list[tuple[int, int, int]] = []
     for i in range(len(lines)):
         chain = [lines[i]]
@@ -280,7 +303,7 @@ def _find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
             prev = chain[-1]
             same_x = abs(ln[1] - prev[1]) < 0.04 * W and abs(ln[2] - prev[2]) < 0.04 * W
             gap = ln[0] - prev[0]
-            if not same_x or not (0.03 * H <= gap <= 0.09 * H):
+            if not same_x or not (0.03 * H <= gap <= 0.12 * H):
                 continue
             # przyciski mają podobną wysokość - ale "Equip & Salvage current
             # item · +61 Dust" bywa w dwóch linijkach (wyższy wiersz)
@@ -844,6 +867,9 @@ def find_loadouts(bgr: np.ndarray) -> list[Loadout]:
     bg = float(np.median(gray))
     if bg > 40:
         return []
+    # tło z ciemniejszych pikseli: duże panele (np. wydarzenie HUNT) podnoszą
+    # medianę i karty loadoutów przestają odróżniać się od "tła"
+    bg = min(bg, float(np.percentile(gray, 20)))
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     panels = (cv2.medianBlur(gray, 5) > bg + 4).astype(np.uint8)
     cards = [Rect(x, y, w, h) for x, y, w, h, area in _components(panels)
@@ -1203,3 +1229,93 @@ def find_settings_close(bgr: np.ndarray) -> tuple[int, int] | None:
     ry1 = min(c[1] for c in right)
     ry2 = max(c[1] + c[3] for c in right)
     return (rx1 + rx2) // 2, (ry1 + ry2) // 2
+
+
+# --------------------------------------------------------------------- #
+# Ekrany przejściowe i wymagające uwagi gracza
+# --------------------------------------------------------------------- #
+
+def is_splash_screen(bgr: np.ndarray) -> bool:
+    """Żółty ekran startowy gry z logo (także przyciemniony w trakcie
+    przejścia)."""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    yellow = (hsv[..., 0] >= 18) & (hsv[..., 0] <= 35) & (hsv[..., 1] > 150) & (hsv[..., 2] > 70)
+    return float(yellow.mean()) > 0.6
+
+
+def is_loading_save(bgr: np.ndarray) -> bool:
+    """"Loading your save…" / inne ładowanie: ciemny ekran z małym blokiem
+    tekstu (i kółkiem ładowania) na środku, poza tym pusto."""
+    H, W = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    body = hsv[int(0.05 * H):]                 # bez paska stanu
+    if float(np.median(body[..., 2])) > 45:
+        return False
+    bright = body[..., 2] > 120
+    frac = float(bright.mean())
+    if not (0.001 <= frac <= 0.04):
+        return False
+    # same litery i kółko - bez szerokiego przycisku (np. "Done" po paczkach)
+    if any(c[2] > 0.4 * W for c in _components(bright.astype(np.uint8))):
+        return False
+    ys, xs = np.nonzero(bright)
+    y0 = int(0.05 * H)
+    top, bottom = (ys.min() + y0) / H, (ys.max() + y0) / H
+    return 0.3 <= top and bottom <= 0.7 and xs.min() > 0.03 * W and xs.max() < 0.97 * W
+
+
+def is_login_screen(bgr: np.ndarray) -> bool:
+    """
+    "Create your account" / logowanie: szeroki, wypełniony turkusowy
+    przycisk na środku ekranu, a pod nim separator "OR" (dwie poziome linie
+    z przerwą na napis). Bot niczego tu nie klika - "Play as Guest" założyłby
+    nowe konto.
+    """
+    H, W = bgr.shape[:2]
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    teal = cv2.inRange(hsv, (85, 90, 110), (105, 255, 255))
+    button = None
+    for x, y, w, h, area in _components(teal):
+        if w >= 0.75 * W and 0.05 * H <= h <= 0.11 * H and 0.45 * H <= y <= 0.72 * H and area >= 0.8 * w * h:
+            button = (x, y, w, h)
+    if button is None:
+        return False
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    bx, by, bw, bh = button
+    for y in range(by + bh, min(H, by + bh + int(0.25 * H))):
+        line = (gray[y] >= 30) & (gray[y] <= 90)
+        left = line[int(0.1 * W):int(0.42 * W)].mean()
+        mid = line[int(0.46 * W):int(0.54 * W)].mean()
+        right = line[int(0.58 * W):int(0.9 * W)].mean()
+        if left > 0.8 and right > 0.8 and mid < 0.3:
+            return True
+    return False
+
+
+def find_disabled_action_button(bgr: np.ndarray) -> Circle | None:
+    """
+    Przygaszony przycisk na środku paska nawigacji (np. "JUST HUNT", gdy w
+    wydarzeniu HUNT skończyły się walki): to samo koło co JUST LOOT, ale
+    ciemny, mało jasny turkus.
+    """
+    H, W = bgr.shape[:2]
+    if find_open_dialog(bgr) is not None:
+        return None  # okno dialogowe przyciemnia cały ekran
+    y0 = int(0.7 * H)
+    hsv = cv2.cvtColor(bgr[y0:], cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (80, 90, 55), (105, 200, 125))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for c in contours:
+        x, y, w, h = cv2.boundingRect(c)
+        clipped = y0 + y + h >= H - 2 and w > h
+        if not (0.12 * W <= w <= 0.4 * W and 0.85 <= w / h <= (1.7 if clipped else 1.18)):
+            continue
+        r = w / 2 if clipped else (w + h) / 4
+        cx, cy = x + w / 2, y0 + y + r if clipped else y0 + y + h / 2
+        if abs(cx - W / 2) > 0.12 * W or cy < 0.86 * H:
+            continue
+        if cv2.contourArea(c) < 0.6 * np.pi * r * r * (min(1.0, h / w) if clipped else 1.0):
+            continue
+        if _nav_separator(bgr, cx, cy, r):
+            return Circle(int(cx), int(cy), int(r))
+    return None

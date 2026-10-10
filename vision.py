@@ -119,7 +119,7 @@ def _dash_pattern(angles: np.ndarray, sectors: int = 64) -> tuple[int, int]:
     return total, best
 
 
-def _find_drop_point(hsv: np.ndarray, known: Circle | None = None) -> Circle | None:
+def _find_drop_point(hsv: np.ndarray, known: Circle | None = None, thick_only: bool = False) -> Circle | None:
     """
     Szuka punktu DROP: przerywanego BIAŁEGO okręgu z napisem "DROP" w środku.
 
@@ -144,6 +144,10 @@ def _find_drop_point(hsv: np.ndarray, known: Circle | None = None) -> Circle | N
     """
     h, w = hsv.shape[:2]
     mask = _white_mask(hsv)
+    if thick_only:
+        # bez cienkich (1 px) jasnych obwódek kulek - zostają kreski DROP;
+        # kulka leżąca na DROP-ie ma obwódkę prawie w tym samym miejscu
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     scale = min(1.0, 450.0 / w)
     if scale < 1.0:
         mask = cv2.resize(mask, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
@@ -171,6 +175,18 @@ def _find_drop_point(hsv: np.ndarray, known: Circle | None = None) -> Circle | N
     best_count = 0
     for cx, cy, r in candidates:
         d = np.hypot(xs - cx, ys - cy)
+        # Hough potrafi trafić środek o kilka pikseli obok - dopasuj okrąg do
+        # białych punktów przy pierścieniu, zanim ocenisz, czy to DROP
+        if (cx, cy, r) != known_c:
+            for _ in range(2):
+                near = np.abs(d - r) < 0.15 * r
+                if int(near.sum()) < 20:
+                    break
+                fit = _fit_circle(xs[near], ys[near])
+                if fit is None or np.hypot(fit[0] - cx, fit[1] - cy) >= 0.3 * r or not 0.8 * r < fit[2] < 1.2 * r:
+                    break
+                cx, cy, r = fit
+                d = np.hypot(xs - cx, ys - cy)
         on_ring = np.abs(d - r) < max(3.0, 0.08 * r)
         count = int(on_ring.sum())
         if count <= best_count or count < 20:
@@ -186,7 +202,10 @@ def _find_drop_point(hsv: np.ndarray, known: Circle | None = None) -> Circle | N
         coverage = len(np.unique(((ang + np.pi) / (2 * np.pi) * 32).astype(int) % 32)) / 32
         has_text = int((d < 0.55 * r).sum()) >= 10
         empty_between = int(((d > 0.62 * r) & (d < 0.86 * r)).sum()) <= 0.15 * count
-        with_label = has_text and empty_between and coverage >= 0.5
+        # kreski DROP leżą na okręgu, a nie obok (blok tekstu dopasowany
+        # okręgiem ma w pasie wokół niego dużo bieli poza linią)
+        ring_band = int((np.abs(d - r) < 0.2 * r).sum())
+        with_label = has_text and empty_between and coverage >= 0.5 and count >= 0.75 * ring_band
         if not with_label:
             dashes, in_row = _dash_pattern(ang)
             # "czystość" pierścienia: białe piksele w pasie wokół okręgu
@@ -195,6 +214,12 @@ def _find_drop_point(hsv: np.ndarray, known: Circle | None = None) -> Circle | N
             # w znanym miejscu DROP (z poprzednich plansz) wystarczą 3 kreski -
             # np. gdy stos kulek zasłania prawie cały okrąg
             need, need_row = (3, 2) if (cx, cy, r) == known_c else (5, 3)
+            if thick_only and (cx, cy, r) != known_c:
+                # same grube kreski (bez obwódek kulek): 4 regularne kreski
+                # na prawie idealnie czystym pierścieniu
+                need, need_row = 4, 3
+                if count < 0.9 * band or float(np.std(d[on_ring] - r)) > 0.04 * r:
+                    continue
             if dashes < need or in_row < need_row or count < 0.8 * band:
                 continue
         best, best_count = (xs[on_ring], ys[on_ring], (float(cx), float(cy), float(r))), count
@@ -294,6 +319,11 @@ def detect(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
     i listą wykrytych kulek (we współrzędnych PEŁNEGO screenshotu, nie
     regionu - czyli gotowych do bezpośredniego użycia w tap/swipe).
     """
+    panel = None
+    if region is None:
+        # bez ręcznie ustawionego obszaru: sam panel planszy, jeśli go widać
+        # (DROP bywa w dowolnym miejscu planszy, także tuż pod nagłówkiem)
+        region = panel = board_panel(bgr)
     work, offset_x, offset_y = _crop(bgr, region)
     if work.size == 0:
         return DetectionResult(drop=None, balls=[])
@@ -303,6 +333,9 @@ def detect(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
     if drop_hint is not None:
         known = Circle(drop_hint.x - offset_x, drop_hint.y - offset_y, drop_hint.r)
     drop = _find_drop_point(hsv, known)
+    if drop is None and panel is not None:
+        # tylko na planszy Dust Mine: DROP przykryty kulką z jasną obwódką
+        drop = _find_drop_point(hsv, known, thick_only=True)
     if drop is None and drop_hint is not None and use_hint_as_fallback:
         drop = Circle(drop_hint.x - offset_x, drop_hint.y - offset_y, drop_hint.r)
     # bez DROP to nie jest ekran Dust Mine - kulki nie są potrzebne
@@ -492,6 +525,25 @@ def _cast_context(hsv: np.ndarray, mask: np.ndarray, r: Rect) -> bool:
         if 0.04 * w <= ph <= 0.15 * w and 2.0 <= ph / max(pw, 1) <= 5.0 and area >= 0.5 * pw * ph:
             return True
     return False
+
+
+def board_panel(bgr: np.ndarray) -> tuple[int, int, int, int] | None:
+    """
+    Panel planszy Dust Mine (duży, zaokrąglony prostokąt prawie na całą
+    szerokość, odrobinę jaśniejszy od tła) jako (x1, y1, x2, y2), albo None.
+    Nad nim jest biały nagłówek ("DUST MINE EXPLOSION", "+0 dust · 4 left"),
+    który przy szukaniu DROP na całym ekranie zabiera miejsce kandydatom.
+    """
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    bg = float(np.median(gray[:int(0.1 * H)]))
+    mask = (cv2.medianBlur(gray, 5) > bg + 3).astype(np.uint8)
+    n, _l, stats, _c = cv2.connectedComponentsWithStats(mask)
+    for i in range(1, n):
+        x, y, w, h, _a = (int(v) for v in stats[i])
+        if w >= 0.85 * W and h >= 0.55 * H and 0.1 * H < y < 0.35 * H:
+            return x, y, x + w, y + h
+    return None
 
 
 def board_drop_hint(bgr: np.ndarray) -> Circle | None:
