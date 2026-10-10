@@ -560,7 +560,7 @@ def board_drop_hint(bgr: np.ndarray) -> Circle | None:
     for i in range(1, n):
         x, y, w, h, _a = (int(v) for v in stats[i])
         if w >= 0.85 * W and h >= 0.55 * H and 0.1 * H < y < 0.35 * H:
-            return Circle(x + w // 2, int(y + 0.792 * h), int(0.087 * W))
+            return Circle(x + w // 2, int(y + 0.792 * h), int(0.061 * W))  # od X 2026 mniejszy okrąg (było 0.087 W)
     return None
 
 
@@ -578,10 +578,15 @@ def detect_all(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
         # DROP mocno zasłonięty kulkami (np. zaraz po starcie bota, bez
         # znanej pozycji): spróbuj w miejscu, gdzie leży na planszy
         board_hint = board_drop_hint(bgr)
-        if board_hint is not None and board_hint != drop_hint:
-            det2 = detect(bgr, None, drop_hint=board_hint, use_hint_as_fallback=False)
-            if det2.drop is not None:
-                det = det2
+        if board_hint is not None:
+            # obecny (mniejszy) i dawny rozmiar okręgu DROP
+            for hint in (board_hint, Circle(board_hint.x, board_hint.y, int(0.087 * bgr.shape[1]))):
+                if hint == drop_hint:
+                    continue
+                det2 = detect(bgr, None, drop_hint=hint, use_hint_as_fallback=False)
+                if det2.drop is not None:
+                    det = det2
+                    break
     work, ox, oy = _crop(bgr, region)
     if work.size == 0:
         return det
