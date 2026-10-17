@@ -261,12 +261,14 @@ def straightness(steps: list[Step]) -> float:
 
 
 def to_commands(steps: list[Step], client, contact: int = 0) -> list[str]:
-    """Zamienia kroki na polecenia minitouch (d / m / w / u)."""
-    commands: list[str] = []
+    """
+    Zamienia kroki na polecenia minitouch. Każdy krok jest osobno
+    zatwierdzany ("c") - protokół nie pozwala na dwa zdarzenia tego samego
+    palca w jednym zatwierdzeniu, a bez "c" nic nie trafia na ekran.
+    """
     first = steps[0]
-    commands.append(client.down(contact, round(first.x), round(first.y), first.pressure))
+    commands = [client.down(contact, first.x, first.y, first.pressure), "c"]
     for step in steps[1:]:
-        commands.append(client.wait(step.delay_ms))
-        commands.append(client.move(contact, round(step.x), round(step.y), step.pressure))
-    commands.append(client.up(contact))
+        commands += [client.wait(step.delay_ms), client.move(contact, step.x, step.y, step.pressure), "c"]
+    commands += [client.up(contact), "c"]
     return commands

@@ -193,6 +193,13 @@ class ADBController:
     def pull(self, remote: str, local: str, timeout: float = 120.0) -> None:
         self._run(["pull", remote, local], timeout=timeout)
 
+    def push(self, local: str, remote: str, timeout: float = 60.0) -> None:
+        self._run(["push", local, remote], timeout=timeout)
+
+    def forward(self, *args: str) -> None:
+        """`adb forward <args>`, np. forward("tcp:1111", "localabstract:minitouch")."""
+        self._run(["forward", *args])
+
     # ------------------------------------------------------------------ #
     # Wejście: tap / swipe
     # ------------------------------------------------------------------ #

@@ -948,6 +948,7 @@ class MainWindow(QMainWindow):
                 record_unknown_seconds=inst.get("record_unknown_seconds", 0.0),
                 record_cooldown=inst.get("record_cooldown", 300.0),
                 capture_dir=inst.get("capture_dir", "captures"),
+                touch_backend=inst.get("touch_backend", "adb"),
             )
             entry = InstanceEntry(config=cfg, serial=inst["serial"])
             self._register_instance(entry)
@@ -990,6 +991,7 @@ class MainWindow(QMainWindow):
                 "record_unknown_seconds": cfg.record_unknown_seconds,
                 "record_cooldown": cfg.record_cooldown,
                 "capture_dir": cfg.capture_dir,
+                "touch_backend": cfg.touch_backend,
             })
 
         try:

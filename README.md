@@ -184,6 +184,28 @@ python manager.py --auto --idle-x 360 --idle-y 640
 Zatrzymanie: `Ctrl+C` w terminalu — manager grzecznie zatrzyma wszystkie
 procesy potomne.
 
+## Zróżnicowane gesty (minitouch)
+
+Domyślnie bot przeciąga kulki przez `adb shell input swipe` (prosta linia,
+stała prędkość). Z `minitouch` każdy gest ma inny kształt (łuk, S, haczyk,
+"L", rzut), zmienną prędkość i nacisk - patrz `dustbot2/touch/humanize.py`.
+Wymaga roota na emulatorze (LDPlayer ma go domyślnie). Binarka jest w
+`vendor/minitouch/` i bot sam wgrywa ją na emulator.
+
+1. Sprawdź, czy działa (na ekranie głównym Androida, nie w grze):
+
+   ```bash
+   python -m dustbot2.touch.check --serial emulator-5554 --demo
+   ```
+
+   Na ekranie pojawią się ślady tapu i 6 gestów. Muszą iść od dołu-lewej
+   do góry-prawej części ekranu. Jeśli są odbite lub obrócone - nie
+   włączaj minitouch i zgłoś to.
+2. Włącz w `config.json` dla instancji: `"touch_backend": "minitouch"`.
+
+Jeśli minitouch się nie uruchomi albo przestanie działać, bot sam wraca do
+`adb input` i zapisuje ostrzeżenie w logu.
+
 ## Nagrywanie minigier (materiał do nowych modułów)
 
 Bot potrafi zbierać materiał z ekranów, których jeszcze nie obsługuje

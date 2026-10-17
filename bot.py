@@ -31,6 +31,8 @@ import numpy as np
 
 from adb_controller import ADBController, ADBError
 from recorder import MinigameRecorder, UnknownScreenSaver
+from dustbot2.touch.humanize import plan_drag, to_commands
+from dustbot2.touch.minitouch import MinitouchSession, TouchError
 import vision
 
 logger = logging.getLogger("bot")
@@ -285,6 +287,14 @@ class BotConfig:
     # Folder na zrzuty i nagrania (względem katalogu uruchomienia).
     capture_dir: str = "captures"
 
+    # --- Wejście dotykowe --- #
+    # "adb"       - `adb shell input` (prosta linia, stała prędkość, drag_duration_ms)
+    # "minitouch" - zróżnicowane gesty z dustbot2/touch/humanize.py (łuki, S,
+    #               haczyki, "L", rzuty); wymaga roota na emulatorze. Jeśli
+    #               minitouch się nie uruchomi albo przestanie działać, bot
+    #               sam wraca do "adb".
+    touch_backend: str = "adb"
+
 
 @dataclass
 class BotStats:
@@ -326,6 +336,10 @@ class DustMineBot:
         self._unknown_saver = UnknownScreenSaver(Path(config.capture_dir) / "Unknown", config.name)
         self._record_request: tuple[str, float] | None = None
         self._last_auto_record: float = float("-inf")
+
+        self._touch_session: MinitouchSession | None = None
+        self._touch = None  # MinitouchClient, gdy działa minitouch
+        self._drag_rng = random.Random()
 
     def stop(self) -> None:
         self._stop = True
@@ -498,8 +512,68 @@ class DustMineBot:
                 logger.error("[%s] nie udało się uruchomić gry po przerwie: %s", cfg.name, e)
 
     # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------ #
+    # Wejście dotykowe: minitouch z powrotem do ADB
+    # ------------------------------------------------------------------ #
+    def _start_touch(self) -> None:
+        cfg = self.config
+        if cfg.touch_backend != "minitouch":
+            return
+        session = MinitouchSession(self.adb)
+        try:
+            self._touch = session.start()
+            self._touch_session = session
+            logger.info("[%s] wejście: minitouch (zróżnicowane gesty)", cfg.name)
+        except (TouchError, ADBError) as e:
+            logger.warning("[%s] minitouch niedostępny, używam adb input: %s", cfg.name, e)
+            session.stop()
+
+    def _stop_touch(self) -> None:
+        if self._touch_session is not None:
+            self._touch_session.stop()
+        self._touch_session = None
+        self._touch = None
+
+    def _touch_failed(self, error: Exception) -> None:
+        logger.warning("[%s] minitouch przestał działać, przełączam na adb input: %s",
+                       self.config.name, error)
+        self._stop_touch()
+
+    def _tap(self, x: int, y: int) -> None:
+        if self._touch is not None:
+            hold = random.uniform(45, 120)
+            try:
+                self._touch.tap(x, y, hold_ms=hold, pressure=random.randint(40, 70))
+                time.sleep(hold / 1000)
+                return
+            except TouchError as e:
+                self._touch_failed(e)
+        self.adb.tap(x, y)
+
+    def _drag(self, start: tuple[int, int], end: tuple[int, int]) -> None:
+        cfg = self.config
+        if self._touch is not None:
+            plan = plan_drag(start, end, rng=self._drag_rng, bounds=cfg.board_region)
+            try:
+                self._touch.send(to_commands(plan.steps, self._touch))
+                # pauzy wykonuje minitouch na urządzeniu - czekamy, aż gest się skończy
+                time.sleep(plan.duration_ms / 1000)
+                logger.debug("[%s] gest %s: %.0f ms, %d punktów",
+                             cfg.name, plan.shape, plan.duration_ms, len(plan.steps))
+                return
+            except TouchError as e:
+                self._touch_failed(e)
+        self.adb.swipe(start[0], start[1], end[0], end[1], duration_ms=int(cfg.drag_duration_ms.sample()))
+
     def run(self) -> None:
         logger.info("[%s] start bota", self.config.name)
+        self._start_touch()
+        try:
+            self._run_loop()
+        finally:
+            self._stop_touch()
+
+    def _run_loop(self) -> None:
         while not self._stop:
             try:
                 self._wait_for_schedule()
@@ -691,7 +765,7 @@ class DustMineBot:
             now = time.monotonic()
             if not self._paused and now - last_click >= next_click_delay:
                 click_point = self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
-                self.adb.tap(*click_point)
+                self._tap(*click_point)
                 last_click = now
                 next_click_delay = cfg.idle_click_interval.sample()
 
@@ -753,7 +827,7 @@ class DustMineBot:
             logger.debug("[%s] przeciągam kulkę (%d,%d) -> DROP (%d,%d)",
                          cfg.name, ball.x, ball.y, drop.x, drop.y)
 
-            self.adb.swipe(ball.x, ball.y, drop.x, drop.y, duration_ms=int(cfg.drag_duration_ms.sample()))
+            self._drag((ball.x, ball.y), (drop.x, drop.y))
             self.stats.balls_collected += 1
 
             self._wait_ball_gone(ball, timeout=cfg.between_drags_delay.sample())
