@@ -342,6 +342,21 @@ class MainWindow(QMainWindow):
         self.combo_touch.currentIndexChanged.connect(self._apply_config_fields)
         form.addRow("Wejście dotykowe:", self.combo_touch)
 
+        self.field_tap_min = QDoubleSpinBox()
+        self.field_tap_max = QDoubleSpinBox()
+        tap_row = QHBoxLayout()
+        tap_row.setContentsMargins(0, 0, 0, 0)
+        for label, spin in (("od", self.field_tap_min), ("do", self.field_tap_max)):
+            spin.setRange(0.05, 10.0)
+            spin.setDecimals(2)
+            spin.setSingleStep(0.05)
+            spin.setSuffix(" s")
+            spin.editingFinished.connect(self._apply_config_fields)
+            tap_row.addWidget(QLabel(label))
+            tap_row.addWidget(spin)
+        tap_container = QWidget(); tap_container.setLayout(tap_row)
+        form.addRow("Odstęp tapów JUST LOOT:", tap_container)
+
         self.btn_edit_schedule = QPushButton("📅 Edytuj harmonogram")
         self.btn_edit_schedule.clicked.connect(self._open_schedule_editor)
         self.schedule_summary_label = QLabel("brak (gra bez przerwy)")
@@ -470,13 +485,15 @@ class MainWindow(QMainWindow):
         # wartości w QSpinBox/QDoubleSpinBox wywołuje valueChanged/editingFinished,
         # które od razu (przedwcześnie) nadpisują config innej/nowej instancji
         # wartościami domyślnymi z widgetu, zanim zdążymy wczytać prawdziwe dane.
-        fields = (self.field_name, self.field_serial, self.combo_touch)
+        fields = (self.field_name, self.field_serial, self.combo_touch, self.field_tap_min, self.field_tap_max)
         for w in fields:
             w.blockSignals(True)
         try:
             self.field_name.setText(cfg.name)
             self.field_serial.setText(entry.serial)
             self.combo_touch.setCurrentIndex(max(self.combo_touch.findData(cfg.touch_backend), 0))
+            self.field_tap_min.setValue(min(cfg.just_loot_interval))
+            self.field_tap_max.setValue(max(cfg.just_loot_interval))
         finally:
             for w in fields:
                 w.blockSignals(False)
@@ -520,7 +537,8 @@ class MainWindow(QMainWindow):
             )
 
     def _set_config_form_enabled(self, enabled: bool) -> None:
-        for w in (self.field_name, self.field_serial, self.btn_edit_schedule, self.combo_touch):
+        for w in (self.field_name, self.field_serial, self.btn_edit_schedule, self.combo_touch,
+                  self.field_tap_min, self.field_tap_max):
             w.setEnabled(enabled)
         if not enabled:
             self.schedule_summary_label.setText("brak (gra bez przerwy)")
@@ -531,6 +549,8 @@ class MainWindow(QMainWindow):
             return
         cfg = entry.config
         cfg.touch_backend = self.combo_touch.currentData() or "adb"
+        low, high = sorted((self.field_tap_min.value(), self.field_tap_max.value()))
+        cfg.just_loot_interval = (low, high)
         entry.serial = self.field_serial.text().strip()
 
     def _refresh_preview_once(self) -> None:
@@ -830,6 +850,8 @@ class MainWindow(QMainWindow):
                 record_cooldown=inst.get("record_cooldown", 300.0),
                 capture_dir=inst.get("capture_dir", "captures"),
                 touch_backend=inst.get("touch_backend", "adb"),
+                just_loot_interval=tuple(inst.get("just_loot_interval", (0.25, 0.7))),
+                just_loot_pause_chance=inst.get("just_loot_pause_chance", 0.03),
                 fishing_latency_ms=inst.get("fishing_latency_ms"),
                 fishing_aim_spread=inst.get("fishing_aim_spread", 0.18),
                 daily_play=DailyPlayTarget.from_dict(inst.get("daily_play")),
@@ -870,6 +892,8 @@ class MainWindow(QMainWindow):
                 "record_cooldown": cfg.record_cooldown,
                 "capture_dir": cfg.capture_dir,
                 "touch_backend": cfg.touch_backend,
+                "just_loot_interval": list(cfg.just_loot_interval),
+                "just_loot_pause_chance": cfg.just_loot_pause_chance,
                 "fishing_latency_ms": cfg.fishing_latency_ms,
                 "fishing_aim_spread": cfg.fishing_aim_spread,
                 "daily_play": cfg.daily_play.to_dict() if cfg.daily_play else None,

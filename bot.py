@@ -131,9 +131,17 @@ class BotConfig:
     # (zabezpieczenie przed zawieszeniem w pętli).
     max_seconds_per_game_screen: float = 60.0
 
-    # Interwał odświeżania screenshotu w trybie idle (osobny od odstępu
-    # tapów JUST LOOT, który bot losuje sam - patrz _just_loot_delay).
+    # Interwał odświeżania screenshotu w trybie idle, gdy bot nie stuka
+    # JUST LOOT (inne ekrany, czekanie na planszę).
     idle_poll_interval: float = 0.5
+
+    # Odstęp (s) między tapami JUST LOOT: [min, max]. Bot losuje go za każdym
+    # razem (rozkład log-normalny wewnątrz zakresu), więc tapy nie mają
+    # stałego rytmu. Dolną granicę ogranicza też czas zrobienia zrzutu
+    # ekranu (ok. 0.1-0.3 s z adb).
+    just_loot_interval: tuple[float, float] = (0.25, 0.7)
+    # Szansa (0-1) na krótką "zamyśloną" pauzę 1.5-4 s zamiast zwykłego odstępu.
+    just_loot_pause_chance: float = 0.03
 
     # --- Harmonogram pracy --- #
     # Lista okien czasowych, w których bot MOŻE działać. Pusta lista
@@ -766,30 +774,43 @@ class DustMineBot:
                 last_click = 0.0
                 continue
 
-            now = time.monotonic()
-            if not self._paused and state == "home" and now - last_click >= next_click_delay:
-                point = self._just_loot_point(frame)
-                if point is not None:
-                    self._tap(*point)
-                    last_click = now
-                    next_click_delay = self._just_loot_delay()
+            if not self._paused and state == "home":
+                wait = last_click + next_click_delay - time.monotonic()
+                if wait <= cfg.idle_poll_interval:
+                    # odczekujemy dokładnie wylosowany odstęp (klatka jest
+                    # świeża), zamiast zaokrąglać go do interwału odświeżania
+                    point = self._just_loot_point(frame)
+                    if point is not None:
+                        if wait > 0:
+                            time.sleep(wait)
+                        self._tap(*point)
+                        last_click = time.monotonic()
+                        next_click_delay = self._just_loot_delay()
+                        continue
 
             time.sleep(cfg.idle_poll_interval)
         return False
 
     def _just_loot_delay(self) -> float:
         """
-        Odstęp (s) do następnego tapu JUST LOOT: zwykle ok. 0.6-2 s
-        (log-normalnie), a co jakiś czas dłuższa pauza 2.5-7 s - jak u
-        człowieka, który na chwilę odwraca uwagę.
+        Odstęp (s) do następnego tapu JUST LOOT w zakresie
+        config.just_loot_interval (log-normalnie wokół średniej geometrycznej),
+        a z szansą just_loot_pause_chance krótka pauza 1.5-4 s.
         """
-        if self._drag_rng.random() < 0.08:
-            return self._drag_rng.uniform(2.5, 7.0)
+        cfg = self.config
+        if self._drag_rng.random() < cfg.just_loot_pause_chance:
+            return self._drag_rng.uniform(1.5, 4.0)
+        low, high = sorted(cfg.just_loot_interval)
+        low = max(low, 0.05)
+        if high - low < 0.02:
+            return self._drag_rng.uniform(low, low + 0.02)
+        median = math.sqrt(low * high)
+        sigma = math.log(high / low) / 4  # zakres to ok. +-2 sigma
         # losujemy ponownie zamiast przycinać - przycinanie zbierałoby część
         # tapów dokładnie na granicach, co byłoby łatwym do wykrycia wzorcem
         while True:
-            delay = self._drag_rng.lognormvariate(math.log(1.05), 0.3)
-            if 0.6 <= delay <= 2.0:
+            delay = self._drag_rng.lognormvariate(math.log(median), sigma)
+            if low <= delay <= high:
                 return delay
 
     def _just_loot_point(self, frame: np.ndarray) -> tuple[int, int] | None:

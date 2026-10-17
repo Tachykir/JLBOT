@@ -12,6 +12,8 @@
         "days": null
       },
       "close_game_during_break": true,
+      "just_loot_interval": [0.25, 0.7],
+      "just_loot_pause_chance": 0.03,
       "fishing_aim_spread": 0.18
     },
     {

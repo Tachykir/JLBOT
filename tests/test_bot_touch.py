@@ -1,3 +1,4 @@
+import statistics
 import unittest
 
 from bot import BotConfig, DustMineBot
@@ -30,9 +31,9 @@ class FakeADB:
         self.swipes.append((x1, y1, x2, y2, duration_ms))
 
 
-def make_bot(transport=None):
+def make_bot(transport=None, **config):
     adb = FakeADB()
-    bot = DustMineBot(adb, BotConfig(name="inst-1", capture_unknown_screens=False))
+    bot = DustMineBot(adb, BotConfig(name="inst-1", capture_unknown_screens=False, **config))
     if transport is not None:
         banner = Banner(1, 10, 539, 959, 100)
         bot._touch = MinitouchClient(transport, banner, Screen(540, 960))
@@ -74,16 +75,25 @@ class BotTouchTests(unittest.TestCase):
         self.assertEqual(adb.taps, [(5, 5)])
 
 
-    def test_just_loot_delays_are_varied_with_occasional_long_pauses(self):
+    def test_just_loot_delays_follow_config_range(self):
         bot, _ = make_bot()
         bot._drag_rng.seed(3)
-        delays = [bot._just_loot_delay() for _ in range(2000)]
-        self.assertTrue(all(0.6 <= d <= 7.0 for d in delays))
-        long_pauses = sum(d > 2.4 for d in delays) / len(delays)
-        self.assertTrue(0.04 < long_pauses < 0.12, long_pauses)
+        delays = [bot._just_loot_delay() for _ in range(3000)]
+        fast = [d for d in delays if d <= 0.7]
+        self.assertTrue(all(0.25 <= d <= 0.7 or 1.5 <= d <= 4.0 for d in delays))
+        pauses = 1 - len(fast) / len(delays)
+        self.assertTrue(0.01 < pauses < 0.06, pauses)
+        self.assertLess(statistics.median(fast), 0.5)
         # brak sztucznych pików na granicach zakresu
-        self.assertLess(sum(d in (0.6, 2.0) for d in delays), 3)
-        self.assertGreater(len({round(d, 3) for d in delays}), 800)
+        self.assertLess(sum(d in (0.25, 0.7) for d in delays), 3)
+        self.assertGreater(len({round(d, 3) for d in fast}), 300)
+
+    def test_just_loot_interval_is_configurable(self):
+        bot, _ = make_bot(just_loot_interval=(1.0, 2.0), just_loot_pause_chance=0.0)
+        delays = [bot._just_loot_delay() for _ in range(500)]
+        self.assertTrue(all(1.0 <= d <= 2.0 for d in delays))
+        bot.config.just_loot_interval = (0.3, 0.3)
+        self.assertTrue(0.3 <= bot._just_loot_delay() <= 0.32)
 
     def test_adb_swipe_duration_comes_from_gesture_profile(self):
         bot, adb = make_bot()

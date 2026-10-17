@@ -63,12 +63,16 @@ tylko `serial` (z `adb devices`) i `name`; reszta ma wartości domyślne
   dłuższe bloki), sesje od ok. 10 min do 2 h i nieregularne przerwy.
   Brak = gra bez przerwy.
 - **`touch_backend`** - `"adb"` albo `"minitouch"` (patrz niżej).
+- **`just_loot_interval`** - odstęp tapów JUST LOOT w sekundach, `[min, max]`
+  (domyślnie `[0.25, 0.7]`). Bot losuje każdy odstęp w tym zakresie, a z
+  szansą `just_loot_pause_chance` (domyślnie 0.03) robi krótką pauzę
+  1.5-4 s. Najkrótszy realny odstęp to czas zrzutu ekranu (ok. 0.1-0.3 s).
 - **`game_package`** - pakiet gry; potrzebny do restartu gry przez
   watchdogi i zamykania gry na czas przerw (`close_game_during_break`).
 
 Starsze pola `idle_point`, `board_region`, `idle_click_interval`,
 `drag_duration_ms` i `between_drags_delay` nie są już używane - jeśli są w
-starym pliku, bot je pomija. Odstępy tapów i czasy gestów bot losuje sam.
+starym pliku, bot je pomija. Czasy gestów bot losuje sam.
 
 ## Uruchomienie
 
