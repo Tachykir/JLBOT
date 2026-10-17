@@ -11,6 +11,7 @@ z wynikami, żeby porównywać profile w testach detekcji anticheatu.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 
@@ -25,11 +26,16 @@ class DragProfile:
     arc_fraction: float = 0.06
     # Drżenie palca w pikselach (odchylenie standardowe), wewnątrz gestu.
     jitter_px: float = 1.2
+    # Jak bardzo drżenie w kolejnej klatce zależy od poprzedniej (0-1).
+    # Prawdziwe drżenie ręki jest wolnozmienne; 0 dałoby poszarpany zygzak.
+    jitter_smoothing: float = 0.85
     # Przesunięcie punktu startowego i końcowego (px) - nigdy nie trafiamy
     # dokładnie w ten sam piksel.
     endpoint_px: float = 3.0
-    # Nacisk palca (zakres).
+    # Nacisk palca (zakres). Startowa wartość jest losowana z zakresu, a potem
+    # zmienia się płynnie o najwyżej pressure_step na klatkę.
     pressure: tuple[int, int] = (40, 70)
+    pressure_step: int = 2
     # Zaokrąglenie zmiennej prędkości: 0 = liniowo, 1 = pełne ease-in-out.
     easing: float = 0.7
 
@@ -84,20 +90,32 @@ def plan_drag(
     frame_ms = rng.uniform(*profile.frame_ms)
     count = max(int(duration / frame_ms), 2)
 
-    steps: list[Step] = [Step(0.0, sx, sy, rng.randint(*profile.pressure))]
-    prev_t = 0.0
+    # Klatki dotyku mają równe odstępy w czasie (jak próbkowanie ekranu),
+    # a easing przesuwa tylko POZYCJĘ - dzięki temu palec przyspiesza na
+    # starcie i hamuje przy DROP.
+    delay = duration / count
+    low, high = profile.pressure
+    pressure = rng.randint(low, high)
+    # drżenie: proces AR(1) o stałym odchyleniu jitter_px, wygaszany na
+    # początku i końcu gestu, żeby nie przesuwać punktów końcowych
+    a = profile.jitter_smoothing
+    noise_scale = profile.jitter_px * (1 - a * a) ** 0.5
+    jx = jy = 0.0
+
+    steps: list[Step] = [Step(0.0, sx, sy, pressure)]
     for i in range(1, count + 1):
         t_lin = i / count
-        t = _ease(t_lin, profile.easing)
-        x, y = _bezier((sx, sy), p1, p2, (ex, ey), t)
+        x, y = _bezier((sx, sy), p1, p2, (ex, ey), _ease(t_lin, profile.easing))
+        jx = a * jx + rng.gauss(0, noise_scale)
+        jy = a * jy + rng.gauss(0, noise_scale)
+        taper = math.sin(math.pi * t_lin)
         if i < count:
-            x += rng.gauss(0, profile.jitter_px)
-            y += rng.gauss(0, profile.jitter_px)
+            x += jx * taper
+            y += jy * taper
         else:
             x, y = ex, ey
-        delay = (t - prev_t) * duration
-        prev_t = t
-        steps.append(Step(delay, x, y, rng.randint(*profile.pressure)))
+        pressure = min(max(pressure + rng.randint(-profile.pressure_step, profile.pressure_step), low), high)
+        steps.append(Step(delay, x, y, pressure))
     return steps
 
 

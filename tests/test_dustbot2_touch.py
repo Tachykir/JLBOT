@@ -89,6 +89,24 @@ class HumanizeTests(unittest.TestCase):
         steps = plan_drag((0, 0), (300, 300), profile, random.Random(3))
         self.assertTrue(all(40 <= s.pressure <= 70 for s in steps))
 
+    def test_finger_speeds_up_then_slows_down(self):
+        steps = plan_drag((100, 100), (100, 900), DragProfile(jitter_px=0), random.Random(7))
+        speeds = [abs(b.y - a.y) / b.delay_ms for a, b in zip(steps, steps[1:])]
+        third = len(speeds) // 3
+        middle = sum(speeds[third:2 * third]) / third
+        self.assertGreater(middle, 1.5 * sum(speeds[:third // 2]) / (third // 2))
+        self.assertGreater(middle, 1.5 * sum(speeds[-(third // 2):]) / (third // 2))
+
+    def test_pressure_changes_smoothly(self):
+        profile = DragProfile(pressure_step=2)
+        steps = plan_drag((0, 0), (300, 600), profile, random.Random(9))
+        self.assertTrue(all(abs(b.pressure - a.pressure) <= 2 for a, b in zip(steps, steps[1:])))
+
+    def test_frames_are_evenly_spaced(self):
+        steps = plan_drag((0, 0), (300, 600), rng=random.Random(4))
+        delays = {round(s.delay_ms, 6) for s in steps[1:]}
+        self.assertEqual(len(delays), 1)
+
     def test_commands_down_moves_then_up(self):
         client = make_client()
         steps = plan_drag((100, 100), (400, 800), DragProfile(), random.Random(5))
