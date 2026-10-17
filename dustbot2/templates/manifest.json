@@ -140,6 +140,174 @@
         330
       ],
       "priority": 0
+    },
+    {
+      "name": "fishing_title",
+      "state": "fishing",
+      "file": "fishing_title.png",
+      "search": [
+        0,
+        0,
+        1,
+        0.15
+      ],
+      "threshold": 0.8,
+      "priority": 0,
+      "ui_scale": 1.28,
+      "source": "material/2026-10-17",
+      "source_rect": [
+        136,
+        37,
+        404,
+        69
+      ]
+    },
+    {
+      "name": "depth_title",
+      "state": "depth_collapse",
+      "file": "depth_title.png",
+      "search": [
+        0,
+        0,
+        1,
+        0.15
+      ],
+      "threshold": 0.8,
+      "priority": 0,
+      "ui_scale": 1.28,
+      "source": "material/2026-10-17",
+      "source_rect": [
+        113,
+        37,
+        426,
+        69
+      ]
+    },
+    {
+      "name": "proceed",
+      "state": "combat_done",
+      "file": "proceed.png",
+      "search": [
+        0,
+        0.8,
+        1,
+        1
+      ],
+      "threshold": 0.8,
+      "priority": 0,
+      "ui_scale": 1.28,
+      "source": "material/2026-10-17",
+      "source_rect": [
+        221,
+        1074,
+        319,
+        1096
+      ]
+    },
+    {
+      "name": "reveal_text",
+      "state": "reveal",
+      "file": "reveal_text.png",
+      "search": [
+        0,
+        0.7,
+        1,
+        0.9
+      ],
+      "threshold": 0.8,
+      "priority": 0,
+      "ui_scale": 1.28,
+      "source": "material/2026-10-17",
+      "source_rect": [
+        128,
+        921,
+        411,
+        940
+      ]
+    },
+    {
+      "name": "keep_current_v2",
+      "state": "item_popup",
+      "file": "keep_current_v2.png",
+      "search": [
+        0,
+        0.85,
+        1,
+        1
+      ],
+      "threshold": 0.8,
+      "priority": 10,
+      "ui_scale": 1.28,
+      "source": "material/2026-10-17",
+      "source_rect": [
+        189,
+        1084,
+        349,
+        1111
+      ]
+    },
+    {
+      "name": "drop_text_v2",
+      "state": null,
+      "file": "drop_text_v2.png",
+      "search": [
+        0,
+        0.12,
+        1,
+        1
+      ],
+      "threshold": 0.75,
+      "priority": 0,
+      "ui_scale": 1.28,
+      "source": "material/2026-10-17",
+      "source_rect": [
+        247,
+        934,
+        300,
+        955
+      ]
+    },
+    {
+      "name": "choose_depth_v2",
+      "state": "home",
+      "file": "choose_depth_v2.png",
+      "search": [
+        0,
+        0.5,
+        1,
+        0.75
+      ],
+      "threshold": 0.8,
+      "priority": 0,
+      "ui_scale": 1.28,
+      "source": "material/2026-10-17",
+      "source_rect": [
+        196,
+        741,
+        343,
+        760
+      ]
+    },
+    {
+      "name": "cast_button",
+      "state": null,
+      "file": "cast_button.png",
+      "search": [
+        0,
+        0.4,
+        1,
+        0.8
+      ],
+      "threshold": 0.8,
+      "priority": 0,
+      "ui_scale": 1.28,
+      "source": "material/2026-10-17",
+      "source_rect": [
+        237,
+        694,
+        303,
+        719
+      ]
     }
   ]
 }

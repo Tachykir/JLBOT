@@ -106,5 +106,51 @@ class DropLocatorTests(unittest.TestCase):
         self.assertNear((match.x, match.y), (cx * 2, cy * 2), 6)
 
 
+NEW_MATERIAL = ROOT / "material" / "2026-10-17" / "screenshots"
+NEW_LABELS = {
+    "20261017_235025_836554_instance-1.png": "dust_mine",
+    "20261017_235122_233729_instance-1.png": "combat_done",
+    "20261017_235207_794917_instance-1.png": "reveal",
+    "20261017_235222_242463_instance-1.png": "item_popup",
+    "20261017_235303_981096_instance-1.png": "dust_mine",
+    "20261017_235912_438551_instance-1.png": "item_popup",
+}
+
+
+class NewResolutionTests(unittest.TestCase):
+    """LDPlayer 1080x2320 - interfejs ok. 1.28 raza większy niż na 540x960."""
+
+    def test_ui_scale_is_detected_automatically(self):
+        clf = ScreenClassifier.load()
+        self.assertIsNone(clf.ui_scale)
+        frame = cv2.imread(str(NEW_MATERIAL / "20261017_235025_836554_instance-1.png"))
+        self.assertEqual(clf.classify(frame).state, "dust_mine")
+        self.assertAlmostEqual(clf.ui_scale, 1.28, delta=0.03)
+
+    def test_new_screens(self):
+        clf = ScreenClassifier.load(ui_scale=1.28)
+        for name, expected in NEW_LABELS.items():
+            with self.subTest(name=name):
+                self.assertEqual(clf.classify(cv2.imread(str(NEW_MATERIAL / name))).state, expected)
+
+    def test_drop_found_on_dust_mine_video(self):
+        # DROP szukamy tylko na ekranie Dust Mine - karty przedmiotów mają
+        # napis "DROPPED AT DEPTH", który szablon słusznie dopasowuje.
+        clf = ScreenClassifier.load(ui_scale=1.28)
+        cap = cv2.VideoCapture(str(ROOT / "material" / "2026-10-17" / "dust_mine.mp4"))
+        boards = found = 0
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if clf.classify(frame).state != "dust_mine":
+                continue
+            boards += 1
+            if clf.locate(frame, "drop_text_v2") is not None:
+                found += 1
+        self.assertGreater(boards, 20)
+        # część klatek ma DROP zasłonięty przez przeciąganą kulkę
+        self.assertGreaterEqual(found / boards, 0.6)
+
 if __name__ == "__main__":
     unittest.main()
