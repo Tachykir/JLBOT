@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from bot import BotConfig, DustMineBot
-from recorder import MinigameRecorder, UnknownScreenSaver
+from recorder import MinigameRecorder, UnknownScreenSaver, save_screenshot
 
 SCREENS = Path(__file__).resolve().parent.parent / "Unknown"
 BOARD = cv2.imread(str(SCREENS / "20261010_154356_700420_Vexaro.png"))
@@ -65,6 +65,16 @@ class FakeADB:
 
     def tap(self, x, y):
         self.taps += 1
+
+
+class SaveScreenshotTests(unittest.TestCase):
+    def test_saves_png_with_unknown_naming_in_new_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "captures" / "Screenshots"
+            path = save_screenshot(BOARD, folder, "inst 1")
+            self.assertEqual(path.parent, folder)
+            self.assertRegex(path.name, r"^\d{8}_\d{6}_\d{6}_inst_1\.png$")
+            self.assertEqual(cv2.imread(str(path)).shape, BOARD.shape)
 
 
 class UnknownScreenSaverTests(unittest.TestCase):

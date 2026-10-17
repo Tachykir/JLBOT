@@ -367,9 +367,15 @@ class MainWindow(QMainWindow):
         self.btn_edit_region.clicked.connect(self._toggle_edit_region)
         self.btn_refresh_preview = QPushButton("⟳ Odśwież teraz")
         self.btn_refresh_preview.clicked.connect(self._refresh_preview_once)
+        self.btn_screenshot = QPushButton("📸 Zrzut ekranu (F9)")
+        self.btn_screenshot.setShortcut("F9")
+        self.btn_screenshot.setToolTip("Zapisuje aktualny widok wybranej instancji do "
+                                       "captures/Screenshots/ - działa też przy zatrzymanym bocie.")
+        self.btn_screenshot.clicked.connect(self._save_screenshot)
         edit_row.addWidget(self.btn_edit_idle)
         edit_row.addWidget(self.btn_edit_region)
         edit_row.addWidget(self.btn_refresh_preview)
+        edit_row.addWidget(self.btn_screenshot)
         mid_layout.addLayout(edit_row)
 
         top_split.addWidget(mid)
@@ -750,6 +756,31 @@ class MainWindow(QMainWindow):
                              f"(DROP={'tak' if det.drop else 'nie'}, kulki={len(det.balls)})")
         except ADBError as e:
             QMessageBox.critical(self, "Błąd ADB", str(e))
+
+    def _save_screenshot(self) -> None:
+        """Zapisuje świeży zrzut wybranej instancji (bez nakładek z podglądu)."""
+        entry = self._current_entry()
+        if entry is None:
+            return
+        from adb_controller import ADBController, ADBError
+        from recorder import save_screenshot
+        try:
+            frame = ADBController(serial=entry.serial).screenshot()
+        except ADBError as e:
+            if entry.last_frame is None:
+                QMessageBox.critical(self, "Błąd ADB", str(e))
+                return
+            frame = entry.last_frame  # ostatnia klatka z bota, jeśli ADB chwilowo nie odpowiada
+            self._log_local(f"[{entry.config.name}] ADB nie odpowiada, zapisuję ostatnią klatkę z podglądu")
+        try:
+            path = save_screenshot(frame, Path(entry.config.capture_dir) / "Screenshots", entry.config.name)
+        except OSError as e:
+            QMessageBox.critical(self, "Błąd zapisu", str(e))
+            return
+        entry.last_frame = frame
+        if entry.config.name == self.selected_name:
+            self.preview.update_frame(frame, None)  # świeża klatka - bez starych obwódek detekcji
+        self._log_local(f"[{entry.config.name}] zapisano zrzut: {path}")
 
     # ------------------------------------------------------------------ #
     # Start / Stop / Pauza

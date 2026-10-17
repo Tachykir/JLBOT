@@ -215,6 +215,8 @@ Bot potrafi zbierać materiał z ekranów, których jeszcze nie obsługuje
   30 s bot nic nie klika, a Ty grasz ręcznie. Zapisuje się wideo
   (`video.mp4`), Twoje dotknięcia z dokładnym czasem (`touches.txt`),
   zrzuty klatek (`frames/`) i `meta.json` do synchronizacji.
+- **Przycisk "📸 Zrzut ekranu (F9)"** - zapisuje aktualny widok wybranej
+  instancji do `captures/Screenshots/` (działa też przy zatrzymanym bocie).
 - **Bez GUI**: `python recorder.py --serial emulator-5556 --seconds 30 --label fishing`
 - **Automatycznie**: bot zapisuje zrzuty nierozpoznanych ekranów do
   `captures/Unknown/` (opcja `capture_unknown_screens`, domyślnie włączona).

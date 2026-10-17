@@ -50,6 +50,16 @@ def _safe(text: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in text)
 
 
+def save_screenshot(frame: np.ndarray, folder: Path, instance_name: str) -> Path:
+    """Zapisuje klatkę jako <data>_<czas>_<mikrosekundy>_<instancja>.png (jak w Unknown/)."""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + f"_{_safe(instance_name)}.png")
+    if not cv2.imwrite(str(path), frame):
+        raise OSError(f"Nie udało się zapisać {path}")
+    return path
+
+
 class MinigameRecorder:
     def __init__(self, adb: ADBController, out_root: Path, instance_name: str):
         self.adb = adb
@@ -212,10 +222,7 @@ class UnknownScreenSaver:
         if self._last_thumb is not None:
             if float(np.mean(cv2.absdiff(thumb, self._last_thumb))) < self.min_difference:
                 return None
-        self.folder.mkdir(parents=True, exist_ok=True)
-        name = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + f"_{_safe(self.instance_name)}.png"
-        path = self.folder / name
-        cv2.imwrite(str(path), frame)
+        path = save_screenshot(frame, self.folder, self.instance_name)
         self._last_thumb = thumb
         self._last_saved = now
         return path
