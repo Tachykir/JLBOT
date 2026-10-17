@@ -40,9 +40,34 @@ wykrywa ją sam).
   timer ~5.5 s, nagroda tylko za wyczyszczenie wszystkich.
 - Plan: wykrywać kafelki po kolorze, klikać od wierzchniego.
 
-## Otwarte decyzje
+## Co robi bot (bot.py, `_idle_loop` / `_handle_screen`)
 
-- Popup przedmiotu: którą opcję wybierać (np. Equip & Salvage, gdy MAIN
-  ma plus, inaczej Salvage)?
-- Komunikat o aktualizacji Google Play: zaznaczać "Don't show again"?
-- Fishing najlepiej z `minitouch` - najpierw `python -m dustbot2.touch.check --demo`.
+| Ekran | Akcja |
+|---|---|
+| Profile (`home`) | tap w JUST LOOT (szablon; bez szablonów - `idle_point`) |
+| walka, ładowanie, inne nierozpoznane | czeka, nic nie klika |
+| `combat_done` | tap w PROCEED |
+| `reveal` | tap w kartę "?" |
+| `item_popup` | **Keep Current** |
+| `dust_mine` | przeciąga kulki do DROP (DROP z szablonu) |
+| `fishing` | rzut w strefę z przewidywaniem i kalibracją opóźnienia |
+| `depth_collapse` | klika wszystkie kafelki |
+
+Log każdego rzutu w fishingu: cel, gdzie stanął wskaźnik, trafienie/pudło,
+błąd w ms, nowe opóźnienie i licznik trafień.
+
+Nowe opcje w config.json (wszystkie opcjonalne):
+
+- `board_region_auto` (domyślnie `true`) - obszar planszy z rozmiaru ekranu;
+  `false` = użyj `board_region`
+- `fishing_latency_ms` - początkowe opóźnienie; domyślnie 60 (minitouch)
+  albo 150 (adb), potem bot sam je poprawia
+- `fishing_aim_spread` (domyślnie 0.18) - rozrzut celowania w strefie
+
+## Decyzje
+
+- Popup przedmiotu: zawsze **Keep Current**.
+- Komunikat o aktualizacji Google Play: zaznaczyć "Don't show again" i
+  zamknąć - **brakuje zrzutu tego ekranu z emulatora** (📸 F9), żeby
+  zrobić szablon.
+- Fishing: testy u użytkownika; `minitouch` daje najmniejszy rozrzut tapu.

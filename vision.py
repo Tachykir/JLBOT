@@ -225,15 +225,19 @@ def detect(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None) -> 
     gray = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
     gray_blur = cv2.medianBlur(gray, 5)
 
+    # Progi w pikselach dobrane dla ekranu szerokiego na 1080 px - skalujemy
+    # je do szerokości klatki. Górny limit promienia z zapasem, bo przy
+    # wyższym DPI emulatora kulki są większe (LDPlayer 1080x2320: r ~ 80-90).
+    scale = bgr.shape[1] / 1080
     circles = cv2.HoughCircles(
         gray_blur,
         cv2.HOUGH_GRADIENT,
         dp=1.2,
-        minDist=40,
+        minDist=max(int(40 * scale), 10),
         param1=80,
         param2=28,
-        minRadius=15,
-        maxRadius=90,
+        minRadius=max(int(15 * scale), 5),
+        maxRadius=int(130 * scale),
     )
     if circles is not None:
         circles = np.uint16(np.around(circles))

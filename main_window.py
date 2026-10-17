@@ -46,6 +46,8 @@ STATUS_COLORS = {
     "idle": "#5bc0de",
     "collecting": "#5cb85c",
     "recording": "#d9534f",
+    "fishing": "#5cb85c",
+    "minigame": "#5cb85c",
     "paused": "#aaaaaa",
     "stopped": "#777777",
     "error": "#d9534f",
@@ -56,6 +58,8 @@ STATUS_LABELS_PL = {
     "idle": "czekanie",
     "collecting": "zbieranie",
     "recording": "⏺ nagrywanie",
+    "fishing": "🎣 fishing",
+    "minigame": "minigra",
     "paused": "wstrzymany",
     "stopped": "zatrzymany",
     "error": "błąd",
@@ -1043,6 +1047,9 @@ class MainWindow(QMainWindow):
                 record_cooldown=inst.get("record_cooldown", 300.0),
                 capture_dir=inst.get("capture_dir", "captures"),
                 touch_backend=inst.get("touch_backend", "adb"),
+                board_region_auto=inst.get("board_region_auto", True),
+                fishing_latency_ms=inst.get("fishing_latency_ms"),
+                fishing_aim_spread=inst.get("fishing_aim_spread", 0.18),
             )
             entry = InstanceEntry(config=cfg, serial=inst["serial"])
             self._register_instance(entry)
@@ -1086,6 +1093,9 @@ class MainWindow(QMainWindow):
                 "record_cooldown": cfg.record_cooldown,
                 "capture_dir": cfg.capture_dir,
                 "touch_backend": cfg.touch_backend,
+                "board_region_auto": cfg.board_region_auto,
+                "fishing_latency_ms": cfg.fishing_latency_ms,
+                "fishing_aim_spread": cfg.fishing_aim_spread,
             })
 
         try:

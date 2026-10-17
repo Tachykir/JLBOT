@@ -33,6 +33,8 @@ from adb_controller import ADBController, ADBError
 from recorder import MinigameRecorder, UnknownScreenSaver
 from dustbot2.touch.humanize import plan_drag, to_commands
 from dustbot2.touch.minitouch import MinitouchSession, TouchError
+from dustbot2.minigames import fishing as fishing_game
+from dustbot2.minigames.depth_collapse import find_tiles
 import vision
 
 logger = logging.getLogger("bot")
@@ -295,6 +297,19 @@ class BotConfig:
     #               sam wraca do "adb".
     touch_backend: str = "adb"
 
+    # Obszar planszy Dust Mine liczony z rozmiaru ekranu - działa w każdej
+    # rozdzielczości. False = użyj ręcznie ustawionego board_region.
+    board_region_auto: bool = True
+
+    # --- Minigry --- #
+    # Początkowe opóźnienie (ms) od zrzutu ekranu do chwili, w której gra
+    # przyjmuje tap. Bot poprawia je po każdym rzucie w Fishing Hole na
+    # podstawie miejsca, w którym zatrzymał się wskaźnik.
+    # None = 60 ms z minitouch, 150 ms z adb input.
+    fishing_latency_ms: float | None = None
+    # Rozrzut celowania w strefie (ułamek szerokości strefy; 0 = zawsze środek).
+    fishing_aim_spread: float = 0.18
+
 
 @dataclass
 class BotStats:
@@ -302,6 +317,8 @@ class BotStats:
     balls_collected: int = 0
     errors: int = 0
     restarts: int = 0
+    fishing_casts: int = 0
+    fishing_hits: int = 0
 
 
 class DustMineBot:
@@ -336,6 +353,10 @@ class DustMineBot:
         self._unknown_saver = UnknownScreenSaver(Path(config.capture_dir) / "Unknown", config.name)
         self._record_request: tuple[str, float] | None = None
         self._last_auto_record: float = float("-inf")
+
+        self._fishing_latency: fishing_game.LatencyCalibrator | None = None
+        self.last_fishing: dict | None = None  # wynik ostatniego rzutu (log / testy)
+        self._region: tuple[int, int, int, int] | None = None
 
         self._touch_session: MinitouchSession | None = None
         self._touch = None  # MinitouchClient, gdy działa minitouch
@@ -376,11 +397,12 @@ class DustMineBot:
 
         recorder.record(label, seconds, should_stop=lambda: self._stop, on_frame=preview)
 
-    def _handle_capture(self, frame: np.ndarray) -> bool:
+    def _handle_capture(self, frame: np.ndarray, state: str | None = None) -> bool:
         """
         Obsługuje nagrania: zgłoszone ręcznie oraz automatyczne przy
         nierozpoznanym ekranie. Zwraca True, jeśli coś nagrano (wtedy
-        bieżąca klatka jest nieaktualna).
+        bieżąca klatka jest nieaktualna). `state` - już rozpoznany ekran,
+        żeby nie klasyfikować klatki drugi raz.
         """
         cfg = self.config
         if self._record_request is not None:
@@ -392,7 +414,9 @@ class DustMineBot:
         if self._classifier is None or not (cfg.capture_unknown_screens or cfg.record_unknown_seconds > 0):
             return False
         from dustbot2.screens import UNKNOWN
-        if self._classifier.classify(frame).state != UNKNOWN:
+        if state is None:
+            state = self._classifier.classify(frame).state
+        if state != UNKNOWN:
             return False
 
         if cfg.capture_unknown_screens:
@@ -553,7 +577,7 @@ class DustMineBot:
     def _drag(self, start: tuple[int, int], end: tuple[int, int]) -> None:
         cfg = self.config
         if self._touch is not None:
-            plan = plan_drag(start, end, rng=self._drag_rng, bounds=cfg.board_region)
+            plan = plan_drag(start, end, rng=self._drag_rng, bounds=self._region)
             try:
                 self._touch.send(to_commands(plan.steps, self._touch))
                 # pauzy wykonuje minitouch na urządzeniu - czekamy, aż gest się skończy
@@ -703,11 +727,8 @@ class DustMineBot:
         # pasek statusu / nawigację systemową Androida, które mogą być
         # jasne nawet gdy sama plansza gry jest czarna (zawieszona),
         # co zaniżałoby wykrywalność problemu.
-        if cfg.board_region is not None:
-            x1, y1, x2, y2 = cfg.board_region
-            region_frame = frame[y1:y2, x1:x2]
-        else:
-            region_frame = frame
+        x1, y1, x2, y2 = self._board_region(frame)
+        region_frame = frame[y1:y2, x1:x2]
 
         if not vision.is_black_screen(region_frame, cfg.black_screen_brightness_threshold):
             self._black_screen_since = None
@@ -731,7 +752,13 @@ class DustMineBot:
 
     # ------------------------------------------------------------------ #
     def _idle_loop(self) -> None:
-        """Klika idle_point dopóki nie pojawi się ekran z kulkami."""
+        """
+        Czeka na planszę Dust Mine, po drodze obsługując rozpoznane ekrany:
+        Profile -> JUST LOOT, koniec walki -> PROCEED, "?" -> odsłonięcie,
+        popup przedmiotu -> Keep Current, Fishing Hole i Depth Collapse.
+        Na nierozpoznanych ekranach (walka, ładowanie) nic nie klika.
+        Bez szablonów ekranów działa po staremu: klika idle_point.
+        """
         cfg = self.config
         last_click = 0.0
         next_click_delay = cfg.idle_click_interval.sample()
@@ -748,28 +775,221 @@ class DustMineBot:
                 last_click = 0.0
                 continue
 
-            if self._handle_capture(frame):
+            state = self._classifier.classify(frame).state if self._classifier is not None else None
+
+            if self._handle_capture(frame, state):
                 last_click = 0.0
                 continue
 
-            det = vision.detect(frame, region=cfg.board_region)
-
+            if state is None or state == "dust_mine":
+                det = self._detect_board(frame)
+            else:
+                det = vision.DetectionResult(drop=None, balls=[])
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "idle")
 
-            if vision.has_game_screen(det):
+            if state == "dust_mine" or (state is None and vision.has_game_screen(det)):
                 logger.info("[%s] wykryto ekran gry: DROP=%s, kulki=%d",
                             cfg.name, det.drop.center if det.drop else None, len(det.balls))
                 return
 
+            if not self._paused and state is not None and self._handle_screen(frame, state):
+                last_click = 0.0
+                continue
+
             now = time.monotonic()
-            if not self._paused and now - last_click >= next_click_delay:
-                click_point = self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
-                self._tap(*click_point)
+            if not self._paused and state in (None, "home") and now - last_click >= next_click_delay:
+                self._tap(*self._idle_click_point(frame))
                 last_click = now
                 next_click_delay = cfg.idle_click_interval.sample()
 
             time.sleep(cfg.idle_poll_interval)
+
+    def _idle_click_point(self, frame: np.ndarray) -> tuple[int, int]:
+        """JUST LOOT znaleziony na ekranie; bez szablonów - idle_point z configu."""
+        cfg = self.config
+        if self._classifier is not None:
+            match = self._classifier.locate(frame, "just_loot")
+            if match is not None:
+                return self._random_point_near((match.x, match.y), 0.03 * frame.shape[1])
+        return self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
+
+    # ------------------------------------------------------------------ #
+    # Ekrany między walkami
+    # ------------------------------------------------------------------ #
+    # Przyciski szukane szablonem; pierwszy znaleziony wygrywa.
+    BUTTONS = {
+        "combat_done": ("proceed",),
+        "item_popup": ("keep_current_v2", "keep_current"),
+    }
+
+    def _handle_screen(self, frame: np.ndarray, state: str) -> bool:
+        """Akcja dla rozpoznanego ekranu. True, jeśli coś zrobiono."""
+        cfg = self.config
+        width, height = frame.shape[1], frame.shape[0]
+        if state == "fishing":
+            self._play_fishing()
+            return True
+        if state == "depth_collapse":
+            self._play_depth_collapse()
+            return True
+        if state == "reveal":
+            # "?" - TAP ANYWHERE TO REVEAL: tap w kartę na środku
+            self._tap(*self._random_point_near((width // 2, int(0.47 * height)), 0.06 * width))
+            logger.info("[%s] odsłaniam nagrodę", cfg.name)
+            time.sleep(random.uniform(0.4, 0.9))
+            return True
+        for name in self.BUTTONS.get(state, ()):
+            match = self._classifier.locate(frame, name)
+            if match is not None:
+                self._tap(*self._random_point_near((match.x, match.y), min(match.w, match.h) / 3))
+                logger.info("[%s] %s -> %s", cfg.name, state, name)
+                time.sleep(random.uniform(0.4, 0.9))
+                return True
+        return False
+
+    def _play_depth_collapse(self) -> None:
+        """Klika wszystkie kafelki, aż znikną (timer gry ok. 5.5 s)."""
+        cfg = self.config
+        deadline = time.monotonic() + 10.0
+        taps = 0
+        while not self._stop and time.monotonic() < deadline:
+            frame = self.adb.screenshot()
+            if self._classifier.classify(frame).state != "depth_collapse":
+                break
+            if self._on_frame is not None:
+                self._on_frame(cfg.name, frame, vision.DetectionResult(drop=None, balls=[]), "minigame")
+            tiles = find_tiles(frame)
+            if self._paused or not tiles:
+                time.sleep(0.15)
+                continue
+            for tile in tiles:
+                self._tap(*self._random_point_near((tile.x, tile.y), 0.012 * frame.shape[1]))
+                taps += 1
+                time.sleep(random.uniform(0.05, 0.14))
+        logger.info("[%s] Depth Collapse: %d tapów", cfg.name, taps)
+
+    def _play_fishing(self) -> fishing_game.CastPlan | None:
+        """
+        Fishing Hole: obserwuje wskaźnik, oblicza moment, w którym będzie w
+        strefie, i naciska CAST z wyprzedzeniem równym opóźnieniu. Po rzucie
+        mierzy, gdzie wskaźnik stanął, i poprawia opóźnienie.
+        """
+        cfg = self.config
+        if self._fishing_latency is None:
+            initial = cfg.fishing_latency_ms
+            if initial is None:
+                initial = 60.0 if self._touch is not None else 150.0
+            self._fishing_latency = fishing_game.LatencyCalibrator(latency_ms=initial)
+        calibrator = self._fishing_latency
+        tracker = fishing_game.FishingTracker()
+        aim = fishing_game.AimProfile(spread=cfg.fishing_aim_spread)
+        empty = vision.DetectionResult(drop=None, balls=[])
+        cast_point: tuple[int, int] | None = None
+        plan: fishing_game.CastPlan | None = None
+        after_cast: list[tuple[float, float]] = []
+        stopped_x: float | None = None
+        frame_ms = 200.0  # średni czas zrzutu, aktualizowany na bieżąco
+        deadline = time.monotonic() + 12.0
+
+        while not self._stop and time.monotonic() < deadline:
+            before = time.monotonic() * 1000
+            frame = self.adb.screenshot()
+            after = time.monotonic() * 1000
+            frame_ms = 0.7 * frame_ms + 0.3 * (after - before)
+            t_frame = (before + after) / 2  # obraz powstał gdzieś w trakcie zrzutu
+            det = fishing_game.detect(frame)
+            if self._on_frame is not None:
+                self._on_frame(cfg.name, frame, empty, "fishing")
+            if det is None:
+                break  # ekran się zmienił (np. po rzucie)
+
+            if plan is not None:
+                after_cast.append((t_frame, det.indicator_x))
+                if det.stopped:
+                    stopped_x = det.indicator_x
+                else:
+                    stopped_x = fishing_game.stopped_position(after_cast)
+                if stopped_x is not None or len(after_cast) >= 6:
+                    break
+                continue
+
+            if cast_point is None:
+                match = self._classifier.locate(frame, "cast_button")
+                cast_point = ((match.x, match.y) if match is not None
+                              else (frame.shape[1] // 2, int(det.indicator_y + 0.23 * frame.shape[1])))
+            tracker.frame_width = frame.shape[1]
+            tracker.update(t_frame, det)
+            if self._paused:
+                continue
+
+            candidate = fishing_game.plan_cast(tracker, after, calibrator.latency_ms, aim, self._drag_rng)
+            if candidate is None:
+                continue
+            wait = candidate.tap_at_ms - time.monotonic() * 1000
+            if wait > 1.5 * frame_ms:
+                continue  # zdążymy zrobić jeszcze zrzut i doprecyzować plan
+            if wait > 0:
+                time.sleep(wait / 1000)
+            self._tap(*self._random_point_near(cast_point, 0.012 * frame.shape[1]))
+            plan = candidate
+
+        if plan is None:
+            logger.warning("[%s] fishing: nie udało się zaplanować rzutu", cfg.name)
+            return None
+
+        self.stats.fishing_casts += 1
+        result = {"plan": plan, "stopped_x": stopped_x, "zone": tracker.zone,
+                  "speed": tracker.speed, "latency_before": calibrator.latency_ms}
+        if stopped_x is not None and tracker.speed:
+            zone = tracker.zone
+            hit = zone is not None and zone[0] <= stopped_x <= zone[1]
+            self.stats.fishing_hits += int(hit)
+            error = calibrator.update(plan, stopped_x, tracker.speed)
+            result.update(hit=hit, error_ms=error)
+            logger.info("[%s] fishing: %s - cel %.0f px, stanął %.0f px, strefa %s, błąd %+.0f ms, "
+                        "opóźnienie teraz %.0f ms (trafienia %d/%d)",
+                        cfg.name, "TRAFIONY" if hit else "pudło", plan.target_x, stopped_x,
+                        tuple(round(v) for v in zone) if zone else None, error,
+                        calibrator.latency_ms, self.stats.fishing_hits, self.stats.fishing_casts)
+        else:
+            logger.info("[%s] fishing: rzut wysłany, nie udało się zmierzyć, gdzie stanął wskaźnik", cfg.name)
+        result["latency_after"] = calibrator.latency_ms
+        self.last_fishing = result
+        return plan
+
+    # ------------------------------------------------------------------ #
+    # Plansza Dust Mine
+    # ------------------------------------------------------------------ #
+    AUTO_BOARD = (0.02, 0.18, 0.98, 0.98)  # ułamki ekranu
+
+    def _board_region(self, frame: np.ndarray) -> tuple[int, int, int, int]:
+        cfg = self.config
+        if cfg.board_region_auto or cfg.board_region is None:
+            height, width = frame.shape[:2]
+            fx1, fy1, fx2, fy2 = self.AUTO_BOARD
+            return int(fx1 * width), int(fy1 * height), int(fx2 * width), int(fy2 * height)
+        return cfg.board_region
+
+    def _detect_board(self, frame: np.ndarray) -> vision.DetectionResult:
+        """
+        Kulki z vision.detect, DROP z szablonu (działa w każdej
+        rozdzielczości; stara heurystyka DROP zawodzi przy wyższym DPI).
+        """
+        self._region = self._board_region(frame)
+        det = vision.detect(frame, region=self._region)
+        if self._classifier is None:
+            return det
+        drop = None
+        for name in ("drop_text_v2", "drop_text"):
+            match = self._classifier.locate(frame, name)
+            if match is not None and (drop is None or match.score > drop.score):
+                drop = match
+        if drop is None:
+            return det
+        radius = int(round(0.065 * frame.shape[1]))  # otwór DROP: ok. 70 px przy 1080
+        balls = [b for b in det.balls if np.hypot(b.x - drop.x, b.y - drop.y) > radius]
+        return vision.DetectionResult(drop=vision.Circle(drop.x, drop.y, radius), balls=balls)
 
     # ------------------------------------------------------------------ #
     def _collect_loop(self) -> None:
@@ -800,7 +1020,7 @@ class DustMineBot:
                 logger.info("[%s] restart gry przerwał zbieranie - wracam do idle", cfg.name)
                 return
 
-            det = vision.detect(frame, region=cfg.board_region)
+            det = self._detect_board(frame)
 
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "collecting")
@@ -845,7 +1065,7 @@ class DustMineBot:
         while not self._stop and time.monotonic() < deadline:
             time.sleep(0.15)
             frame = self.adb.screenshot()
-            det = vision.detect(frame, region=cfg.board_region)
+            det = self._detect_board(frame)
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "collecting")
             if not any(abs(b.x - ball.x) <= ball.r and abs(b.y - ball.y) <= ball.r for b in det.balls):

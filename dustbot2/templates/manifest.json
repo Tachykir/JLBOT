@@ -308,6 +308,27 @@
         303,
         719
       ]
+    },
+    {
+      "name": "just_loot",
+      "state": null,
+      "file": "just_loot.png",
+      "search": [
+        0.2,
+        0.8,
+        0.8,
+        1
+      ],
+      "threshold": 0.8,
+      "priority": 0,
+      "ui_scale": 1.28,
+      "source": "material/2026-10-17",
+      "source_rect": [
+        242,
+        1050,
+        299,
+        1103
+      ]
     }
   ]
 }

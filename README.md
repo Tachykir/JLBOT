@@ -206,6 +206,13 @@ Wymaga roota na emulatorze (LDPlayer ma go domyślnie). Binarka jest w
 Jeśli minitouch się nie uruchomi albo przestanie działać, bot sam wraca do
 `adb input` i zapisuje ostrzeżenie w logu.
 
+## Ekrany między walkami i minigry
+
+Bot rozpoznaje ekrany gry szablonami (`dustbot2/screens.py`) i sam
+obsługuje: PROCEED po walce, odsłonięcie nagrody "?", popup przedmiotu
+(Keep Current), Fishing Hole, Depth Collapse i Dust Mine; na Profile klika
+JUST LOOT. Szczegóły i opcje: `docs/minigry.md`.
+
 ## Nagrywanie minigier (materiał do nowych modułów)
 
 Bot potrafi zbierać materiał z ekranów, których jeszcze nie obsługuje

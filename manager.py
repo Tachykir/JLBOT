@@ -80,6 +80,9 @@ def _run_instance(serial: str, config_dict: dict) -> None:
             record_cooldown=config_dict.get("record_cooldown", 300.0),
             capture_dir=config_dict.get("capture_dir", "captures"),
             touch_backend=config_dict.get("touch_backend", "adb"),
+            board_region_auto=config_dict.get("board_region_auto", True),
+            fishing_latency_ms=config_dict.get("fishing_latency_ms"),
+            fishing_aim_spread=config_dict.get("fishing_aim_spread", 0.18),
         )
         bot = DustMineBot(adb, cfg)
 

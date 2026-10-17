@@ -39,6 +39,7 @@ class FishingFrame:
     bar: tuple[float, float]               # wnętrze paska (lewa, prawa krawędź)
     zone: tuple[float, float] | None       # strefa; None, jeśli nie widać
     zone_partial: bool                     # wskaźnik zasłania krawędź strefy
+    stopped: bool = False                  # wskaźnik biały = gra przyjęła rzut
 
 
 def _indicator_mask(frame: np.ndarray) -> np.ndarray:
@@ -70,6 +71,9 @@ def detect(frame: np.ndarray) -> FishingFrame | None:
         return None
     px, py, pw, ph, _ = best
     cx, cy = px + pw / 2, py + ph / 2
+    pill = frame[py:py + ph, px:px + pw].astype(np.int16)
+    white = (pill[..., 0] > 200) & (pill[..., 1] > 200) & (pill[..., 2] > 200)
+    stopped = bool(white.mean() > 0.4)
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.int16)
     band = gray[int(cy - ph * 0.25): int(cy + ph * 0.25) + 1]
@@ -119,10 +123,10 @@ def detect(frame: np.ndarray) -> FishingFrame | None:
     else:
         wide = [r for r in left_runs + right_runs if r[1] - r[0] >= 0.02 * width]
         if not wide:
-            return FishingFrame(cx, cy, pw, bar, None, False)
+            return FishingFrame(cx, cy, pw, bar, None, False, stopped)
         z0, z1 = max(wide, key=lambda r: r[1] - r[0])
         zone, partial = (float(z0), float(z1)), False
-    return FishingFrame(cx, cy, pw, bar, zone, partial)
+    return FishingFrame(cx, cy, pw, bar, zone, partial, stopped)
 
 
 # ---------------------------------------------------------------------- #
@@ -312,12 +316,14 @@ class LatencyCalibrator:
 
     latency_ms: float = 120.0
     gain: float = 0.5
+    max_step_ms: float = 150.0  # jeden zły pomiar nie rozreguluje opóźnienia
     history: list[float] = field(default_factory=list)
 
     def update(self, plan: CastPlan, stopped_x: float, speed: float) -> float:
         error_ms = (stopped_x - plan.target_x) * plan.direction / speed
         self.history.append(error_ms)
-        self.latency_ms = max(self.latency_ms + self.gain * error_ms, 0.0)
+        step = max(min(self.gain * error_ms, self.max_step_ms), -self.max_step_ms)
+        self.latency_ms = max(self.latency_ms + step, 0.0)
         return error_ms
 
 
