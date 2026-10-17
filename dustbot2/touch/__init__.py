@@ -1,0 +1,1 @@
+"""Wejście dotykowe przez minitouch."""
