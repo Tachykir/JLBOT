@@ -184,6 +184,26 @@ python manager.py --auto --idle-x 360 --idle-y 640
 Zatrzymanie: `Ctrl+C` w terminalu — manager grzecznie zatrzyma wszystkie
 procesy potomne.
 
+## Nagrywanie minigier (materiał do nowych modułów)
+
+Bot potrafi zbierać materiał z ekranów, których jeszcze nie obsługuje
+(np. minigra fishing):
+
+- **Przycisk "⏺ Nagraj 30 s" w GUI** (bot musi być uruchomiony) - przez
+  30 s bot nic nie klika, a Ty grasz ręcznie. Zapisuje się wideo
+  (`video.mp4`), Twoje dotknięcia z dokładnym czasem (`touches.txt`),
+  zrzuty klatek (`frames/`) i `meta.json` do synchronizacji.
+- **Bez GUI**: `python recorder.py --serial emulator-5556 --seconds 30 --label fishing`
+- **Automatycznie**: bot zapisuje zrzuty nierozpoznanych ekranów do
+  `captures/Unknown/` (opcja `capture_unknown_screens`, domyślnie włączona).
+  Z `"record_unknown_seconds": 30` w config.json bot dodatkowo nagrywa
+  30 s przy pierwszym nieznanym ekranie (nie częściej niż co
+  `record_cooldown` sekund).
+
+Nagrania trafiają do `captures/recordings/<data>_<instancja>_<etykieta>/`.
+Wrzuć cały folder do repo albo wyślij go - to wystarczy, żeby zbudować
+obsługę nowej minigry.
+
 ## Budowanie jako samodzielny .exe / instalator (Windows)
 
 Jeśli chcesz rozesłać aplikację komuś bez Pythona zainstalowanego na

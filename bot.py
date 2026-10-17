@@ -24,11 +24,13 @@ import random
 import logging
 import datetime as dt
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 
 from adb_controller import ADBController, ADBError
+from recorder import MinigameRecorder, UnknownScreenSaver
 import vision
 
 logger = logging.getLogger("bot")
@@ -271,6 +273,18 @@ class BotConfig:
     # każdej pojedynczej klatce.
     foreground_check_interval: float = 3.0
 
+    # --- Zbieranie materiału (nowe minigry) --- #
+    # Zapisuj zrzuty ekranów, których bot nie rozpoznaje (np. nowa minigra),
+    # do <capture_dir>/Unknown/ - bez duplikatów, najwyżej co 2 s.
+    capture_unknown_screens: bool = True
+    # Gdy pojawi się nierozpoznany ekran, nagraj wideo + dotyk + klatki przez
+    # tyle sekund, bez wykonywania żadnych akcji (0 = wyłączone).
+    record_unknown_seconds: float = 0.0
+    # Minimalny odstęp (s) między automatycznymi nagraniami.
+    record_cooldown: float = 300.0
+    # Folder na zrzuty i nagrania (względem katalogu uruchomienia).
+    capture_dir: str = "captures"
+
 
 @dataclass
 class BotStats:
@@ -299,6 +313,20 @@ class DustMineBot:
         self._last_foreground_check: float = 0.0
         self._last_schedule_log: float = 0.0
 
+        # Rozpoznawanie ekranów (dustbot2) - służy tu tylko do wykrywania
+        # nieznanych ekranów do nagrania. Błąd ładowania szablonów nie może
+        # zatrzymać bota, więc wtedy po prostu wyłączamy tę funkcję.
+        self._classifier = None
+        try:
+            from dustbot2.screens import ScreenClassifier
+            self._classifier = ScreenClassifier.load()
+        except Exception:
+            logger.exception("[%s] nie udało się wczytać szablonów ekranów - "
+                             "zapisywanie nieznanych ekranów wyłączone", config.name)
+        self._unknown_saver = UnknownScreenSaver(Path(config.capture_dir) / "Unknown", config.name)
+        self._record_request: tuple[str, float] | None = None
+        self._last_auto_record: float = float("-inf")
+
     def stop(self) -> None:
         self._stop = True
 
@@ -314,6 +342,57 @@ class DustMineBot:
     @property
     def is_paused(self) -> bool:
         return self._paused
+
+    def request_recording(self, seconds: float, label: str = "manual") -> None:
+        """
+        Zgłasza nagranie (wideo + dotyk + klatki) na `seconds` sekund. Wykona
+        się w wątku bota przy najbliższym przejściu pętli; w trakcie bot nie
+        klika ani nie przeciąga, więc można grać ręcznie.
+        """
+        self._record_request = (label, seconds)
+
+    def _record(self, label: str, seconds: float) -> None:
+        cfg = self.config
+        recorder = MinigameRecorder(self.adb, Path(cfg.capture_dir) / "recordings", cfg.name)
+        empty = vision.DetectionResult(drop=None, balls=[])
+
+        def preview(frame: np.ndarray) -> None:
+            if self._on_frame is not None:
+                self._on_frame(cfg.name, frame, empty, "recording")
+
+        recorder.record(label, seconds, should_stop=lambda: self._stop, on_frame=preview)
+
+    def _handle_capture(self, frame: np.ndarray) -> bool:
+        """
+        Obsługuje nagrania: zgłoszone ręcznie oraz automatyczne przy
+        nierozpoznanym ekranie. Zwraca True, jeśli coś nagrano (wtedy
+        bieżąca klatka jest nieaktualna).
+        """
+        cfg = self.config
+        if self._record_request is not None:
+            label, seconds = self._record_request
+            self._record_request = None
+            self._record(label, seconds)
+            return True
+
+        if self._classifier is None or not (cfg.capture_unknown_screens or cfg.record_unknown_seconds > 0):
+            return False
+        from dustbot2.screens import UNKNOWN
+        if self._classifier.classify(frame).state != UNKNOWN:
+            return False
+
+        if cfg.capture_unknown_screens:
+            saved = self._unknown_saver.offer(frame)
+            if saved is not None:
+                logger.info("[%s] nieznany ekran zapisany: %s", cfg.name, saved)
+        now = time.monotonic()
+        if cfg.record_unknown_seconds > 0 and now - self._last_auto_record >= cfg.record_cooldown:
+            self._last_auto_record = now
+            logger.info("[%s] nieznany ekran - nagrywam %.0f s bez wykonywania akcji",
+                        cfg.name, cfg.record_unknown_seconds)
+            self._record("unknown", cfg.record_unknown_seconds)
+            return True
+        return False
 
     def request_restart_app(self) -> None:
         """
@@ -595,6 +674,10 @@ class DustMineBot:
                 last_click = 0.0
                 continue
 
+            if self._handle_capture(frame):
+                last_click = 0.0
+                continue
+
             det = vision.detect(frame, region=cfg.board_region)
 
             if self._on_frame is not None:
@@ -625,6 +708,11 @@ class DustMineBot:
             if time.monotonic() - start_time > cfg.max_seconds_per_game_screen:
                 logger.warning("[%s] przekroczono max czas ekranu gry - wracam do idle", cfg.name)
                 return
+
+            if self._record_request is not None:
+                label, seconds = self._record_request
+                self._record_request = None
+                self._record(label, seconds)
 
             frame = self.adb.screenshot()
 

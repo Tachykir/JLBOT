@@ -176,6 +176,23 @@ class ADBController:
             )
         return result
 
+    def shell(self, *args: str, timeout: float = 10.0) -> str:
+        """Uruchamia `adb shell ...` i zwraca stdout jako tekst."""
+        return self._run(["shell", *args], timeout=timeout).stdout.decode(errors="replace")
+
+    def popen(self, args: list[str], stdout=subprocess.DEVNULL) -> subprocess.Popen:
+        """Uruchamia długotrwałe polecenie adb w tle (np. screenrecord, getevent)."""
+        try:
+            return subprocess.Popen(
+                [self.adb_path, "-s", self.serial] + args,
+                stdout=stdout, stderr=subprocess.DEVNULL, creationflags=_SUBPROCESS_FLAGS,
+            )
+        except OSError as e:
+            raise ADBError(f"Nie udało się uruchomić '{self.adb_path}': {e}") from e
+
+    def pull(self, remote: str, local: str, timeout: float = 120.0) -> None:
+        self._run(["pull", remote, local], timeout=timeout)
+
     # ------------------------------------------------------------------ #
     # Wejście: tap / swipe
     # ------------------------------------------------------------------ #

@@ -49,6 +49,8 @@ a = Analysis(
     binaries=adb_binaries,
     datas=[
         ("config.example.json", "."),
+        # szablony ekranów używane przez dustbot2.screens
+        ("dustbot2/templates", "dustbot2/templates"),
     ],
     hiddenimports=[
         # PySide6 czasem wymaga jawnego wskazania tych modułów -

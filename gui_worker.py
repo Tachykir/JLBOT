@@ -132,6 +132,10 @@ class BotWorker(QThread):
         if self._bot is not None:
             self._bot.resume()
 
+    def request_recording(self, seconds: float, label: str = "manual") -> None:
+        if self._bot is not None:
+            self._bot.request_recording(seconds, label)
+
     def request_restart_app(self) -> None:
         """Zgłasza żądanie ręcznego restartu gry (force-stop + start).
         Wykonywane bezpiecznie wewnątrz wątku bota, nie tutaj."""

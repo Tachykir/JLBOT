@@ -45,6 +45,7 @@ STATUS_COLORS = {
     "connecting": "#f0ad4e",
     "idle": "#5bc0de",
     "collecting": "#5cb85c",
+    "recording": "#d9534f",
     "paused": "#aaaaaa",
     "stopped": "#777777",
     "error": "#d9534f",
@@ -54,6 +55,7 @@ STATUS_LABELS_PL = {
     "connecting": "łączenie...",
     "idle": "czekanie",
     "collecting": "zbieranie",
+    "recording": "⏺ nagrywanie",
     "paused": "wstrzymany",
     "stopped": "zatrzymany",
     "error": "błąd",
@@ -310,10 +312,15 @@ class MainWindow(QMainWindow):
         self.btn_pause.clicked.connect(self._toggle_pause_selected)
         self.btn_restart_app = QPushButton("🔄 Restart gry")
         self.btn_restart_app.clicked.connect(self._restart_app_selected)
+        self.btn_record = QPushButton("⏺ Nagraj 30 s")
+        self.btn_record.setToolTip("Nagrywa wideo, dotyk i klatki przez 30 s. W tym czasie bot "
+                                   "nic nie klika - zagraj ręcznie w minigrę.")
+        self.btn_record.clicked.connect(self._record_selected)
         start_stop_row.addWidget(self.btn_start)
         start_stop_row.addWidget(self.btn_pause)
         start_stop_row.addWidget(self.btn_stop)
         start_stop_row.addWidget(self.btn_restart_app)
+        start_stop_row.addWidget(self.btn_record)
         left_layout.addLayout(start_stop_row)
 
         global_row = QHBoxLayout()
@@ -786,6 +793,24 @@ class MainWindow(QMainWindow):
             entry.worker.request_pause()
             self._log_local(f"[{entry.config.name}] wstrzymano")
 
+    def _record_selected(self) -> None:
+        """Nagranie minigry na wybranej instancji (bot musi działać)."""
+        entry = self._current_entry()
+        if entry is None:
+            return
+        if entry.worker is None or not entry.worker.isRunning():
+            QMessageBox.information(
+                self, "Bot nieaktywny",
+                f"Instancja '{entry.config.name}' nie jest uruchomiona - "
+                f"uruchom bota, żeby nagrywać."
+            )
+            return
+        entry.worker.request_recording(30.0)
+        self._log_local(
+            f"[{entry.config.name}] nagrywanie 30 s - zagraj teraz ręcznie. "
+            f"Zapis: {Path(entry.config.capture_dir) / 'recordings'}"
+        )
+
     def _restart_app_selected(self) -> None:
         """Ręczny restart gry (force-stop + start) na wybranej instancji,
         z potwierdzeniem - to akcja destrukcyjna dla bieżącego stanu gry."""
@@ -919,6 +944,10 @@ class MainWindow(QMainWindow):
                     ["com.android.vending", "com.android.chrome", "com.android.browser"],
                 )),
                 foreground_check_interval=inst.get("foreground_check_interval", 3.0),
+                capture_unknown_screens=inst.get("capture_unknown_screens", True),
+                record_unknown_seconds=inst.get("record_unknown_seconds", 0.0),
+                record_cooldown=inst.get("record_cooldown", 300.0),
+                capture_dir=inst.get("capture_dir", "captures"),
             )
             entry = InstanceEntry(config=cfg, serial=inst["serial"])
             self._register_instance(entry)
@@ -957,6 +986,10 @@ class MainWindow(QMainWindow):
                 "restart_settle_delay": cfg.restart_settle_delay,
                 "foreign_app_packages": list(cfg.foreign_app_packages),
                 "foreground_check_interval": cfg.foreground_check_interval,
+                "capture_unknown_screens": cfg.capture_unknown_screens,
+                "record_unknown_seconds": cfg.record_unknown_seconds,
+                "record_cooldown": cfg.record_cooldown,
+                "capture_dir": cfg.capture_dir,
             })
 
         try:

@@ -75,6 +75,10 @@ def _run_instance(serial: str, config_dict: dict) -> None:
                 ["com.android.vending", "com.android.chrome", "com.android.browser"],
             )),
             foreground_check_interval=config_dict.get("foreground_check_interval", 3.0),
+            capture_unknown_screens=config_dict.get("capture_unknown_screens", True),
+            record_unknown_seconds=config_dict.get("record_unknown_seconds", 0.0),
+            record_cooldown=config_dict.get("record_cooldown", 300.0),
+            capture_dir=config_dict.get("capture_dir", "captures"),
         )
         bot = DustMineBot(adb, cfg)
 
