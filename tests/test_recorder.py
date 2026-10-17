@@ -113,6 +113,14 @@ class MinigameRecorderTests(unittest.TestCase):
         self.assertIn(("pkill", "-INT", "screenrecord"), adb.shell_calls)
 
 
+    def test_two_recordings_in_the_same_second_get_separate_folders(self):
+        adb = FakeADB()
+        with tempfile.TemporaryDirectory() as tmp:
+            first = MinigameRecorder(adb, Path(tmp), "inst").record("x", 0.05)
+            second = MinigameRecorder(adb, Path(tmp), "inst").record("x", 0.05)
+            self.assertNotEqual(first, second)
+
+
 class BotCaptureTests(unittest.TestCase):
     def make_bot(self, tmp: str, **overrides) -> tuple[DustMineBot, FakeADB]:
         adb = FakeADB()

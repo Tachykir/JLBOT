@@ -79,8 +79,13 @@ class MinigameRecorder:
 
     def start(self, label: str, seconds: float) -> Path:
         stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.folder = self.out_root / f"{stamp}_{_safe(self.instance_name)}_{_safe(label)}"
-        (self.folder / "frames").mkdir(parents=True, exist_ok=True)
+        base = f"{stamp}_{_safe(self.instance_name)}_{_safe(label)}"
+        self.folder = self.out_root / base
+        suffix = 2
+        while self.folder.exists():  # dwa nagrania w tej samej sekundzie
+            self.folder = self.out_root / f"{base}_{suffix}"
+            suffix += 1
+        (self.folder / "frames").mkdir(parents=True)
         self._frames = 0
 
         uptime = None

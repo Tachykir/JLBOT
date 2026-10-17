@@ -211,10 +211,12 @@ Jeśli minitouch się nie uruchomi albo przestanie działać, bot sam wraca do
 Bot potrafi zbierać materiał z ekranów, których jeszcze nie obsługuje
 (np. minigra fishing):
 
-- **Przycisk "⏺ Nagraj 30 s" w GUI** (bot musi być uruchomiony) - przez
-  30 s bot nic nie klika, a Ty grasz ręcznie. Zapisuje się wideo
-  (`video.mp4`), Twoje dotknięcia z dokładnym czasem (`touches.txt`),
-  zrzuty klatek (`frames/`) i `meta.json` do synchronizacji.
+- **Przycisk "⏺ Nagrywaj (F10)" w GUI** - działa też przy zatrzymanym
+  bocie. Kliknij, zagraj ręcznie w minigrę i kliknij "⏹ Zatrzymaj
+  nagrywanie" (maks. 3 min). Jeśli bot działa, jest wstrzymany na czas
+  nagrania. Zapisuje się wideo (`video.mp4`), Twoje dotknięcia z dokładnym
+  czasem (`touches.txt`), zrzuty klatek (`frames/`) i `meta.json` do
+  synchronizacji.
 - **Przycisk "📸 Zrzut ekranu (F9)"** - zapisuje aktualny widok wybranej
   instancji do `captures/Screenshots/` (działa też przy zatrzymanym bocie).
 - **Bez GUI**: `python recorder.py --serial emulator-5556 --seconds 30 --label fishing`

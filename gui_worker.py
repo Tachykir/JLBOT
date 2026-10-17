@@ -33,8 +33,11 @@ import time
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 
+from pathlib import Path
+
 from adb_controller import ADBController, ADBError
 from bot import DustMineBot, BotConfig
+from recorder import MinigameRecorder
 import vision
 
 logger = logging.getLogger("gui_worker")
@@ -132,10 +135,6 @@ class BotWorker(QThread):
         if self._bot is not None:
             self._bot.resume()
 
-    def request_recording(self, seconds: float, label: str = "manual") -> None:
-        if self._bot is not None:
-            self._bot.request_recording(seconds, label)
-
     def request_restart_app(self) -> None:
         """Zgłasza żądanie ręcznego restartu gry (force-stop + start).
         Wykonywane bezpiecznie wewnątrz wątku bota, nie tutaj."""
@@ -150,3 +149,46 @@ class BotWorker(QThread):
             self.config.idle_point = idle_point
         if board_region is not None:
             self.config.board_region = board_region
+
+
+class RecordThread(QThread):
+    """
+    Ręczne nagrywanie (wideo + dotyk + klatki) jednej instancji, niezależnie
+    od tego, czy bot działa. Trwa do request_stop() albo do `seconds`.
+    """
+
+    frame_ready = Signal(str, np.ndarray)      # (instance_name, frame_bgr) - do podglądu
+    recording_finished = Signal(str, str)      # (instance_name, folder; "" jeśli brak)
+    recording_failed = Signal(str, str)        # (instance_name, error_message)
+
+    def __init__(self, name: str, serial: str, out_root: Path, seconds: float,
+                 label: str = "manual", parent=None):
+        super().__init__(parent)
+        self.name = name
+        self.serial = serial
+        self.out_root = Path(out_root)
+        self.seconds = seconds
+        self.label = label
+        self._stop = False
+
+    def request_stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        try:
+            adb = ADBController(serial=self.serial)
+        except ADBError as e:
+            self.recording_failed.emit(self.name, str(e))
+            return
+        recorder = MinigameRecorder(adb, self.out_root, self.name)
+        try:
+            folder = recorder.record(
+                self.label, self.seconds,
+                should_stop=lambda: self._stop,
+                on_frame=lambda frame: self.frame_ready.emit(self.name, frame),
+            )
+        except Exception as e:
+            logger.exception("[%s] nagrywanie nie powiodło się", self.name)
+            self.recording_failed.emit(self.name, str(e))
+            return
+        self.recording_finished.emit(self.name, str(folder) if folder else "")

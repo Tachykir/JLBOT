@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from bot import BotConfig, RandomRange, ScheduleWindow, schedule_from_list, schedule_to_list
-from gui_worker import BotWorker
+from gui_worker import BotWorker, RecordThread
 from preview_widget import PreviewWidget, EditMode
 from adb_controller import list_ldplayer_devices
 import vision
@@ -73,6 +73,8 @@ class InstanceEntry:
         self.last_frame: np.ndarray | None = None
         self.last_det: vision.DetectionResult | None = None
         self.list_item: QListWidgetItem | None = None
+        self.record_thread: RecordThread | None = None
+        self.resume_after_recording = False
 
 
 _DAY_LABELS = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"]
@@ -312,15 +314,10 @@ class MainWindow(QMainWindow):
         self.btn_pause.clicked.connect(self._toggle_pause_selected)
         self.btn_restart_app = QPushButton("🔄 Restart gry")
         self.btn_restart_app.clicked.connect(self._restart_app_selected)
-        self.btn_record = QPushButton("⏺ Nagraj 30 s")
-        self.btn_record.setToolTip("Nagrywa wideo, dotyk i klatki przez 30 s. W tym czasie bot "
-                                   "nic nie klika - zagraj ręcznie w minigrę.")
-        self.btn_record.clicked.connect(self._record_selected)
         start_stop_row.addWidget(self.btn_start)
         start_stop_row.addWidget(self.btn_pause)
         start_stop_row.addWidget(self.btn_stop)
         start_stop_row.addWidget(self.btn_restart_app)
-        start_stop_row.addWidget(self.btn_record)
         left_layout.addLayout(start_stop_row)
 
         global_row = QHBoxLayout()
@@ -372,10 +369,14 @@ class MainWindow(QMainWindow):
         self.btn_screenshot.setToolTip("Zapisuje aktualny widok wybranej instancji do "
                                        "captures/Screenshots/ - działa też przy zatrzymanym bocie.")
         self.btn_screenshot.clicked.connect(self._save_screenshot)
+        self.btn_record = QPushButton()
+        self.btn_record.clicked.connect(self._toggle_recording)
+        self._update_record_button(None)
         edit_row.addWidget(self.btn_edit_idle)
         edit_row.addWidget(self.btn_edit_region)
         edit_row.addWidget(self.btn_refresh_preview)
         edit_row.addWidget(self.btn_screenshot)
+        edit_row.addWidget(self.btn_record)
         mid_layout.addLayout(edit_row)
 
         top_split.addWidget(mid)
@@ -584,6 +585,7 @@ class MainWindow(QMainWindow):
 
         if entry.last_frame is not None:
             self.preview.update_frame(entry.last_frame, entry.last_det)
+        self._update_record_button(entry)
         self.preview.set_known_config(entry.config.idle_point, entry.config.board_region, entry.config.idle_point_radius)
 
     def _load_fields_from_entry(self, entry: InstanceEntry) -> None:
@@ -824,23 +826,84 @@ class MainWindow(QMainWindow):
             entry.worker.request_pause()
             self._log_local(f"[{entry.config.name}] wstrzymano")
 
-    def _record_selected(self) -> None:
-        """Nagranie minigry na wybranej instancji (bot musi działać)."""
+    # Nagrywanie ręczne - działa przy włączonym i wyłączonym bocie
+    MAX_RECORDING_SECONDS = 180  # limit `screenrecord` na Androidzie
+
+    def _update_record_button(self, entry: InstanceEntry | None) -> None:
+        recording = entry is not None and entry.record_thread is not None
+        if recording:
+            self.btn_record.setText("⏹ Zatrzymaj nagrywanie (F10)")
+            self.btn_record.setToolTip("Kończy nagranie i zapisuje wideo, dotyk i klatki.")
+        else:
+            self.btn_record.setText("⏺ Nagrywaj (F10)")
+            self.btn_record.setToolTip(
+                "Nagrywa wideo, dotyk i klatki wybranej instancji (maks. 3 min). Jeśli bot "
+                "działa, jest wstrzymany na czas nagrania - możesz grać ręcznie.")
+        self.btn_record.setShortcut("F10")
+
+    def _toggle_recording(self) -> None:
         entry = self._current_entry()
         if entry is None:
             return
-        if entry.worker is None or not entry.worker.isRunning():
-            QMessageBox.information(
-                self, "Bot nieaktywny",
-                f"Instancja '{entry.config.name}' nie jest uruchomiona - "
-                f"uruchom bota, żeby nagrywać."
-            )
+        if entry.record_thread is not None:
+            entry.record_thread.request_stop()
+            self.btn_record.setEnabled(False)  # do czasu zapisania plików
+            self._log_local(f"[{entry.config.name}] kończę nagrywanie, zapisuję pliki...")
             return
-        entry.worker.request_recording(30.0)
+
+        bot_running = entry.worker is not None and entry.worker.isRunning()
+        entry.resume_after_recording = bot_running and entry.status != "paused"
+        if entry.resume_after_recording:
+            entry.worker.request_pause()
+
+        thread = RecordThread(entry.config.name, entry.serial,
+                              Path(entry.config.capture_dir) / "recordings",
+                              self.MAX_RECORDING_SECONDS)
+        thread.frame_ready.connect(self._on_recording_frame)
+        thread.recording_finished.connect(self._on_recording_finished)
+        thread.recording_failed.connect(self._on_recording_failed)
+        entry.record_thread = thread
+        thread.start()
+        self._update_record_button(entry)
         self._log_local(
-            f"[{entry.config.name}] nagrywanie 30 s - zagraj teraz ręcznie. "
-            f"Zapis: {Path(entry.config.capture_dir) / 'recordings'}"
-        )
+            f"[{entry.config.name}] nagrywanie - zagraj teraz ręcznie, potem kliknij "
+            f"'Zatrzymaj' (maks. {self.MAX_RECORDING_SECONDS // 60} min)"
+            + (" - bot wstrzymany na czas nagrania" if entry.resume_after_recording else ""))
+
+    @Slot(str, np.ndarray)
+    def _on_recording_frame(self, name: str, frame: np.ndarray) -> None:
+        entry = self.instances.get(name)
+        if entry is None:
+            return
+        entry.last_frame = frame
+        if name == self.selected_name:
+            self.preview.update_frame(frame, None)
+
+    def _end_recording(self, name: str) -> InstanceEntry | None:
+        entry = self.instances.get(name)
+        if entry is None:
+            return None
+        if entry.record_thread is not None:
+            entry.record_thread.wait(1000)
+        entry.record_thread = None
+        if entry.resume_after_recording and entry.worker is not None and entry.worker.isRunning():
+            entry.worker.request_resume()
+            self._log_local(f"[{name}] bot wznowiony po nagraniu")
+        entry.resume_after_recording = False
+        if name == self.selected_name:
+            self._update_record_button(entry)
+            self.btn_record.setEnabled(True)
+        return entry
+
+    @Slot(str, str)
+    def _on_recording_finished(self, name: str, folder: str) -> None:
+        self._end_recording(name)
+        self._log_local(f"[{name}] nagranie zapisane: {folder}" if folder else f"[{name}] nagranie puste")
+
+    @Slot(str, str)
+    def _on_recording_failed(self, name: str, error: str) -> None:
+        self._end_recording(name)
+        QMessageBox.critical(self, "Błąd nagrywania", f"[{name}] {error}")
 
     def _restart_app_selected(self) -> None:
         """Ręczny restart gry (force-stop + start) na wybranej instancji,
@@ -1040,9 +1103,13 @@ class MainWindow(QMainWindow):
         for entry in self.instances.values():
             if entry.worker is not None and entry.worker.isRunning():
                 entry.worker.request_stop()
+            if entry.record_thread is not None:
+                entry.record_thread.request_stop()
         for entry in self.instances.values():
             if entry.worker is not None:
                 entry.worker.wait(3000)
+            if entry.record_thread is not None:
+                entry.record_thread.wait(20000)  # pobranie wideo z emulatora
         event.accept()
 
 
