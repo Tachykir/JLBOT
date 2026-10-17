@@ -9,14 +9,9 @@
         "window_start": "09:00",
         "window_end": "23:30",
         "play_hours": 6.0,
-        "session_minutes": [20, 90],
-        "min_break_minutes": 5,
         "days": null
       },
       "close_game_during_break": true,
-      "idle_click_interval": {"min": 0.8, "max": 1.4},
-      "drag_duration_ms": {"min": 800, "max": 1300},
-      "between_drags_delay": {"min": 0.5, "max": 1.1},
       "fishing_aim_spread": 0.18
     },
     {

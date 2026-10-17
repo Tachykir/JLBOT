@@ -163,7 +163,8 @@ def _inside(curve: np.ndarray, bounds: tuple[float, float, float, float], margin
     )
 
 
-def _duration(profile: DragProfile, rng: random.Random) -> float:
+def sample_duration(profile: DragProfile, rng: random.Random) -> float:
+    """Czas gestu (ms) z rozkładu profilu - używany też dla adb input swipe."""
     if profile.duration_ms is not None:
         return rng.uniform(*profile.duration_ms)
     low, high = profile.duration_clamp
@@ -209,7 +210,7 @@ def plan_drag(
     arc = np.concatenate([[0.0], np.cumsum(seg)])
     total = arc[-1] or 1.0
 
-    duration = _duration(profile, rng)
+    duration = sample_duration(profile, rng)
     # rzut: krótszy, puszczony przed celem, bez hamowania (palec wciąż przyspiesza)
     release_at = 1.0
     if shape == "flick":

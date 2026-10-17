@@ -30,13 +30,13 @@ from PySide6.QtCore import Qt, Slot, QTime
 from PySide6.QtGui import QColor, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout,
-    QListWidget, QListWidgetItem, QPushButton, QLabel, QLineEdit, QSpinBox,
+    QListWidget, QListWidgetItem, QPushButton, QLabel, QLineEdit,
     QDoubleSpinBox, QTextEdit, QSplitter, QGroupBox, QMessageBox, QFileDialog,
     QTimeEdit, QCheckBox, QDialog, QDialogButtonBox, QComboBox,
 )
 
-from bot import BotConfig, RandomRange, ScheduleWindow, schedule_from_list, schedule_to_list
-from dustbot2.schedule import DailyPlayTarget, plan_window, window_for
+from bot import BotConfig, ScheduleWindow, schedule_from_list, schedule_to_list
+from dustbot2.schedule import DailyPlayTarget, plan_day, window_for
 from gui_worker import BotWorker, RecordThread
 from preview_widget import PreviewWidget
 from adb_controller import list_ldplayer_devices
@@ -127,20 +127,6 @@ class DailyPlayDialog(QDialog):
         self.field_hours.setValue(current.play_hours)
         form.addRow("Godzin gry dziennie:", self.field_hours)
 
-        self.field_session_min = QSpinBox(); self.field_session_min.setRange(5, 240); self.field_session_min.setSuffix(" min")
-        self.field_session_max = QSpinBox(); self.field_session_max.setRange(5, 480); self.field_session_max.setSuffix(" min")
-        self.field_session_min.setValue(int(current.session_minutes[0]))
-        self.field_session_max.setValue(int(current.session_minutes[1]))
-        session_row = QHBoxLayout()
-        session_row.addWidget(QLabel("od")); session_row.addWidget(self.field_session_min)
-        session_row.addWidget(QLabel("do")); session_row.addWidget(self.field_session_max)
-        session_box = QWidget(); session_box.setLayout(session_row)
-        form.addRow("Długość sesji:", session_box)
-
-        self.field_min_break = QSpinBox(); self.field_min_break.setRange(1, 120); self.field_min_break.setSuffix(" min")
-        self.field_min_break.setValue(int(current.min_break_minutes))
-        form.addRow("Najkrótsza przerwa:", self.field_min_break)
-
         days_row = QHBoxLayout()
         self.day_checks: list[QCheckBox] = []
         for i, label in enumerate(_DAY_LABELS):
@@ -156,7 +142,8 @@ class DailyPlayDialog(QDialog):
         root.addWidget(self.check_close_game)
 
         preview_head = QHBoxLayout()
-        preview_head.addWidget(QLabel("<b>Przykładowy plan na dziś</b> (bot losuje go co dzień od nowa):"))
+        preview_head.addWidget(QLabel("<b>Przykładowy plan</b> - bot układa go sam, każdego dnia inaczej\n"
+                                      "(sesje od ok. 10 min do 2 h, nieregularne przerwy):"))
         self.btn_reroll = QPushButton("🎲 Inny przykład")
         self.btn_reroll.clicked.connect(self._reroll)
         preview_head.addWidget(self.btn_reroll)
@@ -173,22 +160,17 @@ class DailyPlayDialog(QDialog):
 
         for w in (self.field_start, self.field_end):
             w.timeChanged.connect(self._update_preview)
-        for w in (self.field_hours, self.field_session_min, self.field_session_max, self.field_min_break):
-            w.valueChanged.connect(self._update_preview)
+        self.field_hours.valueChanged.connect(self._update_preview)
         for w in (self.check_enabled, *self.day_checks):
             w.stateChanged.connect(self._update_preview)
         self._update_preview()
 
     def _target(self) -> DailyPlayTarget:
         days = tuple(i for i, cb in enumerate(self.day_checks) if cb.isChecked()) or None
-        low = self.field_session_min.value()
-        high = max(low, self.field_session_max.value())
         return DailyPlayTarget(
             window_start=self.field_start.time().toString("HH:mm"),
             window_end=self.field_end.time().toString("HH:mm"),
             play_hours=self.field_hours.value(),
-            session_minutes=(float(low), float(high)),
-            min_break_minutes=float(self.field_min_break.value()),
             days=days,
         )
 
@@ -198,8 +180,7 @@ class DailyPlayDialog(QDialog):
 
     def _update_preview(self) -> None:
         enabled = self.check_enabled.isChecked()
-        for w in (self.field_start, self.field_end, self.field_hours, self.field_session_min,
-                  self.field_session_max, self.field_min_break, self.btn_reroll, *self.day_checks):
+        for w in (self.field_start, self.field_end, self.field_hours, self.btn_reroll, *self.day_checks):
             w.setEnabled(enabled)
         if not enabled:
             self.preview.setPlainText("Harmonogram wyłączony - bot gra bez przerwy.")
@@ -208,9 +189,10 @@ class DailyPlayDialog(QDialog):
         today = dt.date.today()
         start, end = window_for(target, today)
         rng = random.Random(f"{self._instance}|{today}|{self._preview_seed}")
-        sessions = plan_window(target, start, end, rng)
+        plan = plan_day(target, start, end, rng)
+        sessions = plan.sessions
         window_hours = (end - start).total_seconds() / 3600
-        lines = [f"Okno {start:%H:%M}-{end:%H:%M} ({window_hours:.1f} h)"]
+        lines = [f"Okno {start:%H:%M}-{end:%H:%M} ({window_hours:.1f} h), styl dnia: {plan.style}"]
         if target.play_hours > window_hours:
             lines.append(f"Uwaga: {target.play_hours:.1f} h gry nie mieści się w oknie - bot zagra całe okno.")
         lines.append("")
@@ -360,35 +342,6 @@ class MainWindow(QMainWindow):
         self.combo_touch.currentIndexChanged.connect(self._apply_config_fields)
         form.addRow("Wejście dotykowe:", self.combo_touch)
 
-        # --- Pola zakresów (min/max) zamiast pojedynczych wartości -
-        # bot losuje z tego przedziału za każdym razem, żeby uniknąć
-        # mechanicznego, identycznego rytmu klikania/przeciągania. ---
-        def _make_range_row(minimum, maximum, step, decimals=None):
-            spin_min = QDoubleSpinBox(); spin_min.setRange(minimum, maximum); spin_min.setSingleStep(step)
-            spin_max = QDoubleSpinBox(); spin_max.setRange(minimum, maximum); spin_max.setSingleStep(step)
-            if decimals is not None:
-                spin_min.setDecimals(decimals)
-                spin_max.setDecimals(decimals)
-            spin_min.valueChanged.connect(self._apply_config_fields)
-            spin_max.valueChanged.connect(self._apply_config_fields)
-            row = QHBoxLayout()
-            row.addWidget(QLabel("min")); row.addWidget(spin_min)
-            row.addWidget(QLabel("max")); row.addWidget(spin_max)
-            container = QWidget(); container.setLayout(row)
-            return spin_min, spin_max, container
-
-        self.field_idle_interval_min, self.field_idle_interval_max, idle_interval_container = \
-            _make_range_row(0.1, 30.0, 0.1)
-        form.addRow("Odstęp tapów JUST LOOT (s):", idle_interval_container)
-
-        self.field_drag_ms_min, self.field_drag_ms_max, drag_ms_container = \
-            _make_range_row(50, 5000, 50, decimals=0)
-        form.addRow("Czas przeciągania - adb (ms):", drag_ms_container)
-
-        self.field_between_drags_min, self.field_between_drags_max, between_drags_container = \
-            _make_range_row(0.0, 10.0, 0.1)
-        form.addRow("Maks. czekanie na kulkę (s):", between_drags_container)
-
         self.btn_edit_schedule = QPushButton("📅 Edytuj harmonogram")
         self.btn_edit_schedule.clicked.connect(self._open_schedule_editor)
         self.schedule_summary_label = QLabel("brak (gra bez przerwy)")
@@ -402,11 +355,6 @@ class MainWindow(QMainWindow):
 
         self.stats_label = QLabel("Cykle: 0   Kulki: 0   Fishing: 0/0   Błędy: 0")
         form.addRow("Statystyki:", self.stats_label)
-
-        note = QLabel("Pola min/max to zakres losowania - min == max wyłącza\n"
-                       "losowość dla danego parametru.")
-        note.setStyleSheet("color: #888; font-size: 11px;")
-        form.addRow(note)
 
         top_split.addWidget(right)
         top_split.setSizes([260, 640, 340])
@@ -522,22 +470,12 @@ class MainWindow(QMainWindow):
         # wartości w QSpinBox/QDoubleSpinBox wywołuje valueChanged/editingFinished,
         # które od razu (przedwcześnie) nadpisują config innej/nowej instancji
         # wartościami domyślnymi z widgetu, zanim zdążymy wczytać prawdziwe dane.
-        fields = (self.field_name, self.field_serial,
-                  self.field_idle_interval_min, self.field_idle_interval_max,
-                  self.field_drag_ms_min, self.field_drag_ms_max,
-                  self.field_between_drags_min, self.field_between_drags_max,
-                  self.combo_touch)
+        fields = (self.field_name, self.field_serial, self.combo_touch)
         for w in fields:
             w.blockSignals(True)
         try:
             self.field_name.setText(cfg.name)
             self.field_serial.setText(entry.serial)
-            self.field_idle_interval_min.setValue(cfg.idle_click_interval.min)
-            self.field_idle_interval_max.setValue(cfg.idle_click_interval.max)
-            self.field_drag_ms_min.setValue(cfg.drag_duration_ms.min)
-            self.field_drag_ms_max.setValue(cfg.drag_duration_ms.max)
-            self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
-            self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
             self.combo_touch.setCurrentIndex(max(self.combo_touch.findData(cfg.touch_backend), 0))
         finally:
             for w in fields:
@@ -582,11 +520,7 @@ class MainWindow(QMainWindow):
             )
 
     def _set_config_form_enabled(self, enabled: bool) -> None:
-        for w in (self.field_name, self.field_serial,
-                  self.field_idle_interval_min, self.field_idle_interval_max,
-                  self.field_drag_ms_min, self.field_drag_ms_max,
-                  self.field_between_drags_min, self.field_between_drags_max,
-                  self.btn_edit_schedule, self.combo_touch):
+        for w in (self.field_name, self.field_serial, self.btn_edit_schedule, self.combo_touch):
             w.setEnabled(enabled)
         if not enabled:
             self.schedule_summary_label.setText("brak (gra bez przerwy)")
@@ -597,20 +531,6 @@ class MainWindow(QMainWindow):
             return
         cfg = entry.config
         cfg.touch_backend = self.combo_touch.currentData() or "adb"
-        # min/max: jeśli użytkownik wpisze max < min, przycinamy max do min
-        # zamiast pozwolić na nonsensowny/ujemny zakres.
-        cfg.idle_click_interval = RandomRange(
-            self.field_idle_interval_min.value(),
-            max(self.field_idle_interval_min.value(), self.field_idle_interval_max.value()),
-        )
-        cfg.drag_duration_ms = RandomRange(
-            self.field_drag_ms_min.value(),
-            max(self.field_drag_ms_min.value(), self.field_drag_ms_max.value()),
-        )
-        cfg.between_drags_delay = RandomRange(
-            self.field_between_drags_min.value(),
-            max(self.field_between_drags_min.value(), self.field_between_drags_max.value()),
-        )
         entry.serial = self.field_serial.text().strip()
 
     def _refresh_preview_once(self) -> None:
@@ -889,9 +809,6 @@ class MainWindow(QMainWindow):
         for inst in data.get("instances", []):
             cfg = BotConfig(
                 name=inst["name"],
-                idle_click_interval=RandomRange.from_value(inst.get("idle_click_interval", [0.8, 1.4])),
-                drag_duration_ms=RandomRange.from_value(inst.get("drag_duration_ms", [800, 1300])),
-                between_drags_delay=RandomRange.from_value(inst.get("between_drags_delay", [0.5, 1.1])),
                 empty_detections_to_exit=inst.get("empty_detections_to_exit", 2),
                 max_seconds_per_game_screen=inst.get("max_seconds_per_game_screen", 60.0),
                 idle_poll_interval=inst.get("idle_poll_interval", 0.5),
@@ -935,9 +852,6 @@ class MainWindow(QMainWindow):
             data["instances"].append({
                 "serial": entry.serial,
                 "name": cfg.name,
-                "idle_click_interval": cfg.idle_click_interval.to_dict(),
-                "drag_duration_ms": cfg.drag_duration_ms.to_dict(),
-                "between_drags_delay": cfg.between_drags_delay.to_dict(),
                 "empty_detections_to_exit": cfg.empty_detections_to_exit,
                 "max_seconds_per_game_screen": cfg.max_seconds_per_game_screen,
                 "idle_poll_interval": cfg.idle_poll_interval,

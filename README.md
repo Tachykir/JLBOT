@@ -58,14 +58,17 @@ tylko `serial` (z `adb devices`) i `name`; reszta ma wartości domyślne
 (pełna lista w `bot.py`, klasa `BotConfig`). Najważniejsze opcje:
 
 - **`daily_play`** - harmonogram dzienny: okno (`window_start`,
-  `window_end`) i `play_hours`; bot sam układa sesje (`session_minutes`)
-  i nieregularne przerwy (min. `min_break_minutes`). Brak = gra bez przerwy.
+  `window_end`), `play_hours` i opcjonalnie `days`. Resztę układa bot,
+  każdego dnia inaczej: losuje styl dnia (dużo krótkich sesji / mieszany /
+  dłuższe bloki), sesje od ok. 10 min do 2 h i nieregularne przerwy.
+  Brak = gra bez przerwy.
 - **`touch_backend`** - `"adb"` albo `"minitouch"` (patrz niżej).
 - **`game_package`** - pakiet gry; potrzebny do restartu gry przez
   watchdogi i zamykania gry na czas przerw (`close_game_during_break`).
 
-Starsze pola `idle_point` i `board_region` nie są już używane - jeśli są w
-starym pliku, bot je pomija.
+Starsze pola `idle_point`, `board_region`, `idle_click_interval`,
+`drag_duration_ms` i `between_drags_delay` nie są już używane - jeśli są w
+starym pliku, bot je pomija. Odstępy tapów i czasy gestów bot losuje sam.
 
 ## Uruchomienie
 
@@ -85,9 +88,8 @@ Okno pozwala na:
   bocie.
 - **📸 Zrzut ekranu (F9)** i **⏺ Nagrywaj (F10)** - materiał do nowych
   ekranów i minigier (patrz niżej).
-- **Konfigurację** po prawej: wejście dotykowe, odstępy tapów, czas
-  przeciągania i **📅 harmonogram dzienny** z podglądem przykładowego
-  planu dnia.
+- **Konfigurację** po prawej: wejście dotykowe i **📅 harmonogram
+  dzienny** z podglądem przykładowego planu dnia.
 - **Start / Stop / Pauza / Restart gry** dla pojedynczej instancji albo
   wszystkich naraz, **statystyki** (cykle, kulki, trafienia w fishingu).
 - **Zapis / wczytanie configu** - ten sam format co `config.example.json`,
@@ -205,6 +207,5 @@ Gotowe pliki konfiguracyjne do tego już są w projekcie:
 - **Bot nie rozpoznaje ekranu** - zrób zrzut przyciskiem 📸 F9 (albo
   zajrzyj do `captures/Unknown/`, gdzie bot sam zapisuje nieznane ekrany)
   i dodaj szablon: `python -m dustbot2.tools.make_template ...`.
-- **Drag nie działa w grze** — zwiększ `drag_duration_ms` w configu
-  (niektóre silniki gier wymagają dłuższego gestu, żeby uznać go za
-  przeciągnięcie, a nie zwykłe tapnięcie).
+- **Drag nie działa w grze** - przełącz wejście na `minitouch` (gesty
+  z płynnym ruchem zamiast prostego `adb input swipe`).

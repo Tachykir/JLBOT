@@ -20,6 +20,7 @@ co pozwala odpalać wiele instancji równolegle (patrz manager.py).
 from __future__ import annotations
 
 import time
+import math
 import random
 import logging
 import datetime as dt
@@ -31,7 +32,7 @@ import numpy as np
 
 from adb_controller import ADBController, ADBError
 from recorder import MinigameRecorder, UnknownScreenSaver
-from dustbot2.touch.humanize import plan_drag, to_commands
+from dustbot2.touch.humanize import DragProfile, plan_drag, sample_duration, to_commands
 from dustbot2.touch.minitouch import MinitouchSession, TouchError
 from dustbot2.minigames import fishing as fishing_game
 from dustbot2.minigames.depth_collapse import find_tiles
@@ -89,47 +90,6 @@ class ScheduleWindow:
             return now_minutes >= start_minutes or now_minutes < end_minutes
 
 
-@dataclass
-class RandomRange:
-    """
-    Zakres losowania (min, max) dla dowolnego parametru czasowego -
-    zamiast stałej wartości, bot losuje z tego przedziału za każdym
-    razem, żeby unikać w pełni mechanicznego, identycznego rytmu
-    klikania/przeciągania.
-
-    Jeśli min == max, zachowuje się jak stała wartość (brak losowości) -
-    wygodne do wyłączenia losowości dla konkretnego parametru bez
-    zmiany reszty kodu.
-    """
-    min: float
-    max: float
-
-    def sample(self) -> float:
-        if self.max <= self.min:
-            return self.min
-        return random.uniform(self.min, self.max)
-
-    @staticmethod
-    def from_value(value) -> "RandomRange":
-        """
-        Buduje RandomRange z wartości configu, obsługując trzy formaty
-        dla wygody i wstecznej kompatybilności:
-          - liczba (int/float): stała wartość, min == max == value
-          - [min, max] / (min, max): zakres
-          - {"min": ..., "max": ...}: zakres jako słownik (jak w JSON)
-        """
-        if isinstance(value, RandomRange):
-            return value
-        if isinstance(value, dict):
-            return RandomRange(float(value["min"]), float(value["max"]))
-        if isinstance(value, (list, tuple)):
-            return RandomRange(float(value[0]), float(value[1]))
-        return RandomRange(float(value), float(value))
-
-    def to_dict(self) -> dict:
-        return {"min": self.min, "max": self.max}
-
-
 def schedule_from_list(raw: list | None) -> list[ScheduleWindow]:
     """Buduje listę ScheduleWindow z surowych danych JSON (lista słowników
     {"start": "HH:MM", "end": "HH:MM", "days": [0,1,2,...] | null})."""
@@ -162,19 +122,6 @@ def schedule_to_list(schedule: list[ScheduleWindow]) -> list[dict]:
 class BotConfig:
     name: str
 
-    # Jak często klikać JUST LOOT na ekranie Profile (przycisk jest
-    # znajdowany szablonem, punkt kliknięcia losowany wokół jego środka).
-    # Losowany zakres (s) zamiast stałej wartości - patrz RandomRange.
-    idle_click_interval: RandomRange = field(default_factory=lambda: RandomRange(0.8, 1.4))
-
-    # Czas trwania gestu przeciągania kulki (ms). Losowany zakres.
-    drag_duration_ms: RandomRange = field(default_factory=lambda: RandomRange(800, 1300))
-
-    # Maksymalny czas (s) oczekiwania na zniknięcie przeciągniętej kulki
-    # z planszy, zanim bot pójdzie dalej. Bot sprawdza planszę co 0.15 s
-    # i nie czeka dłużej, niż trzeba. Losowany zakres (s).
-    between_drags_delay: RandomRange = field(default_factory=lambda: RandomRange(0.5, 1.1))
-
     # Ile razy z rzędu detekcja może nie znaleźć kulek/DROP zanim bot
     # uzna, że ekran gry się zakończył i wraca do obsługi innych ekranów.
     empty_detections_to_exit: int = 2
@@ -184,9 +131,8 @@ class BotConfig:
     # (zabezpieczenie przed zawieszeniem w pętli).
     max_seconds_per_game_screen: float = 60.0
 
-    # Interwał odświeżania screenshotu w trybie idle (osobny od
-    # idle_click_interval, na wypadek gdyby klikanie miało być rzadsze
-    # niż sprawdzanie ekranu).
+    # Interwał odświeżania screenshotu w trybie idle (osobny od odstępu
+    # tapów JUST LOOT, który bot losuje sam - patrz _just_loot_delay).
     idle_poll_interval: float = 0.5
 
     # --- Harmonogram pracy --- #
@@ -278,7 +224,7 @@ class BotConfig:
     capture_dir: str = "captures"
 
     # --- Wejście dotykowe --- #
-    # "adb"       - `adb shell input` (prosta linia, stała prędkość, drag_duration_ms)
+    # "adb"       - `adb shell input` (prosta linia, stała prędkość)
     # "minitouch" - zróżnicowane gesty z dustbot2/touch/humanize.py (łuki, S,
     #               haczyki, "L", rzuty); wymaga roota na emulatorze. Jeśli
     #               minitouch się nie uruchomi albo przestanie działać, bot
@@ -602,7 +548,10 @@ class DustMineBot:
                 return
             except TouchError as e:
                 self._touch_failed(e)
-        self.adb.swipe(start[0], start[1], end[0], end[1], duration_ms=int(cfg.drag_duration_ms.sample()))
+        # adb input swipe rysuje prostą linię - czas bierzemy z tego samego
+        # rozkładu co gesty minitouch
+        duration = sample_duration(DragProfile(), self._drag_rng)
+        self.adb.swipe(start[0], start[1], end[0], end[1], duration_ms=int(duration))
 
     def run(self) -> None:
         logger.info("[%s] start bota", self.config.name)
@@ -777,7 +726,7 @@ class DustMineBot:
         """
         cfg = self.config
         last_click = 0.0
-        next_click_delay = cfg.idle_click_interval.sample()
+        next_click_delay = self._just_loot_delay()
         while not self._stop:
             self._tick_play_time()
             if not self._is_within_schedule():
@@ -823,10 +772,25 @@ class DustMineBot:
                 if point is not None:
                     self._tap(*point)
                     last_click = now
-                    next_click_delay = cfg.idle_click_interval.sample()
+                    next_click_delay = self._just_loot_delay()
 
             time.sleep(cfg.idle_poll_interval)
         return False
+
+    def _just_loot_delay(self) -> float:
+        """
+        Odstęp (s) do następnego tapu JUST LOOT: zwykle ok. 0.6-2 s
+        (log-normalnie), a co jakiś czas dłuższa pauza 2.5-7 s - jak u
+        człowieka, który na chwilę odwraca uwagę.
+        """
+        if self._drag_rng.random() < 0.08:
+            return self._drag_rng.uniform(2.5, 7.0)
+        # losujemy ponownie zamiast przycinać - przycinanie zbierałoby część
+        # tapów dokładnie na granicach, co byłoby łatwym do wykrycia wzorcem
+        while True:
+            delay = self._drag_rng.lognormvariate(math.log(1.05), 0.3)
+            if 0.6 <= delay <= 2.0:
+                return delay
 
     def _just_loot_point(self, frame: np.ndarray) -> tuple[int, int] | None:
         """Losowy punkt wokół środka przycisku JUST LOOT albo None, gdy go nie widać."""
@@ -983,6 +947,7 @@ class DustMineBot:
     # Plansza Dust Mine
     # ------------------------------------------------------------------ #
     AUTO_BOARD = (0.02, 0.18, 0.98, 0.98)  # ułamki ekranu
+    BALL_WAIT_SECONDS = (1.0, 1.6)  # maks. czekanie na zniknięcie przeciągniętej kulki
 
     def _board_region(self, frame: np.ndarray) -> tuple[int, int, int, int]:
         """Obszar planszy liczony z rozmiaru ekranu - działa w każdej rozdzielczości."""
@@ -1068,7 +1033,7 @@ class DustMineBot:
             self._drag((ball.x, ball.y), (drop.x, drop.y))
             self.stats.balls_collected += 1
 
-            self._wait_ball_gone(ball, timeout=cfg.between_drags_delay.sample())
+            self._wait_ball_gone(ball, timeout=random.uniform(*self.BALL_WAIT_SECONDS))
 
     # ------------------------------------------------------------------ #
     def _wait_ball_gone(self, ball: vision.Circle, timeout: float) -> None:

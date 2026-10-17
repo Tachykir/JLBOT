@@ -29,7 +29,7 @@ import time
 
 from adb_controller import ADBController, list_ldplayer_devices
 from dustbot2.schedule import DailyPlayTarget
-from bot import DustMineBot, BotConfig, RandomRange, schedule_from_list
+from bot import DustMineBot, BotConfig, schedule_from_list
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,9 +53,6 @@ def _run_instance(serial: str, config_dict: dict) -> None:
         adb = ADBController(serial=serial)
         cfg = BotConfig(
             name=config_dict["name"],
-            idle_click_interval=RandomRange.from_value(config_dict.get("idle_click_interval", [0.8, 1.4])),
-            drag_duration_ms=RandomRange.from_value(config_dict.get("drag_duration_ms", [800, 1300])),
-            between_drags_delay=RandomRange.from_value(config_dict.get("between_drags_delay", [0.5, 1.1])),
             empty_detections_to_exit=config_dict.get("empty_detections_to_exit", 2),
             max_seconds_per_game_screen=config_dict.get("max_seconds_per_game_screen", 60.0),
             idle_poll_interval=config_dict.get("idle_poll_interval", 0.5),

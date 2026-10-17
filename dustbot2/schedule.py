@@ -1,12 +1,14 @@
 """
 schedule.py
 ===========
-Dzienny plan gry: użytkownik ustawia tylko okno (np. 09:00-23:30) i ile
-godzin bot ma grać w ciągu dnia. Bot sam układa sesje i przerwy:
+Dzienny plan gry: użytkownik ustawia tylko okno (np. 09:00-23:30), ile
+godzin bot ma grać w ciągu dnia i opcjonalnie dni tygodnia. Resztę układa
+bot, każdego dnia inaczej:
 
-  - długości sesji są losowane (rozkład log-normalny w zadanym zakresie),
-  - czas wolny dzielony jest na przerwy o nieregularnych długościach
-    (rozkład gamma), z krótszym zapasem na początku i końcu okna,
+  - losuje "styl dnia" (dużo krótkich sesji / mieszany / dłuższe bloki),
+  - długości sesji: mini-sesje 8-20 min i zwykłe sesje do 2 h,
+  - czas wolny dzieli na przerwy o nieregularnych długościach (rozkład
+    gamma), z krótszym zapasem na początku i końcu okna,
   - suma sesji = zadana liczba godzin (minus to, co już rozegrano dziś).
 
 Plan jest powtarzalny dla danej instancji i dnia (ziarno z nazwy i daty),
@@ -26,14 +28,32 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
+MIN_SESSION_MINUTES = 8.0
+MAX_SESSION_MINUTES = 120.0
+SHORT_SESSION_MINUTES = (8.0, 20.0)
+
+
+@dataclass(frozen=True)
+class DayStyle:
+    name: str
+    weight: float             # jak często ten styl jest losowany
+    short_share: float        # udział mini-sesji (8-20 min)
+    median_minutes: float     # mediana zwykłych sesji
+    min_break_minutes: float
+
+
+DAY_STYLES = (
+    DayStyle("dużo krótkich sesji", 0.30, 0.55, 28.0, 4.0),
+    DayStyle("mieszany", 0.45, 0.25, 45.0, 5.0),
+    DayStyle("dłuższe bloki", 0.25, 0.10, 75.0, 8.0),
+)
+
 
 @dataclass(frozen=True)
 class DailyPlayTarget:
     window_start: str                              # "HH:MM"
     window_end: str                                # "HH:MM"
     play_hours: float
-    session_minutes: tuple[float, float] = (20.0, 90.0)
-    min_break_minutes: float = 5.0
     days: tuple[int, ...] | None = None            # 0 = poniedziałek; None = codziennie
 
     def to_dict(self) -> dict:
@@ -41,13 +61,12 @@ class DailyPlayTarget:
             "window_start": self.window_start,
             "window_end": self.window_end,
             "play_hours": self.play_hours,
-            "session_minutes": list(self.session_minutes),
-            "min_break_minutes": self.min_break_minutes,
             "days": list(self.days) if self.days is not None else None,
         }
 
     @staticmethod
     def from_dict(raw: dict | None) -> "DailyPlayTarget | None":
+        """Starsze pola (session_minutes, min_break_minutes) są pomijane."""
         if not raw:
             return None
         days = raw.get("days")
@@ -55,8 +74,6 @@ class DailyPlayTarget:
             window_start=raw["window_start"],
             window_end=raw["window_end"],
             play_hours=float(raw["play_hours"]),
-            session_minutes=tuple(raw.get("session_minutes", (20.0, 90.0))),
-            min_break_minutes=float(raw.get("min_break_minutes", 5.0)),
             days=tuple(days) if days is not None else None,
         )
 
@@ -69,6 +86,12 @@ class Session:
     @property
     def minutes(self) -> float:
         return (self.end - self.start).total_seconds() / 60
+
+
+@dataclass(frozen=True)
+class DayPlan:
+    style: str
+    sessions: list[Session]
 
 
 def _parse(hhmm: str) -> dt.time:
@@ -96,22 +119,29 @@ def window_containing_or_next(target: DailyPlayTarget, now: dt.datetime) -> tupl
     return None
 
 
-def plan_window(target: DailyPlayTarget, start: dt.datetime, end: dt.datetime,
-                rng: random.Random, played_seconds: float = 0.0) -> list[Session]:
-    """Sesje od `start` do `end` na pozostałe (play_hours - played) godzin."""
+def _session_length(style: DayStyle, median: float, rng: random.Random) -> float:
+    if rng.random() < style.short_share:
+        return rng.uniform(*SHORT_SESSION_MINUTES) * 60
+    minutes = median * math.exp(rng.gauss(0, 0.4))
+    return min(max(minutes, SHORT_SESSION_MINUTES[1]), MAX_SESSION_MINUTES) * 60
+
+
+def plan_day(target: DailyPlayTarget, start: dt.datetime, end: dt.datetime,
+             rng: random.Random, played_seconds: float = 0.0) -> DayPlan:
+    """Plan od `start` do `end` na pozostałe (play_hours - played) godzin."""
+    style = rng.choices(DAY_STYLES, weights=[s.weight for s in DAY_STYLES])[0]
     available = (end - start).total_seconds()
     remaining = max(target.play_hours * 3600 - played_seconds, 0.0)
     if remaining <= 60 or available <= 60:
-        return []
-    min_break = target.min_break_minutes * 60
+        return DayPlan(style.name, [])
+    min_break = style.min_break_minutes * 60
     remaining = min(remaining, available)
+    low = MIN_SESSION_MINUTES * 60
 
-    # długości sesji: log-normalnie wokół średniej geometrycznej zakresu
-    low, high = (m * 60 for m in target.session_minutes)
-    median = math.sqrt(low * high)
+    median = style.median_minutes * rng.uniform(0.85, 1.2)  # dzień do dnia trochę inaczej
     lengths: list[float] = []
     while sum(lengths) < remaining:
-        lengths.append(min(max(median * math.exp(rng.gauss(0, 0.45)), low), high))
+        lengths.append(_session_length(style, median, rng))
     lengths[-1] -= sum(lengths) - remaining
     if lengths[-1] < low and len(lengths) > 1:
         # ostatnia sesja wyszła za krótka - dopełniamy ją do minimum kosztem
@@ -126,7 +156,8 @@ def plan_window(target: DailyPlayTarget, start: dt.datetime, end: dt.datetime,
             tail = lengths.pop()  # nie da się - doklejamy do poprzedniej
             lengths[-1] += tail
 
-    # za mało czasu na przerwy - łączymy sesje (dłuższe, ale mieszczą się)
+    # za mało czasu na przerwy - łączymy najkrótsze sesje; dopiero wtedy
+    # sesja może przekroczyć 2 h (godziny gry prawie równe długości okna)
     while len(lengths) > 1 and available - remaining < (len(lengths) - 1) * min_break:
         lengths.sort()
         shortest = lengths.pop(0)
@@ -150,7 +181,12 @@ def plan_window(target: DailyPlayTarget, start: dt.datetime, end: dt.datetime,
         session_end = cursor + dt.timedelta(seconds=length)
         sessions.append(Session(cursor, session_end))
         cursor = session_end + dt.timedelta(seconds=gaps[i + 1])
-    return sessions
+    return DayPlan(style.name, sessions)
+
+
+def plan_window(target: DailyPlayTarget, start: dt.datetime, end: dt.datetime,
+                rng: random.Random, played_seconds: float = 0.0) -> list[Session]:
+    return plan_day(target, start, end, rng, played_seconds).sessions
 
 
 class PlayLedger:
@@ -197,6 +233,7 @@ class PlayScheduler:
         self._plan_key: dt.datetime | None = None
         self._plan_day: dt.date | None = None
         self._sessions: list[Session] = []
+        self.style: str | None = None
 
     def sessions(self, now: dt.datetime) -> list[Session]:
         window = window_containing_or_next(self.target, now)
@@ -205,7 +242,8 @@ class PlayScheduler:
         day, start, end = window
         if self._plan_key != start:
             rng = random.Random(f"{self.instance}|{day.isoformat()}|{now.isoformat(timespec='minutes')}")
-            self._sessions = plan_window(self.target, max(start, now), end, rng, self.ledger.played(day))
+            plan = plan_day(self.target, max(start, now), end, rng, self.ledger.played(day))
+            self._sessions, self.style = plan.sessions, plan.style
             self._plan_key, self._plan_day = start, day
         return self._sessions
 

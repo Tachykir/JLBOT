@@ -74,5 +74,24 @@ class BotTouchTests(unittest.TestCase):
         self.assertEqual(adb.taps, [(5, 5)])
 
 
+    def test_just_loot_delays_are_varied_with_occasional_long_pauses(self):
+        bot, _ = make_bot()
+        bot._drag_rng.seed(3)
+        delays = [bot._just_loot_delay() for _ in range(2000)]
+        self.assertTrue(all(0.6 <= d <= 7.0 for d in delays))
+        long_pauses = sum(d > 2.4 for d in delays) / len(delays)
+        self.assertTrue(0.04 < long_pauses < 0.12, long_pauses)
+        # brak sztucznych pików na granicach zakresu
+        self.assertLess(sum(d in (0.6, 2.0) for d in delays), 3)
+        self.assertGreater(len({round(d, 3) for d in delays}), 800)
+
+    def test_adb_swipe_duration_comes_from_gesture_profile(self):
+        bot, adb = make_bot()
+        for _ in range(30):
+            bot._drag((100, 800), (300, 300))
+        durations = [s[4] for s in adb.swipes]
+        self.assertTrue(all(180 <= d <= 1300 for d in durations))
+        self.assertGreater(len(set(durations)), 20)
+
 if __name__ == "__main__":
     unittest.main()

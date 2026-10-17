@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 from dustbot2.schedule import (
-    DailyPlayTarget, PlayLedger, PlayScheduler, plan_window, window_containing_or_next, window_for,
+    DAY_STYLES, MAX_SESSION_MINUTES, MIN_SESSION_MINUTES, DailyPlayTarget, PlayLedger, PlayScheduler,
+    plan_day, plan_window, window_containing_or_next, window_for,
 )
 
 DAY = dt.date(2026, 10, 19)  # poniedziałek
@@ -31,14 +32,25 @@ class PlanWindowTests(unittest.TestCase):
         sessions = plan_window(TARGET, start, end, random.Random(7))
         breaks = [(b.start - a.end).total_seconds() / 60 for a, b in zip(sessions, sessions[1:])]
         self.assertGreater(len(breaks), 2)
-        self.assertGreaterEqual(min(breaks), TARGET.min_break_minutes - 1e-6)
+        self.assertGreaterEqual(min(breaks), min(st.min_break_minutes for st in DAY_STYLES) - 1e-6)
         self.assertGreater(max(breaks) - min(breaks), 10)  # nieregularne odstępy
 
     def test_session_lengths_stay_in_range(self):
         start, end = window_for(TARGET, DAY)
         for seed in range(30):
             lengths = [s.minutes for s in plan_window(TARGET, start, end, random.Random(seed))]
-            self.assertTrue(all(20 - 1e-6 <= m <= 90 + 1e-6 for m in lengths), lengths)
+            self.assertTrue(all(MIN_SESSION_MINUTES - 1e-6 <= m <= MAX_SESSION_MINUTES + 1e-6
+                                for m in lengths), lengths)
+
+    def test_days_get_different_styles_and_mini_sessions(self):
+        start, end = window_for(TARGET, DAY)
+        plans = [plan_day(TARGET, start, end, random.Random(seed)) for seed in range(60)]
+        self.assertEqual({p.style for p in plans}, {st.name for st in DAY_STYLES})
+        lengths = [s.minutes for p in plans for s in p.sessions]
+        self.assertTrue(any(m <= 20 for m in lengths))   # mini-sesje
+        self.assertTrue(any(m >= 90 for m in lengths))   # długie bloki
+        counts = {len(p.sessions) for p in plans}
+        self.assertGreater(max(counts) - min(counts), 4)  # różna liczba sesji w różne dni
 
     def test_different_days_differ(self):
         start, end = window_for(TARGET, DAY)
@@ -96,8 +108,13 @@ class SchedulerTests(unittest.TestCase):
             self.assertGreaterEqual(sessions[0].start, noon)
 
     def test_target_round_trip(self):
-        target = DailyPlayTarget("09:00", "23:30", 6.0, (15.0, 60.0), 8.0, (0, 1, 2))
+        target = DailyPlayTarget("09:00", "23:30", 6.0, (0, 1, 2))
         self.assertEqual(DailyPlayTarget.from_dict(target.to_dict()), target)
+
+    def test_old_session_settings_are_ignored(self):
+        old = {"window_start": "09:00", "window_end": "23:30", "play_hours": 6,
+               "session_minutes": [20, 90], "min_break_minutes": 5, "days": None}
+        self.assertEqual(DailyPlayTarget.from_dict(old), DailyPlayTarget("09:00", "23:30", 6.0))
 
 
 class BotScheduleTests(unittest.TestCase):
