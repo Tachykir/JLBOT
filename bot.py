@@ -181,9 +181,9 @@ class BotConfig:
     # Czas trwania gestu przeciągania kulki (ms). Losowany zakres.
     drag_duration_ms: RandomRange = field(default_factory=lambda: RandomRange(800, 1300))
 
-    # Odstęp między kolejnymi przeciągnięciami kulek (żeby gra
-    # zdążyła zarejestrować i zaktualizować UI przed kolejną akcją).
-    # Losowany zakres (s).
+    # Maksymalny czas (s) oczekiwania na zniknięcie przeciągniętej kulki
+    # z planszy, zanim bot pójdzie dalej. Bot sprawdza planszę co 0.15 s
+    # i nie czeka dłużej, niż trzeba. Losowany zakres (s).
     between_drags_delay: RandomRange = field(default_factory=lambda: RandomRange(0.5, 1.1))
 
     # Ile razy z rzędu detekcja może nie znaleźć kulek/DROP zanim bot
@@ -668,4 +668,23 @@ class DustMineBot:
             self.adb.swipe(ball.x, ball.y, drop.x, drop.y, duration_ms=int(cfg.drag_duration_ms.sample()))
             self.stats.balls_collected += 1
 
-            time.sleep(cfg.between_drags_delay.sample())
+            self._wait_ball_gone(ball, timeout=cfg.between_drags_delay.sample())
+
+    # ------------------------------------------------------------------ #
+    def _wait_ball_gone(self, ball: vision.Circle, timeout: float) -> None:
+        """
+        Czeka, aż kulka przeciągnięta przez bota zniknie z planszy, zamiast
+        stałego sleepa. Dzięki temu nie przeciągamy tej samej kulki drugi raz
+        i nie tracimy czasu, gdy gra reaguje szybciej. Po `timeout` wraca
+        bez względu na wynik - pętla zbierania sama zdecyduje, co dalej.
+        """
+        cfg = self.config
+        deadline = time.monotonic() + timeout
+        while not self._stop and time.monotonic() < deadline:
+            time.sleep(0.15)
+            frame = self.adb.screenshot()
+            det = vision.detect(frame, region=cfg.board_region)
+            if self._on_frame is not None:
+                self._on_frame(cfg.name, frame, det, "collecting")
+            if not any(abs(b.x - ball.x) <= ball.r and abs(b.y - ball.y) <= ball.r for b in det.balls):
+                return

@@ -218,10 +218,42 @@ class ADBController:
     def screenshot(self) -> np.ndarray:
         """
         Zwraca screenshot jako obraz BGR (numpy array, kompatybilny z OpenCV).
-        Używa `exec-out screencap -p`, co zwraca surowe bajty PNG bez
-        zapisywania pliku na urządzeniu ani na dysku hosta - szybciej
-        i bez śmiecenia w /sdcard.
+
+        Domyślnie używa `exec-out screencap` BEZ `-p`: zwraca surowe piksele
+        z 12-bajtowym nagłówkiem (szerokość, wysokość, format - uint32 LE),
+        więc pomijamy kodowanie PNG na Androidzie i dekodowanie na PC.
+        Jeśli format nie jest obsługiwany (np. RGB_565) albo długość danych
+        się nie zgadza, wraca do `screencap -p` (PNG).
         """
+        raw = self._screencap_raw()
+        if raw is not None:
+            img = self._decode_raw_screencap(raw)
+            if img is not None:
+                return img
+            logger.debug("Nietypowy format screencap raw na %s - fallback do PNG", self.serial)
+        return self._screencap_png()
+
+    def _screencap_raw(self) -> bytes | None:
+        cmd = [self.adb_path, "-s", self.serial, "exec-out", "screencap"]
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=10, creationflags=_SUBPROCESS_FLAGS)
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        if result.returncode != 0 or len(result.stdout) < 12:
+            return None
+        return result.stdout
+
+    @staticmethod
+    def _decode_raw_screencap(data: bytes) -> np.ndarray | None:
+        width, height, fmt = np.frombuffer(data, dtype="<u4", count=3)
+        width, height = int(width), int(height)
+        # 1 = RGBA_8888, 2 = RGBX_8888 - oba mają po 4 bajty na piksel
+        if fmt not in (1, 2) or len(data) != 12 + width * height * 4:
+            return None
+        rgba = np.frombuffer(data, dtype=np.uint8, offset=12).reshape(height, width, 4)
+        return cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+
+    def _screencap_png(self) -> np.ndarray:
         cmd = [self.adb_path, "-s", self.serial, "exec-out", "screencap", "-p"]
         try:
             result = subprocess.run(cmd, capture_output=True, timeout=10, creationflags=_SUBPROCESS_FLAGS)
