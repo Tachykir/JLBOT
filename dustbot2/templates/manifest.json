@@ -1,0 +1,145 @@
+{
+  "reference_width": 540,
+  "templates": [
+    {
+      "name": "dust_title",
+      "state": "dust_mine",
+      "file": "dust_title.png",
+      "search": [
+        0,
+        0,
+        1,
+        0.2
+      ],
+      "threshold": 0.8,
+      "source": "20261010_154356_700420_Vexaro.png",
+      "source_rect": [
+        103,
+        58,
+        437,
+        85
+      ],
+      "priority": 0
+    },
+    {
+      "name": "loading_text",
+      "state": "loading",
+      "file": "loading_text.png",
+      "search": [
+        0,
+        0.3,
+        1,
+        0.6
+      ],
+      "threshold": 0.8,
+      "source": "20261009_083256_050406_KriNox.png",
+      "source_rect": [
+        111,
+        412,
+        430,
+        451
+      ],
+      "priority": 0
+    },
+    {
+      "name": "splash_logo",
+      "state": "splash",
+      "file": "splash_logo.png",
+      "search": [
+        0,
+        0.25,
+        1,
+        0.75
+      ],
+      "threshold": 0.8,
+      "source": "20261009_062039_267440_ZimnyPixel.png",
+      "source_rect": [
+        185,
+        389,
+        355,
+        571
+      ],
+      "priority": 0
+    },
+    {
+      "name": "create_account",
+      "state": "create_account",
+      "file": "create_account.png",
+      "search": [
+        0,
+        0,
+        1,
+        0.3
+      ],
+      "threshold": 0.8,
+      "source": "20261010_112726_692568_Vexaro.png",
+      "source_rect": [
+        70,
+        114,
+        467,
+        155
+      ],
+      "priority": 0
+    },
+    {
+      "name": "keep_current",
+      "state": "item_popup",
+      "file": "keep_current.png",
+      "search": [
+        0,
+        0.7,
+        1,
+        1
+      ],
+      "threshold": 0.8,
+      "source": "20261010_112048_973111_ZimnyPixel.png",
+      "source_rect": [
+        186,
+        885,
+        353,
+        913
+      ],
+      "priority": 10
+    },
+    {
+      "name": "choose_depth",
+      "state": "home",
+      "file": "choose_depth.png",
+      "search": [
+        0,
+        0.5,
+        1,
+        0.85
+      ],
+      "threshold": 0.8,
+      "source": "20261010_121836_224027_KriNox.png",
+      "source_rect": [
+        210,
+        639,
+        331,
+        657
+      ],
+      "priority": 0
+    },
+    {
+      "name": "drop_text",
+      "state": null,
+      "file": "drop_text.png",
+      "search": [
+        0,
+        0.12,
+        1,
+        1
+      ],
+      "threshold": 0.75,
+      "source": "20261010_154356_700420_Vexaro.png",
+      "source_rect": [
+        355,
+        313,
+        404,
+        330
+      ],
+      "priority": 0
+    }
+  ]
+}
