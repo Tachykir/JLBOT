@@ -2,7 +2,7 @@ import random
 import unittest
 
 from dustbot2.geometry import Screen
-from dustbot2.touch.humanize import DragProfile, plan_drag, to_commands
+from dustbot2.touch.humanize import SHAPES, DragProfile, plan_drag, straightness, to_commands
 from dustbot2.touch.minitouch import Banner, MinitouchClient, TouchError, parse_banner
 
 
@@ -63,19 +63,27 @@ class CommandTests(unittest.TestCase):
 
 class HumanizeTests(unittest.TestCase):
     def test_drag_starts_and_ends_near_requested_points(self):
-        profile = DragProfile(endpoint_px=2.0)
-        steps = plan_drag((100, 100), (600, 1000), profile, random.Random(1))
-        first, last = steps[0], steps[-1]
-        self.assertLess(abs(first.x - 100), 10)
-        self.assertLess(abs(first.y - 100), 10)
-        self.assertLess(abs(last.x - 600), 10)
-        self.assertLess(abs(last.y - 1000), 10)
+        for shape in SHAPES:
+            if shape == "flick":
+                continue
+            with self.subTest(shape=shape):
+                steps = plan_drag((100, 100), (400, 900), rng=random.Random(1), shape=shape).steps
+                self.assertLess(abs(steps[0].x - 100), 20)
+                self.assertLess(abs(steps[0].y - 100), 20)
+                self.assertLess(abs(steps[-1].x - 400), 30)
+                self.assertLess(abs(steps[-1].y - 900), 30)
 
-    def test_duration_is_within_profile_range(self):
+    def test_duration_stays_in_clamp(self):
+        profile = DragProfile()
+        for seed in range(200):
+            total = plan_drag((0, 0), (300, 600), profile, random.Random(seed)).duration_ms
+            self.assertGreaterEqual(total, profile.duration_clamp[0] - 1)
+            self.assertLessEqual(total, profile.duration_clamp[1] + 1)
+
+    def test_fixed_duration_range_is_respected(self):
         profile = DragProfile(duration_ms=(500, 900))
         for seed in range(20):
-            steps = plan_drag((0, 0), (300, 300), profile, random.Random(seed))
-            total = sum(s.delay_ms for s in steps)
+            total = plan_drag((0, 0), (300, 300), profile, random.Random(seed), shape="arc").duration_ms
             self.assertGreaterEqual(total, 499)
             self.assertLessEqual(total, 901)
 
@@ -84,32 +92,59 @@ class HumanizeTests(unittest.TestCase):
         b = plan_drag((10, 10), (500, 900), rng=random.Random(42))
         self.assertEqual(a, b)
 
-    def test_pressure_stays_in_profile_range(self):
-        profile = DragProfile(pressure=(40, 70))
-        steps = plan_drag((0, 0), (300, 300), profile, random.Random(3))
-        self.assertTrue(all(40 <= s.pressure <= 70 for s in steps))
+    def test_all_shapes_are_used(self):
+        rng = random.Random(0)
+        seen = {plan_drag((0, 0), (300, 600), rng=rng).shape for _ in range(300)}
+        self.assertEqual(seen, set(SHAPES))
+
+    def test_shapes_differ_in_straightness(self):
+        def median(shape):
+            values = sorted(
+                straightness(plan_drag((100, 800), (400, 200), rng=random.Random(s), shape=shape).steps)
+                for s in range(40)
+            )
+            return values[len(values) // 2]
+
+        self.assertGreater(median("straight"), 0.97)
+        self.assertLess(median("arc"), median("straight"))
+        self.assertLess(median("elbow"), 0.85)
+        self.assertLess(median("hook"), 0.95)
+
+    def test_mixed_shapes_cover_human_straightness_range(self):
+        # nagrania prawdziwych przeciągnięć: od ok. 0.70 do 0.99
+        rng = random.Random(3)
+        values = [straightness(plan_drag((100, 800), (400, 200), rng=rng).steps) for _ in range(300)]
+        self.assertLess(min(values), 0.8)
+        self.assertGreater(max(values), 0.98)
+
+    def test_flick_releases_before_target(self):
+        for seed in range(20):
+            steps = plan_drag((100, 900), (100, 100), rng=random.Random(seed), shape="flick").steps
+            self.assertGreater(steps[-1].y, 100 + 0.1 * 800)
 
     def test_finger_speeds_up_then_slows_down(self):
-        steps = plan_drag((100, 100), (100, 900), DragProfile(jitter_px=0), random.Random(7))
+        profile = DragProfile(jitter_px=0, easing=(1.0, 1.0), skew=(1.0, 1.0))
+        steps = plan_drag((100, 100), (100, 900), profile, random.Random(7), shape="straight").steps
         speeds = [abs(b.y - a.y) / b.delay_ms for a, b in zip(steps, steps[1:])]
         third = len(speeds) // 3
         middle = sum(speeds[third:2 * third]) / third
         self.assertGreater(middle, 1.5 * sum(speeds[:third // 2]) / (third // 2))
         self.assertGreater(middle, 1.5 * sum(speeds[-(third // 2):]) / (third // 2))
 
-    def test_pressure_changes_smoothly(self):
-        profile = DragProfile(pressure_step=2)
-        steps = plan_drag((0, 0), (300, 600), profile, random.Random(9))
+    def test_pressure_stays_in_range_and_changes_smoothly(self):
+        profile = DragProfile(pressure=(40, 70), pressure_step=2)
+        steps = plan_drag((0, 0), (300, 600), profile, random.Random(9)).steps
+        self.assertTrue(all(40 <= s.pressure <= 70 for s in steps))
         self.assertTrue(all(abs(b.pressure - a.pressure) <= 2 for a, b in zip(steps, steps[1:])))
 
     def test_frames_are_evenly_spaced(self):
-        steps = plan_drag((0, 0), (300, 600), rng=random.Random(4))
+        steps = plan_drag((0, 0), (300, 600), rng=random.Random(4)).steps
         delays = {round(s.delay_ms, 6) for s in steps[1:]}
         self.assertEqual(len(delays), 1)
 
     def test_commands_down_moves_then_up(self):
         client = make_client()
-        steps = plan_drag((100, 100), (400, 800), DragProfile(), random.Random(5))
+        steps = plan_drag((100, 100), (400, 800), rng=random.Random(5)).steps
         commands = to_commands(steps, client)
         self.assertTrue(commands[0].startswith("d 0 "))
         self.assertEqual(commands[-1], "u 0")
