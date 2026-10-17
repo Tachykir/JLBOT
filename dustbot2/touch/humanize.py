@@ -116,8 +116,11 @@ def _catmull_rom(points: np.ndarray, samples: int = 40) -> np.ndarray:
     return np.array(out)
 
 
-def _waypoints(shape: str, s: np.ndarray, e: np.ndarray, rng: random.Random) -> np.ndarray:
-    """Punkty, przez które przechodzi ścieżka danego kształtu."""
+def _waypoints(shape: str, s: np.ndarray, e: np.ndarray, rng: random.Random) -> tuple[str, np.ndarray]:
+    """
+    Punkty, przez które przechodzi ścieżka danego kształtu. Zwraca też nazwę
+    kształtu, bo "L" przy gestach prawie wzdłuż osi ekranu zamienia się w łuk.
+    """
     d = e - s
     length = float(np.linalg.norm(d)) or 1.0
     u = d / length                      # kierunek gestu
@@ -126,26 +129,38 @@ def _waypoints(shape: str, s: np.ndarray, e: np.ndarray, rng: random.Random) -> 
 
     if shape == "straight":
         bend = side * rng.uniform(0.0, 0.06) * length
-        return np.array([s, s + d * rng.uniform(0.4, 0.6) + n * bend, e])
+        return shape, np.array([s, s + d * rng.uniform(0.4, 0.6) + n * bend, e])
     if shape in ("arc", "flick"):
         bend = side * rng.uniform(0.08, 0.28) * length
         if shape == "flick":
             bend *= 0.5
-        return np.array([s, s + d * rng.uniform(0.35, 0.65) + n * bend, e])
+        return shape, np.array([s, s + d * rng.uniform(0.35, 0.65) + n * bend, e])
     if shape == "s_curve":
         bend = side * rng.uniform(0.06, 0.16) * length
-        return np.array([s, s + d / 3 + n * bend, s + 2 * d / 3 - n * bend, e])
+        return shape, np.array([s, s + d / 3 + n * bend, s + 2 * d / 3 - n * bend, e])
     if shape == "hook":
         # przelot za cel i powrót - "zawijas" przy DROP
         overshoot = e + u * rng.uniform(0.05, 0.14) * length + n * side * rng.uniform(0.03, 0.1) * length
         mid = s + d * rng.uniform(0.45, 0.6) + n * -side * rng.uniform(0.0, 0.08) * length
-        return np.array([s, mid, overshoot, e])
+        return shape, np.array([s, mid, overshoot, e])
     if shape == "elbow":
         # najpierw wzdłuż jednej osi ekranu, potem drugiej
         corner = np.array([s[0], e[1]]) if rng.random() < 0.5 else np.array([e[0], s[1]])
+        # gest prawie wzdłuż osi: zakręt wypadłby przy starcie albo celu,
+        # a krzywa zrobiłaby pętlę - wtedy rysujemy zwykły łuk
+        if min(np.linalg.norm(corner - s), np.linalg.norm(corner - e)) < 0.25 * length:
+            return _waypoints("arc", s, e, rng)
         corner = corner + np.array([rng.gauss(0, 0.04), rng.gauss(0, 0.04)]) * length
-        return np.array([s, corner, e])
+        return shape, np.array([s, corner, e])
     raise ValueError(f"Nieznany kształt: {shape}")
+
+
+def _inside(curve: np.ndarray, bounds: tuple[float, float, float, float], margin: float) -> bool:
+    x1, y1, x2, y2 = bounds
+    return bool(
+        (curve[:, 0] >= x1 + margin).all() and (curve[:, 0] <= x2 - margin).all()
+        and (curve[:, 1] >= y1 + margin).all() and (curve[:, 1] <= y2 - margin).all()
+    )
 
 
 def _duration(profile: DragProfile, rng: random.Random) -> float:
@@ -165,21 +180,31 @@ def plan_drag(
     profile: DragProfile = DragProfile(),
     rng: random.Random | None = None,
     shape: str | None = None,
+    bounds: tuple[float, float, float, float] | None = None,
 ) -> DragPlan:
     """
     Planuje gest od `start` (kulka) do `end` (DROP). `shape` wymusza kształt;
-    domyślnie losowany z wag w profilu. Pierwszy krok ma delay_ms=0 i oznacza
-    wciśnięcie, ostatni - miejsce puszczenia.
+    domyślnie losowany z wag w profilu. `bounds` (x1, y1, x2, y2, np. obszar
+    planszy) - ścieżka, która by z nich wyszła, jest losowana od nowa.
+    Pierwszy krok ma delay_ms=0 i oznacza wciśnięcie, ostatni - miejsce
+    puszczenia.
     """
     rng = rng or random.Random()
-    if shape is None:
-        names, weights = zip(*profile.shapes)
-        shape = rng.choices(names, weights=weights)[0]
+    requested = shape
+    for attempt in range(10):
+        shape = requested
+        if shape is None:
+            names, weights = zip(*profile.shapes)
+            shape = rng.choices(names, weights=weights)[0]
+        if attempt == 9 and bounds is not None:
+            shape = "straight"  # ostatnia próba: najkrótsza możliwa ścieżka
 
-    s = np.array([start[0] + rng.gauss(0, profile.start_px), start[1] + rng.gauss(0, profile.start_px)])
-    e = np.array([end[0] + rng.gauss(0, profile.target_px), end[1] + rng.gauss(0, profile.target_px)])
-
-    curve = _catmull_rom(_waypoints(shape, s, e, rng))
+        s = np.array([start[0] + rng.gauss(0, profile.start_px), start[1] + rng.gauss(0, profile.start_px)])
+        e = np.array([end[0] + rng.gauss(0, profile.target_px), end[1] + rng.gauss(0, profile.target_px)])
+        shape, points = _waypoints(shape, s, e, rng)
+        curve = _catmull_rom(points)
+        if bounds is None or _inside(curve, bounds, margin=3 * profile.jitter_px):
+            break
     seg = np.linalg.norm(np.diff(curve, axis=0), axis=1)
     arc = np.concatenate([[0.0], np.cumsum(seg)])
     total = arc[-1] or 1.0

@@ -117,6 +117,22 @@ class HumanizeTests(unittest.TestCase):
         self.assertLess(min(values), 0.8)
         self.assertGreater(max(values), 0.98)
 
+    def test_axis_aligned_elbow_becomes_arc(self):
+        # kulka prawie pionowo pod DROP - zakręt "L" nie ma sensu
+        for seed in range(20):
+            plan = plan_drag((300, 900), (305, 200), rng=random.Random(seed), shape="elbow")
+            self.assertEqual(plan.shape, "arc")
+
+    def test_paths_stay_inside_bounds(self):
+        bounds = (25, 215, 515, 935)
+        rng = random.Random(1)
+        for _ in range(300):
+            start = (rng.uniform(70, 470), rng.uniform(260, 890))
+            end = (rng.uniform(70, 470), rng.uniform(260, 890))
+            steps = plan_drag(start, end, rng=rng, bounds=bounds).steps
+            for s in steps:
+                self.assertTrue(bounds[0] <= s.x <= bounds[2] and bounds[1] <= s.y <= bounds[3], (start, end))
+
     def test_flick_releases_before_target(self):
         for seed in range(20):
             steps = plan_drag((100, 900), (100, 100), rng=random.Random(seed), shape="flick").steps
