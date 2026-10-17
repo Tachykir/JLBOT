@@ -3,13 +3,13 @@ bot.py
 ======
 Logika jednej instancji bota działającej na jednej instancji LDPlayer.
 
-Cykl działania:
-  1. Klikaj punkt idle_point co idle_click_interval, dopóki nie pojawi
-     się ekran z kulkami (wykryty przez vision.detect + has_game_screen).
-  2. Gdy ekran z kulkami się pojawi: co pętlę na nowo wykrywaj pozycję
-     DROP (bo się przemieszcza) i listę pozostałych kulek, przeciągaj
-     JEDNĄ kulkę do DROP, poczekaj chwilę na animację/aktualizację UI,
-     powtórz aż kulek nie będzie już widać.
+Cykl działania (szczegóły: docs/minigry.md):
+  1. Rozpoznaj ekran szablonami (dustbot2/screens.py) i obsłuż go:
+     Profile -> JUST LOOT, koniec walki -> PROCEED, "?" -> odsłonięcie,
+     popup przedmiotu -> Keep Current, Fishing Hole, Depth Collapse.
+  2. Na planszy Dust Mine: co pętlę na nowo wykrywaj pozycję DROP (bo się
+     przemieszcza) i listę pozostałych kulek, przeciągaj JEDNĄ kulkę do
+     DROP, poczekaj, aż zniknie, powtórz aż kulek nie będzie.
   3. Wróć do kroku 1.
 
 Cała logika jest niezależna od danej instancji ADB - dostaje
@@ -35,6 +35,7 @@ from dustbot2.touch.humanize import plan_drag, to_commands
 from dustbot2.touch.minitouch import MinitouchSession, TouchError
 from dustbot2.minigames import fishing as fishing_game
 from dustbot2.minigames.depth_collapse import find_tiles
+from dustbot2.schedule import DailyPlayTarget, PlayLedger, PlayScheduler
 import vision
 
 logger = logging.getLogger("bot")
@@ -161,28 +162,10 @@ def schedule_to_list(schedule: list[ScheduleWindow]) -> list[dict]:
 class BotConfig:
     name: str
 
-    # Punkt (środek), w który bot klika w oczekiwaniu na pojawienie się
-    # gry (np. przycisk otwierający "eksplozję kopalni pyłu").
-    # Domyślna wartość skalibrowana dla Just Loot.
-    idle_point: tuple[int, int] = (436, 1488)
-
-    # Promień (px) obszaru wokół idle_point, w którym bot losuje
-    # faktyczny punkt kliknięcia za każdym razem - zamiast klikać
-    # dokładnie w ten sam piksel w kółko (co jest łatwo wykrywalnym
-    # wzorcem), symuluje niedokładność ludzkiego dotyku. Domyślnie 50px
-    # (czyli obszar o średnicy 100px, zgodnie z ustaleniami).
-    idle_point_radius: float = 50.0
-
-    # Jak często klikać punkt idle, gdy nie widać jeszcze ekranu gry.
+    # Jak często klikać JUST LOOT na ekranie Profile (przycisk jest
+    # znajdowany szablonem, punkt kliknięcia losowany wokół jego środka).
     # Losowany zakres (s) zamiast stałej wartości - patrz RandomRange.
     idle_click_interval: RandomRange = field(default_factory=lambda: RandomRange(0.8, 1.4))
-
-    # Region (x1, y1, x2, y2) planszy gry na ekranie - ogranicza
-    # wykrywanie do obszaru czarnego prostokąta z kulkami, żeby
-    # uniknąć fałszywych trafień gdzie indziej w UI. Jeśli None,
-    # przeszukiwany jest cały ekran.
-    # Domyślna wartość skalibrowana dla Just Loot.
-    board_region: tuple[int, int, int, int] | None = (29, 333, 861, 1466)
 
     # Czas trwania gestu przeciągania kulki (ms). Losowany zakres.
     drag_duration_ms: RandomRange = field(default_factory=lambda: RandomRange(800, 1300))
@@ -193,7 +176,7 @@ class BotConfig:
     between_drags_delay: RandomRange = field(default_factory=lambda: RandomRange(0.5, 1.1))
 
     # Ile razy z rzędu detekcja może nie znaleźć kulek/DROP zanim bot
-    # uzna, że ekran gry się zakończył i wraca do klikania idle_point.
+    # uzna, że ekran gry się zakończył i wraca do obsługi innych ekranów.
     empty_detections_to_exit: int = 2
 
     # Maksymalny czas (s) na "wyczyszczenie" jednego ekranu gry, zanim
@@ -224,6 +207,11 @@ class BotConfig:
     # (podczas oczekiwania poza godzinami pracy - nie ma sensu sprawdzać
     # częściej niż raz na kilkanaście sekund).
     schedule_poll_interval: float = 15.0
+
+    # Dzienny plan gry: okno + liczba godzin; bot sam układa sesje i
+    # nieregularne przerwy (dustbot2/schedule.py). Jeśli ustawiony, ma
+    # pierwszeństwo przed listą okien `schedule`.
+    daily_play: DailyPlayTarget | None = None
 
     # Czy zamykać grę (force-stop) na czas przerwy między oknami
     # harmonogramu, i uruchamiać ją ponownie na starcie kolejnego
@@ -297,10 +285,6 @@ class BotConfig:
     #               sam wraca do "adb".
     touch_backend: str = "adb"
 
-    # Obszar planszy Dust Mine liczony z rozmiaru ekranu - działa w każdej
-    # rozdzielczości. False = użyj ręcznie ustawionego board_region.
-    board_region_auto: bool = True
-
     # --- Minigry --- #
     # Początkowe opóźnienie (ms) od zrzutu ekranu do chwili, w której gra
     # przyjmuje tap. Bot poprawia je po każdym rzucie w Fishing Hole na
@@ -340,19 +324,20 @@ class DustMineBot:
         self._last_foreground_check: float = 0.0
         self._last_schedule_log: float = 0.0
 
-        # Rozpoznawanie ekranów (dustbot2) - służy tu tylko do wykrywania
-        # nieznanych ekranów do nagrania. Błąd ładowania szablonów nie może
-        # zatrzymać bota, więc wtedy po prostu wyłączamy tę funkcję.
-        self._classifier = None
-        try:
-            from dustbot2.screens import ScreenClassifier
-            self._classifier = ScreenClassifier.load()
-        except Exception:
-            logger.exception("[%s] nie udało się wczytać szablonów ekranów - "
-                             "zapisywanie nieznanych ekranów wyłączone", config.name)
+        # Rozpoznawanie ekranów (szablony w dustbot2/templates) - bez nich
+        # bot nie wie, co jest na ekranie, więc błąd wczytania przerywa start.
+        from dustbot2.screens import ScreenClassifier
+        self._classifier = ScreenClassifier.load()
         self._unknown_saver = UnknownScreenSaver(Path(config.capture_dir) / "Unknown", config.name)
         self._record_request: tuple[str, float] | None = None
         self._last_auto_record: float = float("-inf")
+
+        self._scheduler: PlayScheduler | None = None
+        if config.daily_play is not None:
+            ledger = PlayLedger(Path(config.capture_dir) / "play_time.json", config.name)
+            self._scheduler = PlayScheduler(config.daily_play, config.name, ledger)
+        self._last_play_tick: float | None = None
+        self._last_ledger_save = 0.0
 
         self._fishing_latency: fishing_game.LatencyCalibrator | None = None
         self.last_fishing: dict | None = None  # wynik ostatniego rzutu (log / testy)
@@ -411,7 +396,7 @@ class DustMineBot:
             self._record(label, seconds)
             return True
 
-        if self._classifier is None or not (cfg.capture_unknown_screens or cfg.record_unknown_seconds > 0):
+        if not (cfg.capture_unknown_screens or cfg.record_unknown_seconds > 0):
             return False
         from dustbot2.screens import UNKNOWN
         if state is None:
@@ -483,11 +468,37 @@ class DustMineBot:
         "zawsze" - pełna wsteczna kompatybilność.
         """
         cfg = self.config
-        if not cfg.schedule:
-            return True
         if now is None:
             now = dt.datetime.now()
+        if self._scheduler is not None:
+            return self._scheduler.is_play_time(now)
+        if not cfg.schedule:
+            return True
         return any(window.contains(now) for window in cfg.schedule)
+
+    def _tick_play_time(self) -> None:
+        """Dolicza czas gry do dziennego licznika (gdy działa plan dzienny)."""
+        if self._scheduler is None:
+            return
+        now = time.monotonic()
+        if self._last_play_tick is not None and not self._paused:
+            self._scheduler.record_play(min(now - self._last_play_tick, 60.0))
+        self._last_play_tick = now
+        if now - self._last_ledger_save > 60:
+            self._scheduler.ledger.save()
+            self._last_ledger_save = now
+
+    def _break_message(self) -> str:
+        if self._scheduler is None:
+            return "poza godzinami harmonogramu - czekam na najbliższe okno pracy"
+        now = dt.datetime.now()
+        upcoming = self._scheduler.next_session(now)
+        sessions = self._scheduler.sessions(now)
+        planned = sum(x.minutes for x in sessions) / 60
+        if upcoming is None:
+            return "dzienny limit gry osiągnięty - czekam na następne okno"
+        return (f"przerwa do {upcoming.start:%H:%M}, następna sesja {upcoming.minutes:.0f} min "
+                f"(plan okna: {len(sessions)} sesji, {planned:.1f} h)")
 
     def _wait_for_schedule(self) -> None:
         """
@@ -505,7 +516,11 @@ class DustMineBot:
         if self._is_within_schedule():
             return
 
-        logger.info("[%s] poza godzinami harmonogramu - czekam na najbliższe okno pracy", cfg.name)
+        logger.info("[%s] %s", cfg.name, self._break_message())
+        self._tick_play_time()
+        self._last_play_tick = None  # przerwa nie liczy się do czasu gry
+        if self._scheduler is not None:
+            self._scheduler.ledger.save()
 
         game_was_closed = False
         if cfg.close_game_during_break and cfg.game_package:
@@ -519,7 +534,7 @@ class DustMineBot:
         while not self._stop and not self._is_within_schedule():
             now = time.monotonic()
             if now - self._last_schedule_log > 300:  # log co 5 minut, żeby nie zaśmiecać
-                logger.info("[%s] nadal poza harmonogramem, czekam...", cfg.name)
+                logger.info("[%s] %s", cfg.name, self._break_message())
                 self._last_schedule_log = now
             time.sleep(cfg.schedule_poll_interval)
 
@@ -596,6 +611,9 @@ class DustMineBot:
             self._run_loop()
         finally:
             self._stop_touch()
+            self._tick_play_time()
+            if self._scheduler is not None:
+                self._scheduler.ledger.save()
 
     def _run_loop(self) -> None:
         while not self._stop:
@@ -603,9 +621,8 @@ class DustMineBot:
                 self._wait_for_schedule()
                 if self._stop:
                     break
-                self._idle_loop()
-                if self._stop:
-                    break
+                if not self._idle_loop() or self._stop:
+                    continue
                 self._collect_loop()
                 self.stats.cycles += 1
             except ADBError as e:
@@ -722,8 +739,8 @@ class DustMineBot:
                 self._watchdog_disabled_logged = True
             return False
 
-        # Sprawdzamy jasność TYLKO w obrębie board_region, jeśli jest
-        # ustawiony - a nie całej klatki. Cała klatka zwykle zawiera też
+        # Sprawdzamy jasność TYLKO w obszarze planszy, a nie całej
+        # klatki. Cała klatka zwykle zawiera też
         # pasek statusu / nawigację systemową Androida, które mogą być
         # jasne nawet gdy sama plansza gry jest czarna (zawieszona),
         # co zaniżałoby wykrywalność problemu.
@@ -751,18 +768,21 @@ class DustMineBot:
         return self._do_restart_app(f"czarny ekran przez {elapsed:.0f}s (limit {cfg.black_screen_timeout:.0f}s)")
 
     # ------------------------------------------------------------------ #
-    def _idle_loop(self) -> None:
+    def _idle_loop(self) -> bool:
         """
         Czeka na planszę Dust Mine, po drodze obsługując rozpoznane ekrany:
         Profile -> JUST LOOT, koniec walki -> PROCEED, "?" -> odsłonięcie,
         popup przedmiotu -> Keep Current, Fishing Hole i Depth Collapse.
         Na nierozpoznanych ekranach (walka, ładowanie) nic nie klika.
-        Bez szablonów ekranów działa po staremu: klika idle_point.
         """
         cfg = self.config
         last_click = 0.0
         next_click_delay = cfg.idle_click_interval.sample()
         while not self._stop:
+            self._tick_play_time()
+            if not self._is_within_schedule():
+                return False  # pora na przerwę - _run_loop przejdzie do oczekiwania
+
             frame = self.adb.screenshot()
 
             if self._check_foreign_app_watchdog():
@@ -775,44 +795,45 @@ class DustMineBot:
                 last_click = 0.0
                 continue
 
-            state = self._classifier.classify(frame).state if self._classifier is not None else None
+            state = self._classifier.classify(frame).state
 
             if self._handle_capture(frame, state):
                 last_click = 0.0
                 continue
 
-            if state is None or state == "dust_mine":
+            if state == "dust_mine":
                 det = self._detect_board(frame)
             else:
                 det = vision.DetectionResult(drop=None, balls=[])
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "idle")
 
-            if state == "dust_mine" or (state is None and vision.has_game_screen(det)):
+            if state == "dust_mine":
                 logger.info("[%s] wykryto ekran gry: DROP=%s, kulki=%d",
                             cfg.name, det.drop.center if det.drop else None, len(det.balls))
-                return
+                return True
 
-            if not self._paused and state is not None and self._handle_screen(frame, state):
+            if not self._paused and self._handle_screen(frame, state):
                 last_click = 0.0
                 continue
 
             now = time.monotonic()
-            if not self._paused and state in (None, "home") and now - last_click >= next_click_delay:
-                self._tap(*self._idle_click_point(frame))
-                last_click = now
-                next_click_delay = cfg.idle_click_interval.sample()
+            if not self._paused and state == "home" and now - last_click >= next_click_delay:
+                point = self._just_loot_point(frame)
+                if point is not None:
+                    self._tap(*point)
+                    last_click = now
+                    next_click_delay = cfg.idle_click_interval.sample()
 
             time.sleep(cfg.idle_poll_interval)
+        return False
 
-    def _idle_click_point(self, frame: np.ndarray) -> tuple[int, int]:
-        """JUST LOOT znaleziony na ekranie; bez szablonów - idle_point z configu."""
-        cfg = self.config
-        if self._classifier is not None:
-            match = self._classifier.locate(frame, "just_loot")
-            if match is not None:
-                return self._random_point_near((match.x, match.y), 0.03 * frame.shape[1])
-        return self._random_point_near(cfg.idle_point, cfg.idle_point_radius)
+    def _just_loot_point(self, frame: np.ndarray) -> tuple[int, int] | None:
+        """Losowy punkt wokół środka przycisku JUST LOOT albo None, gdy go nie widać."""
+        match = self._classifier.locate(frame, "just_loot")
+        if match is None:
+            return None
+        return self._random_point_near((match.x, match.y), 0.03 * frame.shape[1])
 
     # ------------------------------------------------------------------ #
     # Ekrany między walkami
@@ -964,12 +985,10 @@ class DustMineBot:
     AUTO_BOARD = (0.02, 0.18, 0.98, 0.98)  # ułamki ekranu
 
     def _board_region(self, frame: np.ndarray) -> tuple[int, int, int, int]:
-        cfg = self.config
-        if cfg.board_region_auto or cfg.board_region is None:
-            height, width = frame.shape[:2]
-            fx1, fy1, fx2, fy2 = self.AUTO_BOARD
-            return int(fx1 * width), int(fy1 * height), int(fx2 * width), int(fy2 * height)
-        return cfg.board_region
+        """Obszar planszy liczony z rozmiaru ekranu - działa w każdej rozdzielczości."""
+        height, width = frame.shape[:2]
+        fx1, fy1, fx2, fy2 = self.AUTO_BOARD
+        return int(fx1 * width), int(fy1 * height), int(fx2 * width), int(fy2 * height)
 
     def _detect_board(self, frame: np.ndarray) -> vision.DetectionResult:
         """
@@ -978,8 +997,6 @@ class DustMineBot:
         """
         self._region = self._board_region(frame)
         det = vision.detect(frame, region=self._region)
-        if self._classifier is None:
-            return det
         drop = None
         for name in ("drop_text_v2", "drop_text"):
             match = self._classifier.locate(frame, name)
@@ -1008,6 +1025,7 @@ class DustMineBot:
                 self._record_request = None
                 self._record(label, seconds)
 
+            self._tick_play_time()
             frame = self.adb.screenshot()
 
             if self._check_foreign_app_watchdog():

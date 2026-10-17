@@ -81,7 +81,7 @@ class ScreenHandlerTests(unittest.TestCase):
         _, home = video_frames("fishing.mp4")[-1]
         bot = make_bot(FakeADB([home]))
         self.assertEqual(bot._classifier.classify(home).state, "home")
-        x, y = bot._idle_click_point(home)
+        x, y = bot._just_loot_point(home)
         self.assertLess(abs(x - 541), 50)
         self.assertLess(abs(y - 2153), 50)
 

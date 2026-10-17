@@ -9,9 +9,8 @@ zamiast wątków jest ważne, bo:
   - awaria/wyjątek w jednej instancji nie wywraca pozostałych.
 
 Konfiguracja instancji wczytywana jest z pliku config.json (patrz
-config.example.json) - dla każdej instancji LDPlayer podajesz jej
-adb serial oraz punkt idle_point (współrzędne przycisku, w który bot
-ma klikać czekając na eksplozję). Opcjonalnie board_region.
+config.example.json) - dla każdej instancji LDPlayer wystarczy jej adb
+serial i nazwa; pozostałe pola są opcjonalne (domyślne w BotConfig).
 
 Uruchomienie:
     python manager.py --config config.json
@@ -29,6 +28,7 @@ import sys
 import time
 
 from adb_controller import ADBController, list_ldplayer_devices
+from dustbot2.schedule import DailyPlayTarget
 from bot import DustMineBot, BotConfig, RandomRange, schedule_from_list
 
 logging.basicConfig(
@@ -53,10 +53,7 @@ def _run_instance(serial: str, config_dict: dict) -> None:
         adb = ADBController(serial=serial)
         cfg = BotConfig(
             name=config_dict["name"],
-            idle_point=tuple(config_dict["idle_point"]),
-            idle_point_radius=config_dict.get("idle_point_radius", 50.0),
             idle_click_interval=RandomRange.from_value(config_dict.get("idle_click_interval", [0.8, 1.4])),
-            board_region=tuple(config_dict["board_region"]) if config_dict.get("board_region") else None,
             drag_duration_ms=RandomRange.from_value(config_dict.get("drag_duration_ms", [800, 1300])),
             between_drags_delay=RandomRange.from_value(config_dict.get("between_drags_delay", [0.5, 1.1])),
             empty_detections_to_exit=config_dict.get("empty_detections_to_exit", 2),
@@ -80,9 +77,9 @@ def _run_instance(serial: str, config_dict: dict) -> None:
             record_cooldown=config_dict.get("record_cooldown", 300.0),
             capture_dir=config_dict.get("capture_dir", "captures"),
             touch_backend=config_dict.get("touch_backend", "adb"),
-            board_region_auto=config_dict.get("board_region_auto", True),
             fishing_latency_ms=config_dict.get("fishing_latency_ms"),
             fishing_aim_spread=config_dict.get("fishing_aim_spread", 0.18),
+            daily_play=DailyPlayTarget.from_dict(config_dict.get("daily_play")),
         )
         bot = DustMineBot(adb, cfg)
 
@@ -102,9 +99,7 @@ class BotManager:
           {
             "serial": "127.0.0.1:5555",
             "name": "instance-1",
-            "idle_point": [360, 640],
-            "board_region": [27, 383, 670, 1253],   # opcjonalnie
-            ...inne pola BotConfig...
+            ...opcjonalnie inne pola BotConfig...
           }
         """
         self.instances = instances
@@ -152,7 +147,7 @@ def load_config(path: str) -> list[dict]:
     return data["instances"]
 
 
-def build_auto_config(idle_point: tuple[int, int]) -> list[dict]:
+def build_auto_config() -> list[dict]:
     """Auto-wykrywa podłączone urządzenia ADB i tworzy dla nich domyślny config."""
     serials = list_ldplayer_devices()
     if not serials:
@@ -165,7 +160,6 @@ def build_auto_config(idle_point: tuple[int, int]) -> list[dict]:
         instances.append({
             "serial": serial,
             "name": f"instance-{i+1}",
-            "idle_point": list(idle_point),
         })
     return instances
 
@@ -174,15 +168,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Manager wielu instancji DustMineBot")
     parser.add_argument("--config", type=str, help="Ścieżka do pliku config.json")
     parser.add_argument("--auto", action="store_true",
-                         help="Auto-wykryj instancje z `adb devices` (użyj wspólnego idle_point)")
-    parser.add_argument("--idle-x", type=int, default=360, help="X punktu idle (dla --auto)")
-    parser.add_argument("--idle-y", type=int, default=640, help="Y punktu idle (dla --auto)")
+                         help="Auto-wykryj instancje z `adb devices`")
     args = parser.parse_args()
 
     if args.config:
         instances = load_config(args.config)
     elif args.auto:
-        instances = build_auto_config((args.idle_x, args.idle_y))
+        instances = build_auto_config()
     else:
         parser.error("Podaj --config <plik.json> albo --auto")
         return

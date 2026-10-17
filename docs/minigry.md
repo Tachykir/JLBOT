@@ -44,7 +44,7 @@ wykrywa ją sam).
 
 | Ekran | Akcja |
 |---|---|
-| Profile (`home`) | tap w JUST LOOT (szablon; bez szablonów - `idle_point`) |
+| Profile (`home`) | tap w JUST LOOT (przycisk znajdowany szablonem) |
 | walka, ładowanie, inne nierozpoznane | czeka, nic nie klika |
 | `combat_done` | tap w PROCEED |
 | `reveal` | tap w kartę "?" |
@@ -58,8 +58,7 @@ błąd w ms, nowe opóźnienie i licznik trafień.
 
 Nowe opcje w config.json (wszystkie opcjonalne):
 
-- `board_region_auto` (domyślnie `true`) - obszar planszy z rozmiaru ekranu;
-  `false` = użyj `board_region`
+- `daily_play` - harmonogram dzienny (okno + godziny gry), patrz README
 - `fishing_latency_ms` - początkowe opóźnienie; domyślnie 60 (minitouch)
   albo 150 (adb), potem bot sam je poprawia
 - `fishing_aim_spread` (domyślnie 0.18) - rozrzut celowania w strefie

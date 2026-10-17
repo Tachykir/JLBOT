@@ -16,8 +16,7 @@ Most między logiką bota (bot.py, działającą synchronicznie w pętli
 
 Wątki (QThread) zamiast osobnych procesów (jak w manager.py) są tu
 celowe - dzięki temu GUI może bezpośrednio, bez IPC, rysować podgląd
-z każdej instancji i reagować na klik myszką (ustawianie idle_point /
-board_region) w czasie rzeczywistym. Cena: cały bot dzieli jeden
+z każdej instancji w czasie rzeczywistym. Cena: cały bot dzieli jeden
 proces Python z GUI, ale ponieważ dominujący koszt (OpenCV, ADB I/O)
 zwalnia GIL w trakcie wywołań C/subprocess, wielo-instancyjność nadal
 skaluje się nieźle. Jeśli w praktyce GIL zacznie ograniczać przy 6-8+
@@ -65,7 +64,8 @@ class BotWorker(QThread):
     frame_ready = Signal(str, np.ndarray, object, str)
     log_message = Signal(str, str)          # (instance_name, formatted_line)
     status_changed = Signal(str, str)       # (instance_name, status)  status: connecting|idle|collecting|paused|stopped|error
-    stats_updated = Signal(str, int, int, int)  # (instance_name, cycles, balls_collected, errors)
+    # (instance_name, cycles, balls_collected, errors, fishing_hits, fishing_casts)
+    stats_updated = Signal(str, int, int, int, int, int)
     connection_failed = Signal(str, str)    # (instance_name, error_message)
 
     def __init__(self, config: BotConfig, serial: str, parent=None):
@@ -119,7 +119,7 @@ class BotWorker(QThread):
         self.frame_ready.emit(name, frame, det, mode)
 
         s = self._bot.stats
-        self.stats_updated.emit(name, s.cycles, s.balls_collected, s.errors)
+        self.stats_updated.emit(name, s.cycles, s.balls_collected, s.errors, s.fishing_hits, s.fishing_casts)
 
     # ------------------------------------------------------------------ #
     def request_stop(self) -> None:
@@ -140,16 +140,6 @@ class BotWorker(QThread):
         Wykonywane bezpiecznie wewnątrz wątku bota, nie tutaj."""
         if self._bot is not None:
             self._bot.request_restart_app()
-
-    def update_config(self, idle_point: tuple[int, int] | None = None,
-                       board_region: tuple[int, int, int, int] | None = None) -> None:
-        """Pozwala GUI na żywo zaktualizować idle_point/board_region
-        (np. po kliknięciu na podglądzie), bez restartu wątku."""
-        if idle_point is not None:
-            self.config.idle_point = idle_point
-        if board_region is not None:
-            self.config.board_region = board_region
-
 
 class RecordThread(QThread):
     """

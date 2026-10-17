@@ -8,30 +8,18 @@ instancji** LDPlayer równolegle (osobny proces na każdą).
 
 ## Jak to działa
 
-1. **Tryb idle** — bot klika jeden ustalony punkt (`idle_point`), aż
-   na ekranie pojawi się plansza z kulkami do zebrania.
-2. **Tryb zbierania** — bot na bieżąco wykrywa pozycję punktu **DROP**
-   (bo się przesuwa) oraz wszystkie kolorowe kulki, i przeciąga je
-   kolejno do DROP-a, aż plansza będzie pusta.
-3. Powrót do trybu idle, pętla od nowa.
+Bot rozpoznaje, co jest na ekranie, szablonami (`dustbot2/screens.py`,
+szablony w `dustbot2/templates/`) i sam wybiera akcję:
 
-Detekcja (`vision.py`) używa **OpenCV** i nie opiera się na sztywnych
-współrzędnych ani zrzutach wzorcowych (template matching) — analizuje
-obraz "na żywo":
+- **Profile** - klika JUST LOOT (przycisk znajdowany na ekranie),
+- **koniec walki** - PROCEED, **"?"** - odsłonięcie nagrody,
+- **popup przedmiotu** - Keep Current,
+- **Dust Mine** - przeciąga kulki do DROP (kulki: `vision.py`, DROP:
+  szablon), **Fishing Hole** i **Depth Collapse** - patrz `docs/minigry.md`,
+- walka, ładowanie i inne nierozpoznane ekrany - czeka.
 
-- **Kulki**: wykrywane przez transformatę Hougha (`HoughCircles`) jako
-  jednolicie wypełnione, kolorowe koła na czarnym tle.
-- **DROP**: to trudniejszy przypadek, bo to *przerywany* biały okrąg
-  z tekstem "DROP" w środku — Hough sobie z tym nie radzi. Zamiast tego:
-  odróżniamy "prawdziwą biel" (niska saturacja w HSV) od jasnych,
-  ale kolorowych kulek (wysoka saturacja), łączymy przerywaną kreskę
-  w spójny kontur przez dylatację morfologiczną, liczymy środek ciężkości
-  jasnych pikseli, a promień okręgu ustalamy skanując profil jasności
-  wzdłuż rosnących promieni wokół tego środka.
-
-Dzięki temu bot **działa niezależnie od tego, gdzie aktualnie jest
-DROP i jaki układ/kolor mają kulki** — nie trzeba nic przeuczać przy
-zmianie układu planszy.
+Nic nie trzeba kalibrować: szablony i obszar planszy dopasowują się do
+rozdzielczości i DPI emulatora same.
 
 ## Instalacja
 
@@ -62,67 +50,24 @@ LDPlayer standardowo przydziela porty parami zaczynając od 5555, 5557,
 **zawsze zweryfikuj to** przez `adb devices`, bo bywa to inaczej
 skonfigurowane zależnie od wersji LDPlayer.
 
-## Krok 1: kalibracja detekcji na Twoim ekranie
+## Konfiguracja (config.json)
 
-Zanim uruchomisz bota, sprawdź czy detekcja działa poprawnie na Twojej
-rozdzielczości/układzie okna. Zrób zrzut ekranu z gry w momencie, gdy
-widać kulki, i uruchom:
+Najprościej skonfigurować w GUI i zapisać przyciskiem "Zapisz config".
+Ręcznie: skopiuj `config.example.json` do `config.json`. Wymagane są
+tylko `serial` (z `adb devices`) i `name`; reszta ma wartości domyślne
+(pełna lista w `bot.py`, klasa `BotConfig`). Najważniejsze opcje:
 
-```bash
-python calibrate.py --image sciezka/do/zrzutu.png --grid
-```
+- **`daily_play`** - harmonogram dzienny: okno (`window_start`,
+  `window_end`) i `play_hours`; bot sam układa sesje (`session_minutes`)
+  i nieregularne przerwy (min. `min_break_minutes`). Brak = gra bez przerwy.
+- **`touch_backend`** - `"adb"` albo `"minitouch"` (patrz niżej).
+- **`game_package`** - pakiet gry; potrzebny do restartu gry przez
+  watchdogi i zamykania gry na czas przerw (`close_game_during_break`).
 
-Otwórz wygenerowany `detection_preview.png` — powinny być zaznaczone
-**zielonym** wszystkie kulki i **czerwonym** punkt DROP. Siatka (`--grid`)
-pomoże Ci odczytać dokładne współrzędne do configu.
+Starsze pola `idle_point` i `board_region` nie są już używane - jeśli są w
+starym pliku, bot je pomija.
 
-Możesz też pobrać zrzut bezpośrednio z podłączonej instancji ADB:
-
-```bash
-python calibrate.py --serial 127.0.0.1:5555 --grid
-```
-
-Narzędzie na końcu wypisze **sugerowany `board_region`** — warto go
-ręcznie poszerzyć, żeby na pewno obejmował cały czarny prostokąt planszy
-przy dowolnym układzie kulek (nie tylko ten jeden, który akurat
-sfotografowałeś).
-
-Jeśli detekcja się myli (np. źle łapie DROP), daj znać z przykładowym
-screenem — próg jasności/saturacji w `vision.py` (`value_thresh`,
-`sat_thresh` w `_find_drop_point`) może wymagać drobnej korekty pod
-konkretny motyw graficzny gry.
-
-## Krok 2: config.json
-
-Skopiuj `config.example.json` do `config.json` i uzupełnij dla każdej
-instancji:
-
-```json
-{
-  "instances": [
-    {
-      "serial": "127.0.0.1:5555",
-      "name": "instance-1",
-      "idle_point": [360, 640],
-      "board_region": [22, 377, 677, 1254]
-    }
-  ]
-}
-```
-
-- **`serial`** — z `adb devices`.
-- **`idle_point`** — [x, y] punktu, w który bot klika, czekając na
-  pojawienie się ekranu z kulkami (np. przycisk otwierający "eksplozję").
-  Odczytaj współrzędne z `calibrate.py --grid`.
-- **`board_region`** — [x1, y1, x2, y2] obszaru planszy gry, żeby
-  ograniczyć wykrywanie i uniknąć fałszywych trafień w innych elementach
-  UI. Ustal na podstawie sugestii z `calibrate.py`.
-
-Pełna lista opcjonalnych parametrów (z domyślnymi wartościami) jest
-w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
-`between_drags_delay`, `idle_click_interval`.
-
-## Krok 3: uruchomienie
+## Uruchomienie
 
 ### Opcja A: GUI (zalecane)
 
@@ -135,53 +80,33 @@ Okno pozwala na:
 - **Dodawanie instancji** przyciskiem "+ Dodaj" albo automatyczne
   wykrycie wszystkich podłączonych urządzeń ADB przyciskiem
   "🔍 Auto-wykryj z adb devices".
-- **Podgląd na żywo** wybranej instancji — po starcie bota obraz
-  odświeża się automatycznie z nałożoną wizualizacją detekcji
-  (zielone obwódki = wykryte kulki, czerwona = punkt DROP). Możesz też
-  pobrać pojedynczy zrzut ręcznie przyciskiem "⟳ Odśwież teraz"
-  (przydatne, gdy bot jest jeszcze zatrzymany).
-- **Ustawianie `idle_point` klikiem** — wciśnij "🎯 Kliknij: ustaw
-  idle_point", potem kliknij bezpośrednio na obrazie w miejscu, gdzie
-  bot ma klikać czekając na grę.
-- **Ustawianie `board_region` przeciągnięciem** — wciśnij
-  "▭ Przeciągnij: ustaw board_region", potem przeciągnij prostokąt na
-  obrazie obejmujący całą planszę gry.
-- **Edycję pozostałych parametrów** (drag_duration_ms, interwały itd.)
-  w panelu po prawej — zmiany stosują się natychmiast, także do już
-  uruchomionej instancji.
-- **Start / Stop / Pauza** dla pojedynczej instancji albo wszystkich
-  naraz.
-- **Zapis / wczytanie configu** do/z pliku JSON (ten sam format co
-  `config.example.json`, więc GUI i CLI (`manager.py`) są w pełni
-  kompatybilne — możesz skonfigurować w GUI, zapisać, i potem odpalać
-  bez GUI przez `manager.py`, albo odwrotnie).
+- **Podgląd na żywo** wybranej instancji (zielone obwódki = kulki,
+  czerwona = DROP); "⟳ Odśwież teraz" pobiera zrzut przy zatrzymanym
+  bocie.
+- **📸 Zrzut ekranu (F9)** i **⏺ Nagrywaj (F10)** - materiał do nowych
+  ekranów i minigier (patrz niżej).
+- **Konfigurację** po prawej: wejście dotykowe, odstępy tapów, czas
+  przeciągania i **📅 harmonogram dzienny** z podglądem przykładowego
+  planu dnia.
+- **Start / Stop / Pauza / Restart gry** dla pojedynczej instancji albo
+  wszystkich naraz, **statystyki** (cykle, kulki, trafienia w fishingu).
+- **Zapis / wczytanie configu** - ten sam format co `config.example.json`,
+  więc GUI i `manager.py` są w pełni kompatybilne.
 - **Logi na żywo** wszystkich instancji na dole okna.
 
 Każda instancja działa we własnym wątku wewnątrz jednego procesu GUI
-(a nie osobnym procesie jak w `manager.py`) — to celowe uproszczenie,
-które pozwala GUI na bezpośredni, płynny podgląd i edycję na żywo bez
-komunikacji międzyprocesowej. Dla typowej liczby instancji (4-8) nie
-jest to ograniczeniem wydajności, bo dominujący koszt (zrzut ekranu
-przez ADB, przetwarzanie OpenCV) i tak zwalnia blokadę GIL w trakcie
-wywołań.
+(a nie osobnym procesie jak w `manager.py`) - pozwala to na płynny
+podgląd bez komunikacji międzyprocesowej. Dominujący koszt (zrzut przez
+ADB, OpenCV) zwalnia blokadę GIL, więc kilka instancji działa sprawnie.
 
 ### Opcja B: linia poleceń (bez GUI)
 
-Wiele instancji naraz, z pliku konfiguracyjnego:
-
 ```bash
 python manager.py --config config.json
+python manager.py --auto            # wszystkie urządzenia z `adb devices`
 ```
 
-Albo automatyczne wykrycie wszystkich podłączonych urządzeń ADB
-(wszystkie dostają ten sam `idle_point` — użyteczne, gdy okna LDPlayer
-mają identyczny układ):
-
-```bash
-python manager.py --auto --idle-x 360 --idle-y 640
-```
-
-Zatrzymanie: `Ctrl+C` w terminalu — manager grzecznie zatrzyma wszystkie
+Zatrzymanie: `Ctrl+C` w terminalu - manager grzecznie zatrzyma wszystkie
 procesy potomne.
 
 ## Zróżnicowane gesty (minitouch)
@@ -253,14 +178,20 @@ Gotowe pliki konfiguracyjne do tego już są w projekcie:
 | Plik | Rola |
 |---|---|
 | `adb_controller.py` | Cienka warstwa nad ADB: screenshot, tap, swipe, per-instancja |
-| `vision.py` | Detekcja kulek i punktu DROP przez OpenCV |
-| `bot.py` | Logika jednej instancji bota (pętla idle → zbieranie → idle) |
-| `manager.py` | CLI: uruchamianie wielu instancji bota równolegle (multiprocessing) |
+| `vision.py` | Detekcja kulek (OpenCV) |
+| `bot.py` | Logika jednej instancji: rozpoznanie ekranu -> akcja, Dust Mine, harmonogram |
+| `dustbot2/screens.py` | Rozpoznawanie ekranów szablonami (`dustbot2/templates/`) |
+| `dustbot2/minigames/` | Fishing Hole i Depth Collapse |
+| `dustbot2/schedule.py` | Harmonogram dzienny (sesje i przerwy) |
+| `dustbot2/touch/` | minitouch i zróżnicowane gesty |
+| `recorder.py` | Nagrywanie minigier i zapis nieznanych ekranów |
+| `manager.py` | CLI: wiele instancji równolegle (multiprocessing) |
 | `main_window.py` | GUI: główne okno aplikacji (uruchom to, żeby odpalić GUI) |
-| `gui_worker.py` | Most między `bot.py` a GUI - uruchamia bota w wątku Qt |
-| `preview_widget.py` | Widget podglądu z interaktywną edycją idle_point/board_region klikiem |
-| `calibrate.py` | Narzędzie CLI do podglądu/kalibracji detekcji na pojedynczym zrzucie |
-| `config.example.json` | Przykładowa konfiguracja wielu instancji |
+| `gui_worker.py` | Most między `bot.py` a GUI - bot i nagrywanie w wątkach Qt |
+| `preview_widget.py` | Widget podglądu z wizualizacją detekcji |
+| `config.example.json` | Przykładowa konfiguracja |
+| `docs/` | Opis ekranów, minigier i decyzji |
+| `material/` | Nagrania i zrzuty z gry (materiał do szablonów i testów) |
 | `dustbot_gui.spec` | Konfiguracja PyInstaller do budowy samodzielnego .exe (patrz BUILD_INSTRUCTIONS.md) |
 | `installer.iss` | Skrypt Inno Setup budujący instalator Windows z kreatorem |
 
@@ -271,10 +202,9 @@ Gotowe pliki konfiguracyjne do tego już są w projekcie:
 - **Bot nie widzi urządzenia** — sprawdź `adb devices`, upewnij się że
   "ADB debugging" jest włączone w ustawieniach danej instancji LDPlayer
   i że port się zgadza.
-- **DROP nie jest wykrywany** — uruchom `calibrate.py` na aktualnym
-  zrzucie, sprawdź `detection_preview.png`; jeśli motyw graficzny gry
-  różni się kolorystycznie od testowanego (np. inny odcień tła), może
-  być potrzebna korekta progów w `vision.py`.
+- **Bot nie rozpoznaje ekranu** - zrób zrzut przyciskiem 📸 F9 (albo
+  zajrzyj do `captures/Unknown/`, gdzie bot sam zapisuje nieznane ekrany)
+  i dodaj szablon: `python -m dustbot2.tools.make_template ...`.
 - **Drag nie działa w grze** — zwiększ `drag_duration_ms` w configu
   (niektóre silniki gier wymagają dłuższego gestu, żeby uznać go za
   przeciągnięcie, a nie zwykłe tapnięcie).

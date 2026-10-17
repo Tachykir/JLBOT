@@ -32,8 +32,7 @@ class FakeADB:
 
 def make_bot(transport=None):
     adb = FakeADB()
-    bot = DustMineBot(adb, BotConfig(name="inst-1", capture_unknown_screens=False,
-                                     board_region=(0, 0, 539, 959)))
+    bot = DustMineBot(adb, BotConfig(name="inst-1", capture_unknown_screens=False))
     if transport is not None:
         banner = Banner(1, 10, 539, 959, 100)
         bot._touch = MinitouchClient(transport, banner, Screen(540, 960))

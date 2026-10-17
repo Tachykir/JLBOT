@@ -1,39 +1,33 @@
 {
   "instances": [
     {
-      "serial": "127.0.0.1:5555",
+      "serial": "emulator-5554",
       "name": "instance-1",
-      "idle_point": [436, 1488],
-      "board_region": [29, 333, 861, 1466],
-      "idle_click_interval": 1.0,
-      "drag_duration_ms": 1000,
-      "between_drags_delay": 0.75,
-      "empty_detections_to_exit": 2,
-      "max_seconds_per_game_screen": 60.0,
-      "idle_poll_interval": 0.5,
+      "touch_backend": "adb",
       "game_package": "com.timhilgenstoehlerexpo.justlootapp",
-      "game_activity": null,
-      "black_screen_timeout": 20.0,
-      "black_screen_brightness_threshold": 10.0,
-      "restart_settle_delay": 10.0
+      "daily_play": {
+        "window_start": "09:00",
+        "window_end": "23:30",
+        "play_hours": 6.0,
+        "session_minutes": [20, 90],
+        "min_break_minutes": 5,
+        "days": null
+      },
+      "close_game_during_break": true,
+      "idle_click_interval": {"min": 0.8, "max": 1.4},
+      "drag_duration_ms": {"min": 800, "max": 1300},
+      "between_drags_delay": {"min": 0.5, "max": 1.1},
+      "fishing_aim_spread": 0.18
     },
     {
-      "serial": "127.0.0.1:5557",
+      "serial": "emulator-5556",
       "name": "instance-2",
-      "idle_point": [436, 1488],
-      "board_region": [29, 333, 861, 1466]
+      "game_package": "com.timhilgenstoehlerexpo.justlootapp"
     },
     {
-      "serial": "127.0.0.1:5559",
+      "serial": "emulator-5558",
       "name": "instance-3",
-      "idle_point": [436, 1488],
-      "board_region": [29, 333, 861, 1466]
-    },
-    {
-      "serial": "127.0.0.1:5561",
-      "name": "instance-4",
-      "idle_point": [436, 1488],
-      "board_region": [29, 333, 861, 1466]
+      "game_package": "com.timhilgenstoehlerexpo.justlootapp"
     }
   ]
 }
