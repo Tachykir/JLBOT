@@ -29,7 +29,7 @@ import sys
 import time
 
 from adb_controller import ADBController, list_ldplayer_devices
-from bot import DustMineBot, BotConfig, RandomRange, schedule_from_list
+from bot import DustMineBot, BotConfig
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,32 +50,8 @@ def _run_instance(serial: str, config_dict: dict) -> None:
         format=f"%(asctime)s [%(levelname)s] [{config_dict['name']}] %(message)s",
     )
     try:
+        cfg = BotConfig.from_dict(config_dict)
         adb = ADBController(serial=serial)
-        cfg = BotConfig(
-            name=config_dict["name"],
-            idle_point=tuple(config_dict["idle_point"]),
-            idle_point_radius=config_dict.get("idle_point_radius", 50.0),
-            idle_click_interval=RandomRange.from_value(config_dict.get("idle_click_interval", [0.8, 1.4])),
-            board_region=tuple(config_dict["board_region"]) if config_dict.get("board_region") else None,
-            drag_duration_ms=RandomRange.from_value(config_dict.get("drag_duration_ms", [800, 1300])),
-            between_drags_delay=RandomRange.from_value(config_dict.get("between_drags_delay", [0.5, 1.1])),
-            empty_detections_to_exit=config_dict.get("empty_detections_to_exit", 2),
-            max_seconds_per_game_screen=config_dict.get("max_seconds_per_game_screen", 60.0),
-            idle_poll_interval=config_dict.get("idle_poll_interval", 0.5),
-            schedule=schedule_from_list(config_dict.get("schedule")),
-            schedule_poll_interval=config_dict.get("schedule_poll_interval", 15.0),
-            close_game_during_break=config_dict.get("close_game_during_break", True),
-            game_package=config_dict.get("game_package"),
-            game_activity=config_dict.get("game_activity"),
-            black_screen_timeout=config_dict.get("black_screen_timeout", 20.0),
-            black_screen_brightness_threshold=config_dict.get("black_screen_brightness_threshold", 10.0),
-            restart_settle_delay=config_dict.get("restart_settle_delay", 10.0),
-            foreign_app_packages=tuple(config_dict.get(
-                "foreign_app_packages",
-                ["com.android.vending", "com.android.chrome", "com.android.browser"],
-            )),
-            foreground_check_interval=config_dict.get("foreground_check_interval", 3.0),
-        )
         bot = DustMineBot(adb, cfg)
 
         def _handle_sigterm(signum, frame):
@@ -141,7 +117,15 @@ class BotManager:
 def load_config(path: str) -> list[dict]:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return data["instances"]
+    instances = data["instances"]
+    # walidacja od razu w procesie głównym - błąd w configu ma zatrzymać
+    # start z czytelnym komunikatem, a nie wywalić po cichu proces potomny
+    for inst in instances:
+        BotConfig.from_dict(inst)
+    names = [inst["name"] for inst in instances]
+    if len(names) != len(set(names)):
+        raise ValueError("Nazwy instancji w configu muszą być unikalne")
+    return instances
 
 
 def build_auto_config(idle_point: tuple[int, int]) -> list[dict]:
@@ -167,8 +151,9 @@ def main() -> None:
     parser.add_argument("--config", type=str, help="Ścieżka do pliku config.json")
     parser.add_argument("--auto", action="store_true",
                          help="Auto-wykryj instancje z `adb devices` (użyj wspólnego idle_point)")
-    parser.add_argument("--idle-x", type=int, default=360, help="X punktu idle (dla --auto)")
-    parser.add_argument("--idle-y", type=int, default=640, help="Y punktu idle (dla --auto)")
+    default_idle = BotConfig(name="-").idle_point
+    parser.add_argument("--idle-x", type=int, default=default_idle[0], help="X punktu idle (dla --auto)")
+    parser.add_argument("--idle-y", type=int, default=default_idle[1], help="Y punktu idle (dla --auto)")
     args = parser.parse_args()
 
     if args.config:

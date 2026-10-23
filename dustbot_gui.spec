@@ -23,7 +23,7 @@ Instalator (Inno Setup, patrz installer.iss) pakuje właśnie ten folder.
 WAŻNE - adb.exe:
 Ten .spec dołącza `vendor/adb/` do paczki, jeśli ten folder istnieje.
 Pobierz Android Platform Tools (adb.exe + towarzyszące DLL) i umieść
-je w `vendor/adb/` przed budowaniem - patrz README_BUILD.md.
+je w `vendor/adb/` przed budowaniem - patrz BUILD_INSTRUCTIONS.md.
 """
 
 import os
@@ -35,7 +35,7 @@ PROJECT_ROOT = Path(os.getcwd())
 VENDOR_ADB_DIR = PROJECT_ROOT / "vendor" / "adb"
 
 # Dołącz adb.exe i jego zależności (AdbWinApi.dll, AdbWinUsbApi.dll), jeśli
-# są przygotowane w vendor/adb/ - patrz README_BUILD.md po instrukcje pobrania.
+# są przygotowane w vendor/adb/ - patrz BUILD_INSTRUCTIONS.md po instrukcje pobrania.
 adb_binaries = []
 if VENDOR_ADB_DIR.exists():
     for f in VENDOR_ADB_DIR.glob("*"):

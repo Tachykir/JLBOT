@@ -19,7 +19,7 @@
 ;   do rozesłania.
 
 #define MyAppName "Dust Mine Bot"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "Twoja nazwa / pseudonim"
 #define MyAppExeName "DustMineBot.exe"
 #define MyBuildDir "dist\DustMineBot"
@@ -80,3 +80,4 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 ; użytkownika) - dostosuj ścieżkę, jeśli config trafia gdzie indziej
 ; (np. %APPDATA%).
 Type: filesandordirs; Name: "{app}\config.json"
+Type: filesandordirs; Name: "{app}\unknown_screens"
