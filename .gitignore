@@ -3,5 +3,6 @@ dist/
 __pycache__/
 *.pyc
 unknown_screens/
+action_logs/
 .venv/
 installer_output/

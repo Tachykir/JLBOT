@@ -291,6 +291,18 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   save…” i czarny ekran = bot czeka; „Create your account” = bot nic nie
   klika (ostrzeżenie w logu); przygaszony przycisk „JUST HUNT” (wydarzenie
   HUNT bez walk) = bot wybiera loadout `loadout_name` (domyślnie MAIN).
+- **Log akcji (CSV)** (`action_log`, GUI: strona „🧾 Log akcji” → „Zapisuj log
+  akcji”) — każde tapnięcie, przeciągnięcie, swipe i przytrzymanie bota trafia
+  do `action_logs/RRRR-MM-DD_<instancja>.csv` obok programu. Kolumny: `time`,
+  `t_ms` (czas monotoniczny), `instance`, `state` (idle / collecting / debris /
+  fishing / menu), `activity` (opis czynności jak w GUI), `action` (tap / hold /
+  swipe / drag), `x`,`y`,`end_x`,`end_y` (piksele urządzenia), `points`, `path`
+  (cały tor „x:y|x:y|…”), `duration_ms`, `hold_ms`, `turbo`, `drag_style`.
+  Strona pokazuje ostatnie 300 wpisów wybranej instancji (odświeżane co 2 s).
+- **Interfejs 1.3** — boczna nawigacja (Przegląd / Instancje / Log akcji),
+  kafle z podsumowaniem wszystkich instancji, kafelki instancji z plakietką
+  stanu i siatką liczb, rzadsze akcje dla wszystkich w menu „Więcej”, wspólny
+  wygląd jasny / ciemny (motyw „Systemowy” bierze go z ustawień systemu).
 - **Czas gry** na kafelku instancji — czas realnej gry od startu bota,
   bez przerw z harmonogramu (przerwy, poza oknem, limit dzienny) i bez
   pauzy.

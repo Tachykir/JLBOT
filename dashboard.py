@@ -1,9 +1,9 @@
 """
 dashboard.py
 ============
-Panel "Wszystkie instancje": kafelek dla każdej instancji (podgląd na
-żywo, status, statystyki, przyciski) i pasek akcji dla wszystkich naraz.
-Sam panel nie steruje botami - wysyła sygnały, które obsługuje
+Strona "Przegląd": podsumowanie wszystkich instancji, akcje dla wszystkich
+naraz i kafelek każdej instancji (podgląd na żywo, status, liczby,
+przyciski). Sam panel nie steruje botami - wysyła sygnały, które obsługuje
 MainWindow (ta sama logika co przyciski pojedynczej instancji).
 """
 
@@ -14,15 +14,15 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
-    QSpinBox, QVBoxLayout, QWidget,
+    QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSpinBox,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from bot import DEPTH_MODES
 
-THUMB_W, THUMB_H = 150, 266
-SIDE_W = 215                      # szerokość kolumny z opisem i przyciskami
-CARD_W = THUMB_W + SIDE_W + 28
+THUMB_W, THUMB_H = 138, 245
+SIDE_W = 236                      # szerokość kolumny z opisem i przyciskami
+CARD_W = THUMB_W + SIDE_W + 36
 
 
 def format_play_time(seconds: float) -> str:
@@ -31,25 +31,52 @@ def format_play_time(seconds: float) -> str:
     return f"{m // 60} h {m % 60:02d} min" if m >= 60 else f"{m} min"
 
 
+def _num(v) -> str:
+    return "—" if v is None else f"{v:,}".replace(",", " ")
+
+
+def _button(text: str, tip: str = "", accent: bool = False, danger: bool = False) -> QPushButton:
+    b = QPushButton(text)
+    if tip:
+        b.setToolTip(tip)
+    if accent:
+        b.setProperty("accent", True)
+    if danger:
+        b.setProperty("danger", True)
+    return b
+
+
+# (atrybut BotStats / klucz, etykieta) - liczby na kafelku
+_CARD_METRICS = [
+    ("gear_level", "Gear"), ("depth", "Depth"), ("dust", "Dust"),
+    ("play_seconds", "Czas gry"), ("cycles", "Plansze"), ("balls_collected", "Kulki"),
+    ("packs_opened", "Paczki"), ("drops", "Dropy"), ("defeats", "Porażki"),
+    ("salvaged", "Rozebrane"), ("errors", "Błędy"),
+]
+
+
 class InstanceCard(QFrame):
     action = Signal(str, str)  # (nazwa instancji, akcja: start|pause|stop|salvage|details)
 
     def __init__(self, name: str, serial: str, parent=None):
         super().__init__(parent)
         self.name = name
-        self.setFrameShape(QFrame.StyledPanel)
-        self.setStyleSheet("InstanceCard { border: 1px solid #555; border-radius: 6px; }")
+        self.setObjectName("card")
         self.setFixedWidth(CARD_W)
+        # pełna wysokość (podgląd + przyciski) - siatka w przewijanym obszarze
+        # inaczej ściska kafelki, gdy jest ich więcej niż mieści okno
+        self.setMinimumHeight(THUMB_H + 22)
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(10)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(12)
 
         self.thumb = QLabel("brak\npodglądu")
         self.thumb.setFixedSize(THUMB_W, THUMB_H)
         self.thumb.setAlignment(Qt.AlignCenter)
-        self.thumb.setStyleSheet("background: #111; color: #666; border: 1px solid #333;")
+        self.thumb.setStyleSheet("background: #0b0e11; color: #5d6873; border-radius: 6px;")
         self.thumb.setCursor(Qt.PointingHandCursor)
+        self.thumb.setToolTip("Kliknij, żeby otworzyć podgląd i ustawienia tej instancji")
         self.thumb.mousePressEvent = lambda _e: self.action.emit(self.name, "details")
         root.addWidget(self.thumb)
 
@@ -57,59 +84,79 @@ class InstanceCard(QFrame):
         side_box.setFixedWidth(SIDE_W)
         side = QVBoxLayout(side_box)
         side.setContentsMargins(0, 0, 0, 0)
+        side.setSpacing(6)
         root.addWidget(side_box)
-        self.title = QLabel(f"<b>{name}</b>")
+
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        self.title = QLabel(name)
+        self.title.setObjectName("cardTitle")
         self.title.setWordWrap(True)
-        side.addWidget(self.title)
+        head.addWidget(self.title, 1)
+        self.pill = QLabel("zatrzymany")
+        self.pill.setObjectName("pill")
+        head.addWidget(self.pill, 0, Qt.AlignTop)
+        side.addLayout(head)
         dev = QLabel(serial or "(brak urządzenia)")
-        dev.setStyleSheet("color: #888; font-size: 11px;")
-        dev.setWordWrap(True)
+        dev.setObjectName("muted")
         side.addWidget(dev)
-        self.status = QLabel("zatrzymany")
+
+        # bieżąca czynność bota (pełny opis)
+        self.status = QLabel("")
         self.status.setWordWrap(True)
+        self.status.setMinimumHeight(32)
+        self.status.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         side.addWidget(self.status)
-        self.stats = QLabel("")
-        self.stats.setWordWrap(True)
-        self.stats.setStyleSheet("font-size: 11px;")
+
+        self.stats = QWidget()
+        grid = QGridLayout(self.stats)
+        grid.setContentsMargins(0, 2, 0, 2)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(1)
+        self._metric: dict[str, QLabel] = {}
+        for i, (key, label) in enumerate(_CARD_METRICS):
+            n = QLabel(label); n.setObjectName("metricName")
+            v = QLabel("—"); v.setObjectName("metricValue")
+            grid.addWidget(n, (i // 3) * 2, i % 3)
+            grid.addWidget(v, (i // 3) * 2 + 1, i % 3)
+            self._metric[key] = v
         side.addWidget(self.stats)
         side.addStretch(1)
 
-        grid = QGridLayout()
-        grid.setSpacing(3)
-        self.btn_start = QPushButton("▶ Start")
-        self.btn_pause = QPushButton("⏸ Pauza")
-        self.btn_stop = QPushButton("■ Stop")
-        self.btn_salvage = QPushButton("🧹 Rozbierz")
-        self.btn_salvage.setToolTip("Rozbierz przedmioty z góry listy Inventory (zapyta o liczbę)")
-        details = QPushButton("⚙ Szczegóły")
-        details.setToolTip("Podgląd i ustawienia tej instancji")
-        for i, (b, act) in enumerate(((self.btn_start, "start"), (self.btn_pause, "pause"),
-                                      (self.btn_stop, "stop"), (self.btn_salvage, "salvage"),
-                                      (details, "details"))):
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        self.btn_start = _button("▶ Start", "Uruchom bota na tej instancji", accent=True)
+        self.btn_pause = _button("⏸ Pauza", "Wstrzymaj / wznów klikanie")
+        self.btn_stop = _button("■ Stop", "Zatrzymaj bota na tej instancji", danger=True)
+        for b, act in ((self.btn_start, "start"), (self.btn_pause, "pause"), (self.btn_stop, "stop")):
             b.clicked.connect(lambda _=False, a=act: self.action.emit(self.name, a))
-            grid.addWidget(b, i // 2, i % 2)
-        side.addLayout(grid)
+            row.addWidget(b)
+        side.addLayout(row)
+        row2 = QHBoxLayout()
+        row2.setSpacing(4)
+        self.btn_salvage = _button("🧹 Rozbierz", "Rozbierz przedmioty z góry listy Inventory (zapyta o liczbę)")
+        details = _button("⚙ Szczegóły", "Podgląd i ustawienia tej instancji")
+        for b, act in ((self.btn_salvage, "salvage"), (details, "details")):
+            b.clicked.connect(lambda _=False, a=act: self.action.emit(self.name, a))
+            row2.addWidget(b)
+        side.addLayout(row2)
         self.set_running(False, paused=False)
 
     # ------------------------------------------------------------------ #
     def set_status(self, text: str, color: str) -> None:
-        self.status.setText(f"<span style='color:{color}'>●</span> {text}")
+        # pierwsza część opisu = stan (krótko na plakietce), reszta = czynność
+        state, _, detail = text.partition(" – ")
+        self.pill.setText(f"● {state.strip() or 'zatrzymany'}")
+        self.pill.setStyleSheet(f"color: {color};")
+        self.status.setText(detail.strip())
 
     def set_stats(self, stats) -> None:
-        if stats is None:
-            self.stats.setText("")
-            return
-        def num(v):
-            return "?" if v is None else f"{v:,}".replace(",", " ")
-        self.stats.setText(
-            f"<b>Gear</b> {num(getattr(stats, 'gear_level', None))} · "
-            f"<b>Depth</b> {num(getattr(stats, 'depth', None))} · "
-            f"<b>Dust</b> {num(getattr(stats, 'dust', None))}<br>"
-            f"<b>Czas gry</b> {format_play_time(getattr(stats, 'play_seconds', 0.0))}<br>"
-            f"Plansze {stats.cycles} · Kulki {stats.balls_collected}<br>"
-            f"Porażki {stats.defeats} · Dropy {stats.drops}<br>"
-            f"Paczki {getattr(stats, 'packs_opened', 0)}<br>"
-            f"Rozebrane {stats.salvaged} · Błędy {stats.errors}")
+        for key, label in self._metric.items():
+            if stats is None:
+                label.setText("—")
+                continue
+            value = getattr(stats, key, None)
+            label.setText(format_play_time(value or 0.0) if key == "play_seconds" else _num(value))
 
     def set_running(self, running: bool, paused: bool) -> None:
         self.btn_start.setEnabled(not running)
@@ -127,38 +174,83 @@ class InstanceCard(QFrame):
         self.thumb.setPixmap(QPixmap.fromImage(img.copy()))
 
 
+class _Kpi(QFrame):
+    """Kafel z jedną liczbą w pasku podsumowania."""
+
+    def __init__(self, label: str):
+        super().__init__()
+        self.setObjectName("panel")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(0)
+        name = QLabel(label); name.setObjectName("metricName")
+        self.value = QLabel("—")
+        self.value.setStyleSheet("font-size: 20px; font-weight: 700;")
+        lay.addWidget(name)
+        lay.addWidget(self.value)
+
+
 class DashboardWidget(QWidget):
     card_action = Signal(str, str)   # (nazwa, akcja) - z kafelka
-    global_action = Signal(str)      # start_all|pause_all|resume_all|stop_all|salvage_all|packs_all|restart_all
+    global_action = Signal(str)      # start_all|pause_all|resume_all|stop_all|salvage_all|packs_all|restart_all|turbo_on|turbo_off
     depth_all = Signal(str, int)     # (tryb głębokości, liczba: głębokość albo procent)
+
+    KPIS = [("running", "Działa"), ("cycles", "Plansze"), ("balls_collected", "Kulki"),
+            ("packs_opened", "Paczki"), ("drops", "Dropy"), ("defeats", "Porażki"), ("errors", "Błędy")]
 
     def __init__(self, parent=None):
         super().__init__(parent)
         root = QVBoxLayout(self)
-        root.setContentsMargins(4, 4, 4, 4)
+        root.setContentsMargins(16, 14, 16, 8)
+        root.setSpacing(10)
 
-        bar = QHBoxLayout()
-        for text, act, tip in (
-            ("▶ Start wszystkich", "start_all", "Uruchom bota na wszystkich instancjach"),
-            ("⏸ Pauza wszystkich", "pause_all", "Wstrzymaj wszystkie działające instancje"),
-            ("▶ Wznów wszystkie", "resume_all", "Wznów wszystkie wstrzymane instancje"),
-            ("■ Stop wszystkich", "stop_all", "Zatrzymaj wszystkie instancje"),
-            ("🧹 Rozbierz na wszystkich", "salvage_all", "Rozbierz przedmioty na wszystkich działających instancjach"),
-            ("📦 Otwórz paczki na wszystkich", "packs_all", "Otwórz podaną liczbę paczek na wszystkich działających instancjach"),
-            ("🔄 Restart gry na wszystkich", "restart_all", "Zrestartuj grę na wszystkich działających instancjach"),
-            ("⚡ Turbo", "turbo_on", "Tryb turbo (maksymalna szybkość) na wszystkich instancjach"),
-            ("🐢 Normalne tempo", "turbo_off", "Wyłącz tryb turbo na wszystkich instancjach (wraca tempo z zakładki Tempo)"),
+        head = QHBoxLayout()
+        title = QLabel("Przegląd")
+        title.setObjectName("pageTitle")
+        head.addWidget(title)
+        head.addStretch(1)
+        # najczęstsze akcje dla wszystkich - widoczne od razu
+        for text, act, tip, accent, danger in (
+            ("▶ Start wszystkich", "start_all", "Uruchom bota na wszystkich instancjach", True, False),
+            ("⏸ Pauza", "pause_all", "Wstrzymaj wszystkie działające instancje", False, False),
+            ("▶ Wznów", "resume_all", "Wznów wszystkie wstrzymane instancje", False, False),
+            ("■ Stop wszystkich", "stop_all", "Zatrzymaj wszystkie instancje", False, True),
         ):
-            b = QPushButton(text)
-            b.setToolTip(tip)
+            b = _button(text, tip, accent=accent, danger=danger)
             b.clicked.connect(lambda _=False, a=act: self.global_action.emit(a))
-            bar.addWidget(b)
-        bar.addStretch(1)
-        root.addLayout(bar)
+            head.addWidget(b)
+        # rzadsze akcje w menu
+        more = QToolButton()
+        more.setText("Więcej ▾")
+        more.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(more)
+        for text, act in (
+            ("🧹 Rozbierz na wszystkich", "salvage_all"),
+            ("📦 Otwórz paczki na wszystkich", "packs_all"),
+            ("🔄 Restart gry na wszystkich", "restart_all"),
+            ("⚡ Turbo na wszystkich", "turbo_on"),
+            ("🐢 Normalne tempo na wszystkich", "turbo_off"),
+        ):
+            menu.addAction(text, lambda a=act: self.global_action.emit(a))
+        more.setMenu(menu)
+        head.addWidget(more)
+        root.addLayout(head)
+
+        kpis = QHBoxLayout()
+        kpis.setSpacing(8)
+        self._kpi: dict[str, _Kpi] = {}
+        for key, label in self.KPIS:
+            tile = _Kpi(label)
+            self._kpi[key] = tile
+            kpis.addWidget(tile, 1)
+        root.addLayout(kpis)
 
         # głębokość farmienia dla wszystkich instancji naraz
-        depth = QHBoxLayout()
-        depth.addWidget(QLabel("Głębokość na wszystkich:"))
+        depth_box = QFrame()
+        depth_box.setObjectName("panel")
+        depth = QHBoxLayout(depth_box)
+        depth.setContentsMargins(12, 8, 12, 8)
+        depth.addWidget(QLabel("Głębokość na wszystkich"))
         self.depth_mode = QComboBox()
         for key, label in DEPTH_MODES.items():
             self.depth_mode.addItem(label, key)
@@ -166,20 +258,26 @@ class DashboardWidget(QWidget):
         depth.addWidget(self.depth_mode)
         self.depth_value = QSpinBox()
         depth.addWidget(self.depth_value)
-        apply_btn = QPushButton("✔ Ustaw na wszystkich")
-        apply_btn.setToolTip("Ustawia tryb głębokości na każdej instancji; boty wybiorą ją w Profile "
-                             "przy najbliższym ekranie z paskiem nawigacji")
+        apply_btn = _button("✔ Ustaw na wszystkich",
+                            "Ustawia tryb głębokości na każdej instancji; boty wybiorą ją w Profile "
+                            "przy najbliższym ekranie z paskiem nawigacji")
         apply_btn.clicked.connect(lambda: self.depth_all.emit(self.depth_mode.currentData(),
                                                               self.depth_value.value()))
         depth.addWidget(apply_btn)
         depth.addStretch(1)
-        root.addLayout(depth)
+        root.addWidget(depth_box)
         self.depth_mode.currentIndexChanged.connect(self._depth_mode_changed)
         self._depth_mode_changed()
 
+        # tekstowe podsumowanie (zachowane dla zgodności; ukryte - liczby są na kaflach)
         self.summary = QLabel("")
-        self.summary.setWordWrap(True)
+        self.summary.setVisible(False)
         root.addWidget(self.summary)
+
+        self.empty = QLabel("Brak instancji. Użyj „🔍 Wykryj emulatory” albo „➕ Dodaj” na pasku u góry.")
+        self.empty.setObjectName("muted")
+        self.empty.setAlignment(Qt.AlignCenter)
+        root.addWidget(self.empty)
 
         self.area = QScrollArea()
         self.area.setWidgetResizable(True)
@@ -187,7 +285,8 @@ class DashboardWidget(QWidget):
         self.container = QWidget()
         self.grid = QGridLayout(self.container)
         self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.grid.setSpacing(8)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(10)
         self.area.setWidget(self.container)
         root.addWidget(self.area, 1)
 
@@ -220,13 +319,14 @@ class DashboardWidget(QWidget):
             card = InstanceCard(name, serial)
             card.action.connect(self.card_action)
             self.cards[name] = card
+        self.empty.setVisible(not instances)
         self._relayout()
 
     def _relayout(self) -> None:
         while self.grid.count():
             self.grid.takeAt(0)
         card_w = CARD_W + self.grid.spacing()
-        width = max(self.area.viewport().width(), self.width() - 30)
+        width = max(self.area.viewport().width(), self.width() - 40)
         cols = max(1, width // card_w)
         for i, name in enumerate(self._order):
             self.grid.addWidget(self.cards[name], i // cols, i % cols)
@@ -246,3 +346,9 @@ class DashboardWidget(QWidget):
 
     def set_summary(self, text: str) -> None:
         self.summary.setText(text)
+
+    def set_totals(self, totals: dict) -> None:
+        """Liczby na kaflach podsumowania: {klucz: tekst lub liczba}."""
+        for key, tile in self._kpi.items():
+            value = totals.get(key)
+            tile.value.setText(value if isinstance(value, str) else _num(value))

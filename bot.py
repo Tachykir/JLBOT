@@ -130,6 +130,9 @@ class BotConfig:
     # - żeby można je było przesłać i dodać ich obsługę.
     save_unknown_screens: bool = True
     unknown_screen_after_s: float = 30.0
+    # Log akcji do CSV (action_logs obok programu): każde tapnięcie, swipe,
+    # przeciągnięcie i przytrzymanie z czasem, ekranem i torem.
+    action_log: bool = False
 
     # Co wybrać na ekranie dropu po wygranej walce (panel z przyciskami
     # Replace / Equip & Salvage / Salvage / Keep Current):
@@ -430,6 +433,7 @@ class BotConfig:
             ("salvage_when_full", bool),
             ("idle_fallback_enabled", bool),
             ("save_unknown_screens", bool),
+            ("action_log", bool),
             ("unknown_screen_after_s", float),
             ("salvage_items", int),
             ("play_debris", bool),
@@ -499,6 +503,7 @@ class BotConfig:
             "idle_target": self.idle_target,
             "idle_fallback_enabled": self.idle_fallback_enabled,
             "save_unknown_screens": self.save_unknown_screens,
+            "action_log": self.action_log,
             "unknown_screen_after_s": self.unknown_screen_after_s,
             "drop_choice": self.drop_choice,
             "salvage_when_full": self.salvage_when_full,
@@ -624,8 +629,17 @@ class DustMineBot:
         # czekać np. 10-15 s do końca restart_settle_delay / poll harmonogramu.
         self._stop_event = threading.Event()
         self._paused = False
+        self._state = "idle"            # tryb z ostatniej klatki (log akcji)
+        if on_frame is not None:
+            def _frame_cb(name, frame, det, mode, _cb=on_frame):
+                self._state = mode
+                _cb(name, frame, det, mode)
+            on_frame = _frame_cb
         self._on_frame = on_frame
         self._on_schedule = on_schedule
+        self._action_log = None
+        if hasattr(adb, "on_action"):
+            adb.on_action = self._log_action
         # dokładny opis tego, co bot robi w tej chwili (GUI: status instancji)
         self._on_activity = on_activity
         self.activity = ""
@@ -657,8 +671,41 @@ class DustMineBot:
         self._manual_restart_requested = False
         self._last_foreground_check: float = 0.0
 
+    def _log_action(self, kind: str, points, meta: dict) -> None:
+        """Wiersz logu akcji (CSV) dla każdej akcji wejścia - gdy włączony
+        w ustawieniach. Współrzędne w pikselach urządzenia."""
+        cfg = self.config
+        if not getattr(cfg, "action_log", False) or not points:
+            return
+        if self._action_log is None:
+            import action_log
+            self._action_log = action_log.ActionLog(cfg.name)
+        import action_log
+        scale = getattr(self.adb, "scale", 1.0) or 1.0
+        path = meta.get("path") or points
+        hold = int(meta.get("hold_ms", 0) or 0)
+        action = kind
+        if kind == "tap" and hold >= 400:
+            action = "hold"  # przytrzymanie (np. rozbieranie w Inventory)
+        (x, y), (ex, ey) = path[0], path[-1]
+        self._action_log.write({
+            "state": self._state,
+            "activity": self.activity,
+            "action": action,
+            "x": int(round(x * scale)), "y": int(round(y * scale)),
+            "end_x": int(round(ex * scale)), "end_y": int(round(ey * scale)),
+            "points": len(path),
+            "path": action_log.format_path(path, scale) if len(path) > 1 else "",
+            "duration_ms": int(meta.get("duration_ms", 0) or 0),
+            "hold_ms": hold,
+            "turbo": int(bool(getattr(cfg, "turbo", False))),
+            "drag_style": cfg.drag_style,
+        })
+
     def stop(self) -> None:
         self._play_tick()
+        if self._action_log is not None:
+            self._action_log.close()
         self._stop_event.set()
 
     def _play_tick(self) -> None:

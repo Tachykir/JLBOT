@@ -1,2 +1,2 @@
 """Wersja programu - widoczna na pasku tytułu okna (podbijaj razem z installer.iss)."""
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"

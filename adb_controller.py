@@ -104,12 +104,20 @@ class ADBController:
     # ostatnie akcje (czas, rodzaj, punkty we współrzędnych zrzutu) - do
     # rysowania na podglądzie w GUI; zapis jest tani i nie spowalnia bota
     trace = None
+    # opcjonalny odbiorca każdej akcji wejścia (log akcji do CSV):
+    # on_action(kind, punkty we współrzędnych zrzutu, {duration_ms, hold_ms, path})
+    on_action = None
 
-    def mark(self, kind: str, points) -> None:
+    def mark(self, kind: str, points, **meta) -> None:
         if self.trace is None:
             import collections
             self.trace = collections.deque(maxlen=40)
         self.trace.append((time.monotonic(), kind, [(int(x), int(y)) for x, y in points]))
+        if self.on_action is not None and kind != "rect":
+            try:
+                self.on_action(kind, points, meta)
+            except Exception:  # log nie może przerwać bota
+                logger.debug("on_action failed", exc_info=True)
 
     def __init__(self, serial: str, adb_path: str | None = None, connect_timeout: float = 10.0):
         self.serial = serial
@@ -237,7 +245,9 @@ class ADBController:
         może wymagać minimalnego czasu trwania, żeby uznać to za drag
         a nie klik; 300-600ms zwykle działa dobrze dla mechanik drag&drop.
         """
-        self.mark("tap" if abs(x2 - x1) + abs(y2 - y1) <= 4 else "swipe", [(x1, y1), (x2, y2)])
+        is_tap = abs(x2 - x1) + abs(y2 - y1) <= 4
+        self.mark("tap" if is_tap else "swipe", [(x1, y1), (x2, y2)],
+                  duration_ms=int(duration_ms), hold_ms=int(duration_ms) if is_tap else 0)
         self._run([
             "shell", "input", "swipe",
             str(self._s(x1)), str(self._s(y1)), str(self._s(x2)), str(self._s(y2)),
@@ -253,8 +263,8 @@ class ADBController:
         """
         if not taps:
             return
-        for x, y, _h in taps:
-            self.mark("tap", [(x, y)])
+        for x, y, h in taps:
+            self.mark("tap", [(x, y)], hold_ms=int(h), duration_ms=int(h))
         parts = []
         for i, (x, y, hold) in enumerate(taps):
             if i and i - 1 < len(gaps_s) and gaps_s[i - 1] > 0:
@@ -301,7 +311,7 @@ class ADBController:
         if len(points) < 2:
             return
         step = max(1, len(points) // 16)
-        self.mark("drag", list(points[::step]) + [points[-1]])
+        preview = list(points[::step]) + [points[-1]]  # podgląd w GUI - wystarczy kilkanaście punktów
         if self._motionevent_ok is None:
             self._motionevent_ok = self._probe_motionevent()
         if not self._motionevent_ok:
@@ -315,8 +325,12 @@ class ADBController:
                     x2 = int(round(x2 + (x2 - x1) / dist * over))
                     y2 = int(round(y2 + (y2 - y1) / dist * over))
                 duration_ms = duration_ms * 1.5
-            self.swipe(x1, y1, x2, y2, duration_ms=int(duration_ms))
+            self.mark("drag", [(x1, y1), (x2, y2)], duration_ms=int(duration_ms), hold_ms=0,
+                      path=[(x1, y1), (x2, y2)])
+            self._run(["shell", "input", "swipe", str(self._s(x1)), str(self._s(y1)),
+                       str(self._s(x2)), str(self._s(y2)), str(int(duration_ms))])
             return
+        self.mark("drag", preview, duration_ms=int(duration_ms), hold_ms=int(end_hold_ms), path=list(points))
 
         moves = points[1:]
         segment_s = duration_ms / 1000.0 / len(moves)

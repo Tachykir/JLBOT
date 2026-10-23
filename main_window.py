@@ -25,9 +25,10 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, Slot, QTime
+from PySide6.QtCore import Qt, Slot, QTime, QTimer
 from PySide6.QtCore import QUrl
 import theme
+import action_log
 from version import APP_VERSION
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
@@ -35,7 +36,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton, QLabel, QLineEdit, QSpinBox,
     QDoubleSpinBox, QPlainTextEdit, QSplitter, QGroupBox, QMessageBox, QFileDialog,
     QTimeEdit, QCheckBox, QDialog, QDialogButtonBox, QScrollArea, QFrame, QTabWidget, QComboBox,
-    QInputDialog,
+    QInputDialog, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 
 from bot import (BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS, DROP_CHOICES, DEPTH_MODES,
@@ -56,19 +57,27 @@ def default_config_path() -> Path:
         return Path(sys.executable).resolve().parent / "config.json"
     return Path(__file__).resolve().parent / "config.json"
 
+# kolory czytelne na jasnym i ciemnym tle
 STATUS_COLORS = {
-    "connecting": "#f0ad4e",
-    "idle": "#5bc0de",
-    "collecting": "#5cb85c",
-    "debris": "#e0a040",
-    "fishing": "#40c8e0",
-    "menu": "#8fd18f",
-    "paused": "#aaaaaa",
-    "break": "#b58bd6",
+    "connecting": "#d9962f",
+    "idle": "#3a9fd0",
+    "collecting": "#36ad72",
+    "debris": "#d9962f",
+    "fishing": "#2aa9bf",
+    "menu": "#4fa85f",
+    "paused": "#8b97a3",
+    "break": "#9c7bd0",
     "offline": "#8a7f6a",
-    "stopped": "#777777",
-    "error": "#d9534f",
+    "stopped": "#7d8792",
+    "error": "#e0604f",
 }
+
+# kolumny tabeli na stronie "Log akcji": (pole CSV, nagłówek)
+_ACTION_COLUMNS = [
+    ("time", "Czas"), ("state", "Tryb"), ("action", "Akcja"), ("x", "X"), ("y", "Y"),
+    ("end_x", "X końca"), ("end_y", "Y końca"), ("points", "Punkty"), ("duration_ms", "Czas [ms]"),
+    ("hold_ms", "Przytrz. [ms]"), ("activity", "Czynność"),
+]
 
 # Punkty do klikania w zakładce "Punkty": (klucz BotConfig, etykieta, kolor BGR na podglądzie)
 _POINTS = [
@@ -440,7 +449,7 @@ class MainWindow(QMainWindow):
         """Szary, zawijany opis pod polami - tłumaczy, co robi ustawienie."""
         label = QLabel(text)
         label.setWordWrap(True)
-        label.setStyleSheet("color: #888; font-size: 11px;")
+        label.setObjectName("hint")
         return label
 
     @staticmethod
@@ -481,44 +490,91 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(6, 6, 6, 6)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
+        # --- nawigacja po lewej ------------------------------------------ #
+        rail = QFrame()
+        rail.setObjectName("navRail")
+        rail.setFixedWidth(196)
+        rail_lay = QVBoxLayout(rail)
+        rail_lay.setContentsMargins(0, 16, 0, 12)
+        rail_lay.setSpacing(2)
+        name = QLabel("Dust Mine Bot")
+        name.setObjectName("appName")
+        name.setContentsMargins(20, 0, 12, 0)
+        ver = QLabel(f"wersja {APP_VERSION}")
+        ver.setObjectName("appVersion")
+        ver.setContentsMargins(20, 0, 12, 12)
+        rail_lay.addWidget(name)
+        rail_lay.addWidget(ver)
+        self.nav = QListWidget()
+        self.nav.setObjectName("nav")
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        for text, tip in (("📋  Przegląd", "Wszystkie instancje: podgląd, liczby, akcje dla wszystkich"),
+                          ("⚙  Instancje", "Podgląd na żywo i ustawienia wybranej instancji"),
+                          ("🧾  Log akcji", "Zapis każdej akcji bota do CSV i jego podgląd")):
+            item = QListWidgetItem(text)
+            item.setToolTip(tip)
+            self.nav.addItem(item)
+        rail_lay.addWidget(self.nav, 1)
+        self.nav_running = QLabel("")
+        self.nav_running.setObjectName("appVersion")
+        self.nav_running.setContentsMargins(20, 0, 12, 0)
+        rail_lay.addWidget(self.nav_running)
+        root.addWidget(rail)
+
+        # --- strony ------------------------------------------------------- #
         vsplit = QSplitter(Qt.Vertical)
-        root.addWidget(vsplit)
+        root.addWidget(vsplit, 1)
 
         top = QSplitter(Qt.Horizontal)
+        top.setContentsMargins(8, 8, 8, 0)
         top.addWidget(self._build_instances_panel())
         top.addWidget(self._build_preview_panel())
         top.addWidget(self._build_settings_panel())
         top.setStretchFactor(0, 0)
         top.setStretchFactor(1, 1)
         top.setStretchFactor(2, 0)
-        top.setSizes([230, 510, 520])
+        top.setSizes([230, 500, 540])
 
-        # karty: przegląd wszystkich instancji / szczegóły wybranej
         self.dashboard = DashboardWidget()
         self.dashboard.card_action.connect(self._on_card_action)
         self.dashboard.global_action.connect(self._on_global_action)
         self.dashboard.depth_all.connect(self._on_depth_all)
-        self.main_tabs = QTabWidget()
-        self.main_tabs.addTab(self.dashboard, "📋 Wszystkie instancje")
-        self.main_tabs.addTab(top, "⚙ Szczegóły instancji")
-        self.main_tabs.setCurrentIndex(0)
-        # miniatury odśwież od razu po przejściu na przegląd
-        self.main_tabs.currentChanged.connect(lambda i: i == 0 and self._rebuild_dashboard())
+        # strony w tej samej kolejności co nawigacja: 0 przegląd, 1 instancje, 2 log akcji
+        self.main_tabs = QStackedWidget()
+        self.main_tabs.addWidget(self.dashboard)
+        self.main_tabs.addWidget(top)
+        self.main_tabs.addWidget(self._build_action_log_page())
+        self.nav.currentRowChanged.connect(self.main_tabs.setCurrentIndex)
+        self.main_tabs.currentChanged.connect(self._on_page_changed)
+        self.nav.setCurrentRow(0)
         vsplit.addWidget(self.main_tabs)
         vsplit.addWidget(self._build_log_panel())
         vsplit.setStretchFactor(0, 4)
         vsplit.setStretchFactor(1, 1)
-        vsplit.setSizes([620, 160])
+        vsplit.setSizes([640, 150])
 
         self.statusBar().showMessage("Wybierz instancję z listy albo wykryj emulatory przyciskiem na pasku narzędzi.")
         self._set_config_form_enabled(False)
 
+    def _on_page_changed(self, index: int) -> None:
+        if self.nav.currentRow() != index:
+            self.nav.blockSignals(True)
+            self.nav.setCurrentRow(index)
+            self.nav.blockSignals(False)
+        if index == 0:
+            self._rebuild_dashboard()  # miniatury od razu po przejściu na przegląd
+        elif index == 2:
+            self._refresh_action_log()
+
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Główne")
         tb.setMovable(False)
+        tb.setFloatable(False)
+        tb.setContextMenuPolicy(Qt.PreventContextMenu)
         tb.setToolButtonStyle(Qt.ToolButtonTextOnly)
 
         def action(text, slot, tip, shortcut=None):
@@ -559,11 +615,12 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        layout.addWidget(QLabel("<b>Instancje</b>"))
+        title = QLabel("Instancje")
+        title.setObjectName("pageTitle")
+        layout.addWidget(title)
         self.instance_list = QListWidget()
         self.instance_list.setWordWrap(True)
         self.instance_list.setSpacing(2)
-        self.instance_list.setStyleSheet("QListWidget::item { padding: 4px; }")
         self.instance_list.currentItemChanged.connect(self._on_selection_changed)
         layout.addWidget(self.instance_list, stretch=1)
 
@@ -578,16 +635,20 @@ class MainWindow(QMainWindow):
         self.btn_stop = QPushButton("■ Stop")
         self.btn_stop.setToolTip("Zatrzymaj bota na tej instancji")
         self.btn_stop.clicked.connect(self._stop_selected)
-        self.btn_restart_app = QPushButton("🔄 Restart gry")
-        self.btn_restart_app.setToolTip("Zamknij i uruchom grę ponownie (wymaga pakietu gry)")
+        self.btn_start.setProperty("accent", True)
+        self.btn_stop.setProperty("danger", True)
+        self.btn_restart_app = QPushButton("🔄 Restart")
+        self.btn_restart_app.setToolTip("Restart gry: zamknij i uruchom grę ponownie (wymaga pakietu gry)")
         self.btn_restart_app.clicked.connect(self._restart_app_selected)
-        self.btn_salvage_now = QPushButton("🧹 Rozbierz teraz")
+        self.btn_salvage_now = QPushButton("🧹 Rozbierz przedmioty")
         self.btn_salvage_now.setToolTip("Rozbierz przedmioty z góry listy Inventory (zapyta o liczbę)")
         self.btn_salvage_now.clicked.connect(lambda: self._salvage_entries([self._current_entry()]))
-        for i, b in enumerate((self.btn_start, self.btn_pause, self.btn_stop, self.btn_restart_app,
-                               self.btn_salvage_now)):
+        grid.setSpacing(6)
+        for b, row, col, span in ((self.btn_start, 0, 0, 1), (self.btn_pause, 0, 1, 1),
+                                  (self.btn_stop, 1, 0, 1), (self.btn_restart_app, 1, 1, 1),
+                                  (self.btn_salvage_now, 2, 0, 2)):
             b.setMinimumHeight(30)
-            grid.addWidget(b, i // 2, i % 2)
+            grid.addWidget(b, row, col, 1, span)
         layout.addWidget(box)
         return panel
 
@@ -597,15 +658,19 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(4, 4, 4, 4)
 
         self.preview_title = QLabel("<b>Podgląd</b> – wybierz instancję")
+        self.preview_title.setStyleSheet("font-size: 15px;")
         layout.addWidget(self.preview_title)
         legend = QLabel(
             "<span style='color:#e33'>●</span> DROP &nbsp; "
             "<span style='color:#3c3'>●</span> kulki &nbsp; "
             "<span style='color:#f90'>●</span> kafelki &nbsp; "
-            "<span style='color:#0cf'>●</span> CAST"
+            "<span style='color:#0cf'>●</span> CAST &nbsp; "
+            "<span style='color:#fc0'>▢</span> klikany element &nbsp; "
+            "<span style='color:#f80'>○</span> kliknięcie &nbsp; "
+            "<span style='color:#0cf'>➝</span> przeciągnięcie"
         )
         legend.setWordWrap(True)
-        legend.setStyleSheet("font-size: 11px;")
+        legend.setObjectName("hint")
         layout.addWidget(legend)
 
         self.preview = PreviewWidget()
@@ -627,7 +692,9 @@ class MainWindow(QMainWindow):
         panel.setMinimumWidth(500)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.addWidget(QLabel("<b>Ustawienia wybranej instancji</b>"))
+        settings_title = QLabel("Ustawienia")
+        settings_title.setObjectName("pageTitle")
+        layout.addWidget(settings_title)
 
         self.tabs = QTabWidget()
         self.tabs.setUsesScrollButtons(False)  # wszystkie zakładki zawsze widoczne
@@ -651,10 +718,10 @@ class MainWindow(QMainWindow):
         grid = QGridLayout(stats_box)
         self.stat_labels: dict[str, QLabel] = {}
         for i, (key, title) in enumerate(_STAT_FIELDS):
-            name = QLabel(title + ":")
-            name.setStyleSheet("color: #888;")
+            name = QLabel(title)
+            name.setObjectName("metricName")
             value = QLabel("0")
-            value.setStyleSheet("font-weight: bold;")
+            value.setObjectName("metricValue")
             grid.addWidget(name, i // 3, (i % 3) * 2)
             grid.addWidget(value, i // 3, (i % 3) * 2 + 1)
             self.stat_labels[key] = value
@@ -1040,16 +1107,16 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _section(title: str) -> QLabel:
-        label = QLabel(f"<b>{title}</b>")
-        label.setContentsMargins(0, 8, 0, 0)
+        label = QLabel(title.upper())
+        label.setObjectName("section")
         return label
 
     def _build_log_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setContentsMargins(12, 4, 12, 6)
         header = QHBoxLayout()
-        header.addWidget(QLabel("<b>Logi</b>"))
+        header.addWidget(self._section("Logi"))
         header.addStretch(1)
         self.log_autoscroll = QCheckBox("Przewijaj automatycznie")
         self.log_autoscroll.setChecked(True)
@@ -1060,11 +1127,130 @@ class MainWindow(QMainWindow):
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(5000)
-        self.log_view.setStyleSheet("background-color: #1a1a1a; color: #ddd; "
+        self.log_view.setStyleSheet("background-color: #0e1216; color: #d6dde3; border-radius: 8px; "
                                     "font-family: Consolas, 'DejaVu Sans Mono', monospace; font-size: 11px;")
         clear.clicked.connect(self.log_view.clear)
         layout.addWidget(self.log_view)
         return panel
+
+    # ------------------------------------------------------------------ #
+    # Strona "Log akcji"
+    # ------------------------------------------------------------------ #
+    def _build_action_log_page(self) -> QWidget:
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(16, 14, 16, 8)
+        root.setSpacing(10)
+
+        title = QLabel("Log akcji")
+        title.setObjectName("pageTitle")
+        root.addWidget(title)
+        root.addWidget(self._hint(
+            "Każde tapnięcie, przeciągnięcie, swipe i przytrzymanie bota trafia do pliku CSV: czas, tryb, "
+            "czynność, współrzędne (piksele urządzenia), cały tor przeciągnięcia, czas trwania i przytrzymanie. "
+            "Jeden plik na instancję i dzień w folderze action_logs obok programu."))
+
+        bar_box = QFrame()
+        bar_box.setObjectName("panel")
+        bar = QHBoxLayout(bar_box)
+        bar.setContentsMargins(12, 8, 12, 8)
+        self.field_action_log = QCheckBox("Zapisuj log akcji (wszystkie instancje)")
+        self.field_action_log.toggled.connect(self._on_action_log_toggled)
+        bar.addWidget(self.field_action_log)
+        bar.addSpacing(16)
+        bar.addWidget(QLabel("Instancja"))
+        self.action_log_instance = QComboBox()
+        self.action_log_instance.setMinimumWidth(160)
+        self.action_log_instance.currentIndexChanged.connect(lambda _i: self._refresh_action_log())
+        bar.addWidget(self.action_log_instance)
+        refresh = QPushButton("⟳ Odśwież")
+        refresh.clicked.connect(self._refresh_action_log)
+        bar.addWidget(refresh)
+        open_dir = QPushButton("📁 Otwórz folder")
+        open_dir.clicked.connect(self._open_action_log_dir)
+        bar.addWidget(open_dir)
+        bar.addStretch(1)
+        root.addWidget(bar_box)
+
+        self.action_log_summary = QLabel("")
+        self.action_log_summary.setObjectName("hint")
+        root.addWidget(self.action_log_summary)
+
+        self.action_log_table = QTableWidget(0, len(_ACTION_COLUMNS))
+        self.action_log_table.setHorizontalHeaderLabels([t for _k, t in _ACTION_COLUMNS])
+        self.action_log_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.action_log_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.action_log_table.setAlternatingRowColors(True)
+        self.action_log_table.verticalHeader().setVisible(False)
+        header = self.action_log_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setStretchLastSection(True)
+        root.addWidget(self.action_log_table, 1)
+
+        # odświeżanie, gdy strona jest widoczna
+        self._action_log_timer = QTimer(self)
+        self._action_log_timer.setInterval(2000)
+        self._action_log_timer.timeout.connect(
+            lambda: self.main_tabs.currentIndex() == 2 and self._refresh_action_log())
+        self._action_log_timer.start()
+        return page
+
+    def _sync_action_log_controls(self) -> None:
+        """Przełącznik i lista instancji zgodne z wczytanym configiem."""
+        enabled = any(e.config.action_log for e in self.instances.values())
+        self.field_action_log.blockSignals(True)
+        self.field_action_log.setChecked(enabled)
+        self.field_action_log.blockSignals(False)
+        current = self.action_log_instance.currentText()
+        self.action_log_instance.blockSignals(True)
+        self.action_log_instance.clear()
+        self.action_log_instance.addItems(list(self.instances))
+        if current in self.instances:
+            self.action_log_instance.setCurrentText(current)
+        self.action_log_instance.blockSignals(False)
+
+    def _on_action_log_toggled(self, on: bool) -> None:
+        for e in self.instances.values():
+            e.config.action_log = on  # działające boty biorą to od razu
+        self._mark_dirty()
+        self._log_local(f"Log akcji {'włączony' if on else 'wyłączony'} na {len(self.instances)} instancjach")
+        self._refresh_action_log()
+
+    def _open_action_log_dir(self) -> None:
+        folder = action_log.action_logs_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def _refresh_action_log(self) -> None:
+        if self.action_log_instance.count() != len(self.instances):
+            self._sync_action_log_controls()
+        name = self.action_log_instance.currentText()
+        table = self.action_log_table
+        if not name:
+            table.setRowCount(0)
+            self.action_log_summary.setText("Brak instancji.")
+            return
+        path = action_log.log_path(name)
+        rows = action_log.read_tail(path, 300)
+        rows.reverse()  # najnowsze na górze
+        table.setUpdatesEnabled(False)
+        table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            for c, (key, _title) in enumerate(_ACTION_COLUMNS):
+                value = row.get(key, "")
+                if key == "time":
+                    value = value[11:23]  # tylko godzina z milisekundami
+                table.setItem(r, c, QTableWidgetItem(value))
+        table.setUpdatesEnabled(True)
+        if rows:
+            counts: dict[str, int] = {}
+            for row in rows:
+                counts[row.get("action", "?")] = counts.get(row.get("action", "?"), 0) + 1
+            parts = ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
+            self.action_log_summary.setText(f"{path.name} · ostatnie {len(rows)} wpisów: {parts}")
+        else:
+            state = "włączony" if self.field_action_log.isChecked() else "wyłączony"
+            self.action_log_summary.setText(f"Brak wpisów z dzisiaj dla „{name}” (log {state}).")
 
     # ------------------------------------------------------------------ #
     # Zarządzanie instancjami
@@ -1805,8 +1991,12 @@ class MainWindow(QMainWindow):
     def _update_dashboard(self, entry: InstanceEntry) -> None:
         card = self.dashboard.card(entry.config.name)
         if card is not None:
-            status = self._format_list_label(entry).split("\n", 1)[-1].strip()
-            card.set_status(status, STATUS_COLORS.get(entry.status, "#ddd"))
+            # plakietka: krótki stan; pod nią: dokładnie, co bot robi
+            state = STATUS_LABELS_PL.get(entry.status, entry.status)
+            detail = self._format_list_label(entry).split("\n", 1)[-1].strip()
+            if detail == state:
+                detail = ""
+            card.set_status(f"{state} – {detail}" if detail else state, STATUS_COLORS.get(entry.status, "#7d8792"))
             card.set_stats(entry.last_stats)
             card.set_running(self._running(entry) and entry.status not in ("stopped", "error"),
                              entry.status == "paused")
@@ -1818,6 +2008,10 @@ class MainWindow(QMainWindow):
             f"Działa: <b>{running}/{len(self.instances)}</b> &nbsp;·&nbsp; łącznie: plansze {total('cycles')}, "
             f"kulki {total('balls_collected')}, porażki {total('defeats')}, dropy {total('drops')}, "
             f"rozebrane {total('salvaged')}, błędy {total('errors')}")
+        totals = {k: total(k) for k, _label in DashboardWidget.KPIS if k != "running"}
+        totals["running"] = f"{running}/{len(self.instances)}"
+        self.dashboard.set_totals(totals)
+        self.nav_running.setText(f"działa {running} z {len(self.instances)}")
 
     def _rebuild_dashboard(self) -> None:
         self.dashboard.rebuild([(n, e.serial) for n, e in self.instances.items()])
@@ -1825,6 +2019,9 @@ class MainWindow(QMainWindow):
             self._update_dashboard(e)
             if e.last_frame is not None:
                 self.dashboard.card(e.config.name).set_frame(e.last_frame)
+        if not self.instances:
+            self.dashboard.set_totals({"running": "0/0"})
+            self.nav_running.setText("")
 
 
     def _restart_app_selected(self) -> None:
@@ -1989,6 +2186,7 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._update_title()
         self._log_local(f"Wczytano config: {path} ({len(self.instances)} instancji)")
+        self._sync_action_log_controls()
 
     def _save_config(self) -> bool:
         """Zapis do bieżącego pliku (Ctrl+S); przy nowej konfiguracji pyta o plik."""
