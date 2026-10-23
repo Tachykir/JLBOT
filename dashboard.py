@@ -100,6 +100,10 @@ class InstanceCard(QFrame):
         dev = QLabel(serial or "(brak urządzenia)")
         dev.setObjectName("muted")
         side.addWidget(dev)
+        self.perf = QLabel("")
+        self.perf.setObjectName("muted")
+        self.perf.setToolTip("Średni czas zrzutu ekranu, narzut jednej akcji i liczba zrzutów na sekundę")
+        side.addWidget(self.perf)
 
         # bieżąca czynność bota (pełny opis)
         self.status = QLabel("")
@@ -151,6 +155,11 @@ class InstanceCard(QFrame):
         self.status.setText(detail.strip())
 
     def set_stats(self, stats) -> None:
+        if stats is not None and getattr(stats, "capture_ms", 0):
+            self.perf.setText(f"zrzut {stats.capture_ms:.0f} ms · akcja {stats.input_ms:.0f} ms · "
+                              f"{stats.fps:.1f}/s".replace(".", ","))
+        else:
+            self.perf.setText("")
         for key, label in self._metric.items():
             if stats is None:
                 label.setText("—")

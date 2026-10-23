@@ -725,8 +725,28 @@ class MainWindow(QMainWindow):
             grid.addWidget(name, i // 3, (i % 3) * 2)
             grid.addWidget(value, i // 3, (i % 3) * 2 + 1)
             self.stat_labels[key] = value
+        # wydajność: gdzie bot traci czas (zrzut ekranu / akcja)
+        self.perf_label = QLabel("")
+        self.perf_label.setObjectName("hint")
+        self.perf_label.setWordWrap(True)
+        grid.addWidget(self.perf_label, len(_STAT_FIELDS) // 3 + 1, 0, 1, 6)
         layout.addWidget(stats_box)
         return panel
+
+    @staticmethod
+    def perf_text(stats, long: bool = False) -> str:
+        """Opis wydajności z pomiarów bota (pusty, gdy jeszcze ich nie ma)."""
+        if stats is None or not getattr(stats, "capture_ms", 0):
+            return ""
+        text = (f"Zrzut ekranu {stats.capture_ms:.0f} ms · akcja {stats.input_ms:.0f} ms · "
+                f"{stats.fps:.1f} zrzutu/s".replace(".", ","))
+        if long:
+            if stats.device_width:
+                text += f" · ekran emulatora {stats.device_width} px szerokości"
+            if stats.device_width > 720:
+                text += (". Wskazówka: ustaw w LDPlayerze rozdzielczość 540×960 - bot i tak pracuje na "
+                         "540 px, a zrzut będzie kilka razy mniejszy i szybszy.")
+        return text
 
     def _tab_general(self) -> QWidget:
         w = QWidget()
@@ -1479,6 +1499,7 @@ class MainWindow(QMainWindow):
     def _show_stats(self, stats: BotStats | None) -> None:
         for key, _title in _STAT_FIELDS:
             self.stat_labels[key].setText(str(getattr(stats, key, 0) if stats is not None else 0))
+        self.perf_label.setText(self.perf_text(stats, long=True))
 
     def _update_dependent_enabled(self) -> None:
         """Wyszarza pola, które przy obecnych ustawieniach nic nie robią."""

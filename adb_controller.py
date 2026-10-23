@@ -16,10 +16,12 @@ dla kolejnych instancji - ale najpewniej jest to sprawdzić przez
 
 from __future__ import annotations
 
+import queue
 import random
 import subprocess
 import sys
 import os
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +48,72 @@ if sys.platform == "win32":
     _SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW
 else:
     _SUBPROCESS_FLAGS = 0
+
+
+class _ShellSession:
+    """
+    Jedna stale otwarta sesja `adb shell`, przez którą idą akcje (tap,
+    swipe, przeciągnięcia). Każde osobne wywołanie adb.exe to nowy proces i
+    nowe połączenie z serwerem ADB (na Windowsie zwykle 30-100 ms) - tu
+    polecenie trafia od razu do działającej powłoki.
+
+    Koniec polecenia rozpoznajemy po znaczniku wypisanym przez `echo`
+    (razem z kodem wyjścia).
+    """
+
+    def __init__(self, adb_path: str, serial: str):
+        self.proc = subprocess.Popen(
+            [adb_path, "-s", serial, "shell"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            creationflags=_SUBPROCESS_FLAGS, bufsize=0,
+        )
+        self._lines: queue.Queue = queue.Queue()
+        self._lock = threading.Lock()
+        self._n = 0
+        threading.Thread(target=self._reader, daemon=True).start()
+
+    def _reader(self) -> None:
+        try:
+            for line in iter(self.proc.stdout.readline, b""):
+                self._lines.put(line)
+        finally:
+            self._lines.put(None)  # sesja zamknięta
+
+    def run(self, command: str, timeout: float) -> str:
+        with self._lock:
+            self._n += 1
+            tag = f"__DMB_END_{self._n}__"
+            self.proc.stdin.write(f"{command}; echo {tag} $?\n".encode())
+            self.proc.stdin.flush()
+            deadline = time.monotonic() + timeout
+            out = []
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(command)
+                try:
+                    line = self._lines.get(timeout=remaining)
+                except queue.Empty:
+                    raise TimeoutError(command) from None
+                if line is None:
+                    raise EOFError("sesja adb shell zamknięta")
+                text = line.decode(errors="replace").strip()
+                if text.startswith(tag):
+                    code = text[len(tag):].strip()
+                    if code not in ("", "0"):
+                        raise RuntimeError(f"kod {code}: {' '.join(out)[-200:]}")
+                    return "\n".join(out)
+                out.append(text)
+
+    def close(self) -> None:
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.proc.kill()
+        except OSError:
+            pass
 
 
 
@@ -107,6 +175,50 @@ class ADBController:
     # opcjonalny odbiorca każdej akcji wejścia (log akcji do CSV):
     # on_action(kind, punkty we współrzędnych zrzutu, {duration_ms, hold_ms, path})
     on_action = None
+    # akcje przez stałą sesję `adb shell` (włączane w __init__; obiekty
+    # tworzone bez __init__, np. w testach, używają osobnych wywołań)
+    persistent_shell = False
+    _shell: _ShellSession | None = None
+    _shell_retry_at = 0.0
+    # pomiary wydajności (średnie kroczące): zrzut, akcja, zrzuty na sekundę
+    perf = None
+    _last_capture_at = 0.0
+
+    def _perf(self, key: str, value: float) -> None:
+        if self.perf is None:
+            self.perf = {"capture_ms": 0.0, "input_ms": 0.0, "fps": 0.0, "frame_kb": 0.0}
+        old = self.perf.get(key) or 0.0
+        self.perf[key] = value if old == 0.0 else 0.8 * old + 0.2 * value
+
+    def _input(self, args: list[str], timeout: float = 10.0, measure: bool = False) -> None:
+        """Polecenie `adb shell ...` dla akcji wejścia: przez stałą sesję,
+        a gdy jej brak albo się zepsuła - zwykłym wywołaniem adb."""
+        start = time.monotonic()
+        done = False
+        if self.persistent_shell and start >= self._shell_retry_at:
+            try:
+                if self._shell is None or self._shell.proc.poll() is not None:
+                    self._shell = _ShellSession(self.adb_path, self.serial)
+                self._shell.run(" ".join(args), timeout)
+                done = True
+            except (TimeoutError, RuntimeError) as e:
+                # polecenie mogło się już (częściowo) wykonać - nie powtarzamy go
+                self.close()
+                raise ADBError(f"[{self.serial}] akcja przez adb shell nie powiodła się: {e}") from e
+            except (OSError, EOFError) as e:
+                logger.warning("[%s] sesja adb shell: %s - wracam do osobnych wywołań na 60 s", self.serial, e)
+                self.close()
+                self._shell_retry_at = time.monotonic() + 60
+        if not done:
+            self._run(["shell"] + args, timeout=timeout)
+        if measure:
+            self._perf("input_ms", (time.monotonic() - start) * 1000)
+
+    def close(self) -> None:
+        """Zamyka stałą sesję (przy zatrzymaniu bota)."""
+        if self._shell is not None:
+            self._shell.close()
+            self._shell = None
 
     def mark(self, kind: str, points, **meta) -> None:
         if self.trace is None:
@@ -132,6 +244,9 @@ class ADBController:
         self.scale = 1.0
         # Czy `input motionevent` jest dostępne (None = jeszcze nie sprawdzono).
         self._motionevent_ok: bool | None = None
+        # akcje przez jedną stale otwartą sesję `adb shell` (szybciej niż
+        # osobny proces adb.exe na każde kliknięcie)
+        self.persistent_shell = True
         # Szacowany czas jednego wywołania `input ...` po stronie Androida
         # (uruchomienie procesu Java) - korygowany po każdym przeciągnięciu.
         self._input_latency_s = 0.15
@@ -236,7 +351,7 @@ class ADBController:
 
     def tap(self, x: int, y: int) -> None:
         self.mark("tap", [(x, y)])
-        self._run(["shell", "input", "tap", str(self._s(x)), str(self._s(y))])
+        self._input(["input", "tap", str(self._s(x)), str(self._s(y))], measure=True)
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 400) -> None:
         """
@@ -248,11 +363,14 @@ class ADBController:
         is_tap = abs(x2 - x1) + abs(y2 - y1) <= 4
         self.mark("tap" if is_tap else "swipe", [(x1, y1), (x2, y2)],
                   duration_ms=int(duration_ms), hold_ms=int(duration_ms) if is_tap else 0)
-        self._run([
-            "shell", "input", "swipe",
+        start = time.monotonic()
+        self._input([
+            "input", "swipe",
             str(self._s(x1)), str(self._s(y1)), str(self._s(x2)), str(self._s(y2)),
             str(int(duration_ms)),
         ])
+        if is_tap:  # narzut jednej akcji = czas wykonania minus sam dotyk
+            self._perf("input_ms", max(0.0, (time.monotonic() - start) * 1000 - duration_ms))
 
     def tap_sequence(self, taps: list[tuple[int, int, int]], gaps_s: list[float]) -> None:
         """
@@ -273,7 +391,7 @@ class ADBController:
             x, y = self._s(x), self._s(y)
             parts.append(f"input swipe {x} {y} {x + dx} {y + dy} {max(1, int(hold))}")
         total = sum(gaps_s) + len(taps) * 0.5
-        self._run(["shell", "; ".join(parts)], timeout=10 + total)
+        self._input(["; ".join(parts)], timeout=10 + total)
 
     def _probe_motionevent(self) -> bool:
         """Sprawdza, czy `input motionevent` jest dostępne na urządzeniu
@@ -327,8 +445,8 @@ class ADBController:
                 duration_ms = duration_ms * 1.5
             self.mark("drag", [(x1, y1), (x2, y2)], duration_ms=int(duration_ms), hold_ms=0,
                       path=[(x1, y1), (x2, y2)])
-            self._run(["shell", "input", "swipe", str(self._s(x1)), str(self._s(y1)),
-                       str(self._s(x2)), str(self._s(y2)), str(int(duration_ms))])
+            self._input(["input", "swipe", str(self._s(x1)), str(self._s(y1)),
+                         str(self._s(x2)), str(self._s(y2)), str(int(duration_ms))])
             return
         self.mark("drag", preview, duration_ms=int(duration_ms), hold_ms=int(end_hold_ms), path=list(points))
 
@@ -357,7 +475,7 @@ class ADBController:
         parts.append(f"input motionevent UP {self._s(x)} {self._s(y)}")
 
         start = time.monotonic()
-        self._run(["shell", "; ".join(parts)], timeout=15 + 3 * (duration_ms + end_hold_ms) / 1000.0)
+        self._input(["; ".join(parts)], timeout=15 + 3 * (duration_ms + end_hold_ms) / 1000.0)
         elapsed = time.monotonic() - start
 
         # dopasuj szacunek opóźnienia jednego `input`, żeby kolejne
@@ -369,7 +487,24 @@ class ADBController:
     # ------------------------------------------------------------------ #
     # Wyjście: screenshot
     # ------------------------------------------------------------------ #
+    device_width = 0   # szerokość ekranu urządzenia z ostatniego zrzutu
+
     def screenshot(self) -> np.ndarray:
+        """Zrzut ekranu (BGR) z pomiarem czasu, rozmiaru danych i liczby
+        zrzutów na sekundę (perf - widoczne w GUI)."""
+        start = time.monotonic()
+        img = self._screenshot()
+        now = time.monotonic()
+        self._perf("capture_ms", (now - start) * 1000)
+        if self._last_capture_at:
+            gap = now - self._last_capture_at
+            if 0 < gap < 10:
+                self._perf("fps", 1.0 / gap)
+        self._last_capture_at = now
+        self.device_width = int(round(img.shape[1] * self.scale))
+        return img
+
+    def _screenshot(self) -> np.ndarray:
         """
         Zwraca screenshot jako obraz BGR (numpy array, kompatybilny z OpenCV).
 
@@ -380,6 +515,7 @@ class ADBController:
         """
         if self._raw_screencap_ok:
             data = self._exec_out(["screencap"])
+            self._perf("frame_kb", len(data) / 1024)
             res = decode_raw_screencap(data, self.max_width)
             if res is not None:
                 if isinstance(res, tuple):

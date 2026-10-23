@@ -608,6 +608,12 @@ class BotStats:
     dust: Optional[int] = None         # pył z nagłówka ekranu Craft
     # czas realnej gry (s) - bez przerw z harmonogramu i pauzy
     play_seconds: float = 0.0
+    # wydajność (średnie kroczące): czas zrzutu i narzut jednej akcji (ms),
+    # zrzuty na sekundę, szerokość ekranu urządzenia
+    capture_ms: float = 0.0
+    input_ms: float = 0.0
+    fps: float = 0.0
+    device_width: int = 0
 
 
 class DustMineBot:
@@ -633,6 +639,12 @@ class DustMineBot:
         if on_frame is not None:
             def _frame_cb(name, frame, det, mode, _cb=on_frame):
                 self._state = mode
+                perf = getattr(self.adb, "perf", None)
+                if perf:  # pomiary wydajności do GUI
+                    self.stats.capture_ms = perf.get("capture_ms", 0.0)
+                    self.stats.input_ms = perf.get("input_ms", 0.0)
+                    self.stats.fps = perf.get("fps", 0.0)
+                    self.stats.device_width = getattr(self.adb, "device_width", 0)
                 _cb(name, frame, det, mode)
             on_frame = _frame_cb
         self._on_frame = on_frame
@@ -904,6 +916,9 @@ class DustMineBot:
                 logger.exception("[%s] nieoczekiwany błąd", self.config.name)
                 self.stats.errors += 1
                 self._sleep(2.0)
+        close = getattr(self.adb, "close", None)
+        if close is not None:
+            close()  # stała sesja adb shell (zamykana w wątku bota - nie w trakcie akcji)
         logger.info("[%s] bot zatrzymany", self.config.name)
 
     # ------------------------------------------------------------------ #

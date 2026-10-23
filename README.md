@@ -299,6 +299,14 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   swipe / drag), `x`,`y`,`end_x`,`end_y` (piksele urządzenia), `points`, `path`
   (cały tor „x:y|x:y|…”), `duration_ms`, `hold_ms`, `turbo`, `drag_style`.
   Strona pokazuje ostatnie 300 wpisów wybranej instancji (odświeżane co 2 s).
+- **Szybsze akcje i pomiar wydajności** — tapnięcia, swipe'y i przeciągnięcia
+  idą przez jedną stale otwartą sesję `adb shell` zamiast osobnego procesu
+  adb.exe na każde kliknięcie (przy błędzie sesji bot na 60 s wraca do
+  osobnych wywołań). Strona Instancje (pod statystykami) i kafelki pokazują
+  średni czas zrzutu ekranu, narzut jednej akcji i liczbę zrzutów na sekundę.
+  Największy koszt to zwykle sam zrzut: przy ekranie 1080×1920 to ~8 MB na
+  klatkę, przy 540×960 ~2 MB - ustaw w LDPlayerze 540×960 (bot i tak pracuje
+  na 540 px).
 - **Interfejs 1.3** — boczna nawigacja (Przegląd / Instancje / Log akcji),
   kafle z podsumowaniem wszystkich instancji, kafelki instancji z plakietką
   stanu i siatką liczb, rzadsze akcje dla wszystkich w menu „Więcej”, wspólny
