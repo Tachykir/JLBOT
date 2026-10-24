@@ -1266,7 +1266,16 @@ class DustMineBot:
                 self._sleep(humanize.human_delay(0.15, 0.45))
                 continue
 
-            det = vision.detect_all(frame, region=self._region(), drop_hint=self._last_drop)
+            if screens.find_just_loot(frame) is not None:
+                # ekran z paskiem nawigacji (Profile, walka z JUST LOOT...) nigdy
+                # nie jest planszą ani minigrą - bez ciężkiego szukania kulek/DROP
+                det = vision.DetectionResult(None, [])
+            else:
+                # bez widocznego panelu planszy pomijamy szukanie kulek; co 4.
+                # klatkę pełne wykrywanie - na wypadek nietypowego wyglądu planszy
+                self._idle_frames = getattr(self, "_idle_frames", 0) + 1
+                det = vision.detect_all(frame, region=self._region(), drop_hint=self._last_drop,
+                                        require_panel=self._idle_frames % 4 != 0)
 
             if self._on_frame is not None:
                 self._on_frame(cfg.name, frame, det, "idle")

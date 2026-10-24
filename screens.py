@@ -18,12 +18,34 @@ Status weryfikacji (na prawdziwych zrzutach):
 
 from __future__ import annotations
 
+import functools
+import threading
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
 from vision import Circle, Rect
+
+# Pamięć wyników na klatkę: bot w jednym przebiegu pętli pyta o ten sam
+# ekran kilka razy (np. find_item_card w pętli idle i w wyborze kliknięcia),
+# a detektory są czystymi funkcjami klatki. Wynik jest pamiętany tylko dla
+# ostatniej klatki (ten sam obiekt), osobno w każdym wątku bota.
+_frame_cache = threading.local()
+
+
+def _per_frame(fn):
+    @functools.wraps(fn)
+    def wrapper(bgr):
+        if getattr(_frame_cache, "frame", None) is not bgr:
+            _frame_cache.frame = bgr
+            _frame_cache.results = {}
+        results = _frame_cache.results
+        if fn.__name__ not in results:
+            results[fn.__name__] = fn(bgr)
+        value = results[fn.__name__]
+        return list(value) if isinstance(value, list) else value
+    return wrapper
 
 
 def _components(mask: np.ndarray):
@@ -37,6 +59,7 @@ def _components(mask: np.ndarray):
 # Craft -> Loot Packs
 # --------------------------------------------------------------------- #
 
+@_per_frame
 def find_buy_button(bgr: np.ndarray) -> Rect | None:
     """
     Niebieski, pełny przycisk z ceną paczki ("60 Dust") pod licznikiem
@@ -92,6 +115,7 @@ class Dialog:
     cancel_button: tuple[int, int] | None = None  # pierwsze słowo (CANCEL), gdy przycisków >= 2
 
 
+@_per_frame
 def find_open_dialog(bgr: np.ndarray) -> Dialog | None:
     """
     Okno potwierdzenia "Open Seeker Pack ×N?" (systemowe okno Androida:
@@ -143,6 +167,7 @@ def find_open_dialog(bgr: np.ndarray) -> Dialog | None:
 # Pasek nawigacji: okrągły przycisk JUST LOOT
 # --------------------------------------------------------------------- #
 
+@_per_frame
 def find_just_loot(bgr: np.ndarray) -> Circle | None:
     """
     Duży, pełny, okrągły przycisk JUST LOOT na środku paska nawigacji
@@ -333,6 +358,7 @@ def _find_drop_choice(bgr: np.ndarray) -> list[Rect] | None:
     return rows[-4:] if len(rows) > 4 else rows
 
 
+@_per_frame
 def find_drop_choice(bgr: np.ndarray):
     """Panel wyboru dropu (patrz _find_drop_choice). Ekran Settings z
     wierszami auto-salvage (COMMON / RARE / ...) wygląda podobnie - nigdy
@@ -343,6 +369,7 @@ def find_drop_choice(bgr: np.ndarray):
     return rows
 
 
+@_per_frame
 def find_reveal_card(bgr: np.ndarray) -> Rect | None:
     """
     Zakryta karta dropu ("?", "TAP ANYWHERE TO REVEAL"): prawie kwadratowa,
@@ -377,6 +404,7 @@ def find_reveal_card(bgr: np.ndarray) -> Rect | None:
     return None
 
 
+@_per_frame
 def find_item_card(bgr: np.ndarray) -> Rect | None:
     """
     Odkryta karta przedmiotu z paczki ("TAP ANYWHERE TO CONTINUE"):
@@ -486,6 +514,7 @@ def _card_from_sides(bgr: np.ndarray, gray: np.ndarray, colored: np.ndarray) -> 
 # Inventory: przyciski "+x DUST" (rozebranie przedmiotu, przytrzymanie)
 # --------------------------------------------------------------------- #
 
+@_per_frame
 def find_salvage_buttons(bgr: np.ndarray) -> list[tuple[int, int]]:
     """
     Przyciski "+x DUST" na liście Inventory. Każdy to pionowy, jaśniejszy
@@ -548,6 +577,7 @@ def _salvage_buttons_right_edge(bgr: np.ndarray, y_top: int, y_bottom: int) -> l
 # Karty z paczek / koniec walki: szeroki przycisk przy dole
 # --------------------------------------------------------------------- #
 
+@_per_frame
 def find_wide_bottom_button(bgr: np.ndarray) -> Rect | None:
     """
     Szeroki, pełny, nasycony przycisk w dolnej części ekranu - "Next Card"
@@ -567,6 +597,7 @@ def find_wide_bottom_button(bgr: np.ndarray) -> Rect | None:
     return best
 
 
+@_per_frame
 def find_center_button(bgr: np.ndarray) -> Rect | None:
     """
     Pełny, nasycony przycisk na środku ekranu, węższy niż PROCEED - np.
@@ -793,6 +824,7 @@ def read_number(mask: np.ndarray) -> int | None:
     return int(digits)
 
 
+@_per_frame
 def find_depth_selector(bgr: np.ndarray) -> DepthSelector | None:
     H, W = bgr.shape[:2]
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -892,6 +924,7 @@ class Loadout:
     selected: bool
 
 
+@_per_frame
 def find_loadouts(bgr: np.ndarray) -> list[Loadout]:
     """
     Karty loadoutów w Profile (rząd zaokrąglonych kart pod kartą gracza):
@@ -1095,6 +1128,7 @@ def fight_depth(bgr: np.ndarray) -> int | None:
     return None
 
 
+@_per_frame
 def find_chat_close(bgr: np.ndarray) -> tuple[int, int] | None:
     """
     Okno czatu (napis "CHAT" u góry po lewej, zakładki GLOBAL / RAID /
@@ -1211,12 +1245,14 @@ def read_dust(bgr: np.ndarray) -> int | None:
     return read_number(yellow[ya:yb, x1:x2])
 
 
+@_per_frame
 def is_craft_screen(bgr: np.ndarray) -> bool:
     """Ekran Craft: trzy zakładki, pierwsza to LOOT PACKS."""
     tabs = find_craft_tabs(bgr)
     return bool(tabs) and len(tabs) == 3 and any(k in tabs[0].name for k in ("PACK", "LOOT", "LOO"))
 
 
+@_per_frame
 def find_settings_close(bgr: np.ndarray) -> tuple[int, int] | None:
     """
     Ekran Settings (tytuł u góry po lewej, "Close" u góry po prawej, pod
@@ -1267,6 +1303,7 @@ def find_settings_close(bgr: np.ndarray) -> tuple[int, int] | None:
     return (rx1 + rx2) // 2, (ry1 + ry2) // 2
 
 
+@_per_frame
 def find_season_pass_close(bgr: np.ndarray) -> tuple[int, int] | None:
     """
     Okno SEASON PASS: tytuł u góry, obramowany przycisk "Close" w prawym
@@ -1298,6 +1335,7 @@ def find_season_pass_close(bgr: np.ndarray) -> tuple[int, int] | None:
 # Ekrany przejściowe i wymagające uwagi gracza
 # --------------------------------------------------------------------- #
 
+@_per_frame
 def is_splash_screen(bgr: np.ndarray) -> bool:
     """Żółty ekran startowy gry z logo (także przyciemniony w trakcie
     przejścia)."""
@@ -1306,6 +1344,7 @@ def is_splash_screen(bgr: np.ndarray) -> bool:
     return float(yellow.mean()) > 0.6
 
 
+@_per_frame
 def is_loading_save(bgr: np.ndarray) -> bool:
     """"Loading your save…" / inne ładowanie: ciemny ekran z małym blokiem
     tekstu (i kółkiem ładowania) na środku, poza tym pusto."""
@@ -1327,6 +1366,7 @@ def is_loading_save(bgr: np.ndarray) -> bool:
     return 0.3 <= top and bottom <= 0.7 and xs.min() > 0.03 * W and xs.max() < 0.97 * W
 
 
+@_per_frame
 def is_login_screen(bgr: np.ndarray) -> bool:
     """
     "Create your account" / logowanie: szeroki, wypełniony turkusowy
@@ -1355,6 +1395,7 @@ def is_login_screen(bgr: np.ndarray) -> bool:
     return False
 
 
+@_per_frame
 def find_disabled_action_button(bgr: np.ndarray) -> Circle | None:
     """
     Przygaszony przycisk na środku paska nawigacji (np. "JUST HUNT", gdy w

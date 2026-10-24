@@ -565,16 +565,24 @@ def board_drop_hint(bgr: np.ndarray) -> Circle | None:
 
 
 def detect_all(bgr: np.ndarray, region: tuple[int, int, int, int] | None = None,
-               in_debris_game: bool = False, drop_hint: Circle | None = None) -> DetectionResult:
+               in_debris_game: bool = False, drop_hint: Circle | None = None,
+               require_panel: bool = False) -> DetectionResult:
     """
     Pełna detekcja ekranu: "Dust Mine" (kulki + DROP) oraz minigry
     "Depth Collapse" (kafelki) i "Fishing Hole" (przycisk CAST).
     Współrzędne we współrzędnych PEŁNEGO screenshotu.
+
+    require_panel: bez ręcznego `region` szukaj kulek i DROP tylko, gdy
+    widać panel planszy (board_panel) - na innych ekranach pomija
+    najdroższą część (Hough), bo planszy Dust Mine tam nie ma.
     """
-    # w idle podpowiedź DROP jest tylko dodatkowym kandydatem - ekran musi
-    # sam potwierdzić, że to Dust Mine
-    det = detect(bgr, region, drop_hint=drop_hint, use_hint_as_fallback=False)
-    if det.drop is None and region is None:
+    if require_panel and region is None and board_panel(bgr) is None:
+        det = DetectionResult(drop=None, balls=[])
+    else:
+        # w idle podpowiedź DROP jest tylko dodatkowym kandydatem - ekran musi
+        # sam potwierdzić, że to Dust Mine
+        det = detect(bgr, region, drop_hint=drop_hint, use_hint_as_fallback=False)
+    if det.drop is None and region is None:  # (bez panelu board_drop_hint i tak zwraca None)
         # DROP mocno zasłonięty kulkami (np. zaraz po starcie bota, bez
         # znanej pozycji): spróbuj w miejscu, gdzie leży na planszy
         board_hint = board_drop_hint(bgr)
