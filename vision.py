@@ -444,7 +444,7 @@ def _find_debris_tiles(bgr: np.ndarray, screen_width: int | None = None, in_game
 # --------------------------------------------------------------------- #
 
 # Cyjan przycisku (zmierzone: H=93-95, S~130-150, V~245).
-_CAST_HSV_LO = (80, 90, 150)
+_CAST_HSV_LO = (80, 50, 150)  # S od 50: krawędź ramki bywa wygładzona prawie do bieli
 _CAST_HSV_HI = (100, 255, 255)
 
 

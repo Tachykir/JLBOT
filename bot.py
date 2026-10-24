@@ -1363,6 +1363,8 @@ class DustMineBot:
             return "otwarty czat"
         if screens.find_settings_close(frame) is not None:
             return "otwarte Settings"
+        if screens.find_season_pass_close(frame) is not None:
+            return "otwarty Season Pass"
         return None
 
     _push_depth_pending = False
@@ -1598,6 +1600,13 @@ class DustMineBot:
         if close is not None:
             logger.info("[%s] otwarte Settings - zamykam", cfg.name)
             self._act("Otwarte Settings – klikam Close")
+            return humanize.random_point_in_circle(*close, 0.015 * frame.shape[1])
+
+        # okno SEASON PASS - też zamykane przyciskiem "Close"
+        close = screens.find_season_pass_close(frame)
+        if close is not None:
+            logger.info("[%s] otwarty Season Pass - zamykam", cfg.name)
+            self._act("Otwarty Season Pass – klikam Close")
             return humanize.random_point_in_circle(*close, 0.015 * frame.shape[1])
 
         # wybór przedmiotu z dropu (Replace / ... / Keep Current)

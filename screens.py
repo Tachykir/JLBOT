@@ -443,6 +443,42 @@ def _find_outlined_card(bgr: np.ndarray, gray: np.ndarray, bg: float) -> Rect | 
         if find_just_loot(bgr) is not None:
             return None
         return Rect(int(x), int(y), int(w), int(h))
+    return _card_from_sides(bgr, gray, colored)
+
+
+def _card_from_sides(bgr: np.ndarray, gray: np.ndarray, colored: np.ndarray) -> Rect | None:
+    """
+    Cienka (1-2 px) ramka karty mythic: na zaokrąglonych rogach jest
+    wygładzona prawie do tła, więc boki są osobnymi składowymi. Składamy
+    kartę z dwóch poziomych i dwóch pionowych odcinków.
+    """
+    H, W = bgr.shape[:2]
+    comps = list(_components(colored))
+    horiz = [c for c in comps if c[2] >= 0.4 * W and c[3] <= 0.03 * W]
+    vert = [c for c in comps if c[3] >= 0.4 * W and c[2] <= 0.03 * W]
+    tol = 0.04 * W
+    for top in horiz:
+        for bottom in horiz:
+            if bottom[1] <= top[1]:
+                continue
+            x1, x2 = min(top[0], bottom[0]), max(top[0] + top[2], bottom[0] + bottom[2])
+            w, h = x2 - x1, bottom[1] + bottom[3] - top[1]
+            if abs(top[2] - bottom[2]) > tol or not (0.4 * W <= w <= 0.88 * W and 0.9 <= h / w <= 2.3):
+                continue
+            if abs((x1 + x2) / 2 - W / 2) > 0.05 * W:
+                continue
+            def side(at_x):
+                return any(abs(v[0] + v[2] / 2 - at_x) <= tol and v[3] >= 0.8 * h
+                           and v[1] >= top[1] - tol and v[1] + v[3] <= bottom[1] + bottom[3] + tol for v in vert)
+            if not (side(x1) and side(x2)):
+                continue
+            y = top[1]
+            inner = gray[y + 8:y + h - 8, x1 + 8:x2 - 8]
+            if inner.size == 0 or not (0.003 <= float((inner > 120).mean()) <= 0.2):
+                continue
+            if find_just_loot(bgr) is not None:
+                return None
+            return Rect(int(x1), int(y), int(w), int(h))
     return None
 
 
@@ -1229,6 +1265,33 @@ def find_settings_close(bgr: np.ndarray) -> tuple[int, int] | None:
     ry1 = min(c[1] for c in right)
     ry2 = max(c[1] + c[3] for c in right)
     return (rx1 + rx2) // 2, (ry1 + ry2) // 2
+
+
+def find_season_pass_close(bgr: np.ndarray) -> tuple[int, int] | None:
+    """
+    Okno SEASON PASS: tytuł u góry, obramowany przycisk "Close" w prawym
+    górnym rogu, pod nim linia na całą szerokość i dwie zakładki
+    (TRACK / SHOP) obok siebie, każda na pół ekranu. Zwraca środek "Close".
+    """
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    top = gray[:int(0.13 * H)]
+    bg = float(np.median(top[:int(0.04 * H)]))
+    if bg > 40:
+        return None
+    comps = list(_components((top > bg + 10).astype(np.uint8)))
+    close = [c for c in comps if c[0] >= 0.78 * W and c[1] < 0.03 * H and 0.08 * W <= c[2] <= 0.16 * W
+             and 0.04 * W <= c[3] <= 0.09 * W]
+    line = [c for c in comps if c[2] >= 0.95 * W and c[3] <= 3]
+    tabs = [c for c in comps if 0.4 * W <= c[2] <= 0.5 * W and 0.04 * W <= c[3] <= 0.14 * W]
+    if not close or not line:
+        return None
+    left = [t for t in tabs if t[0] < 0.1 * W]
+    right = [t for t in tabs if t[0] + t[2] > 0.9 * W]
+    if not any(abs(a[1] - b[1]) <= 0.01 * H and a[1] > line[0][1] for a in left for b in right):
+        return None
+    x, y, w, h, _a = close[0]
+    return x + w // 2, y + h // 2
 
 
 # --------------------------------------------------------------------- #
