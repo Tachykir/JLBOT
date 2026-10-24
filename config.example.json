@@ -3,8 +3,10 @@
     {
       "serial": "127.0.0.1:5555",
       "name": "instance-1",
-      "idle_point": [436, 1488],
-      "board_region": [29, 333, 861, 1466],
+      "idle_point": [
+        436,
+        1488
+      ],
       "idle_click_interval": 1.0,
       "drag_duration_ms": 1000,
       "between_drags_delay": 0.75,
@@ -20,20 +22,26 @@
     {
       "serial": "127.0.0.1:5557",
       "name": "instance-2",
-      "idle_point": [436, 1488],
-      "board_region": [29, 333, 861, 1466]
+      "idle_point": [
+        436,
+        1488
+      ]
     },
     {
       "serial": "127.0.0.1:5559",
       "name": "instance-3",
-      "idle_point": [436, 1488],
-      "board_region": [29, 333, 861, 1466]
+      "idle_point": [
+        436,
+        1488
+      ]
     },
     {
       "serial": "127.0.0.1:5561",
       "name": "instance-4",
-      "idle_point": [436, 1488],
-      "board_region": [29, 333, 861, 1466]
+      "idle_point": [
+        436,
+        1488
+      ]
     }
   ]
 }

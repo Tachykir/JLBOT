@@ -19,7 +19,10 @@
 ;   do rozesłania.
 
 #define MyAppName "Dust Mine Bot"
-#define MyAppVersion "1.0.0"
+; build_installer.bat podaje wersje z version.py (/DMyAppVersion=...)
+#ifndef MyAppVersion
+  #define MyAppVersion "1.4.0"
+#endif
 #define MyAppPublisher "Twoja nazwa / pseudonim"
 #define MyAppExeName "DustMineBot.exe"
 #define MyBuildDir "dist\DustMineBot"
@@ -80,3 +83,4 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 ; użytkownika) - dostosuj ścieżkę, jeśli config trafia gdzie indziej
 ; (np. %APPDATA%).
 Type: filesandordirs; Name: "{app}\config.json"
+Type: filesandordirs; Name: "{app}\unknown_screens"

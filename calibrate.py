@@ -39,6 +39,7 @@ import sys
 import cv2
 import numpy as np
 
+import screens
 import vision
 from adb_controller import ADBController
 
@@ -53,6 +54,13 @@ def draw_detection(img: np.ndarray, det: vision.DetectionResult) -> np.ndarray:
         cv2.circle(vis, b.center, b.r, (0, 255, 0), 3)
         cv2.putText(vis, str(i), (b.x - 10, b.y + 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+    for t in det.tiles:
+        cv2.rectangle(vis, (t.x, t.y), (t.x + t.w, t.y + t.h), (0, 165, 255), 3)
+    for x, y in det.tile_taps:
+        cv2.drawMarker(vis, (x, y), (0, 165, 255), markerType=cv2.MARKER_CROSS, markerSize=24, thickness=3)
+    if det.cast_button is not None:
+        c = det.cast_button
+        cv2.rectangle(vis, (c.x, c.y), (c.x + c.w, c.y + c.h), (255, 255, 0), 3)
     return vis
 
 
@@ -100,8 +108,37 @@ def main() -> None:
             parser.error("--region musi mieć format x1,y1,x2,y2")
         region = tuple(parts)
 
-    det = vision.detect(img, region=region)
+    det = vision.detect_all(img, region=region)
 
+    print(f"Rozpoznany ekran: {vision.screen_kind(det) or '(żaden)'}")
+    # ekrany paczek / profilu / walki (screens.py) - na pełnym obrazie
+    print(f"Przycisk JUST LOOT: {screens.find_just_loot(img)}")
+    print(f"Drop po walce - panel wyboru: {screens.find_drop_choice(img)}")
+    print(f"Drop po walce - zakryta karta: {screens.find_reveal_card(img)}")
+    print(f"Karta z paczki (tap anywhere): {screens.find_item_card(img)}")
+    print(f"Przycisk na środku (Done po paczkach): {screens.find_center_button(img)}")
+    print(f"Inventory - przyciski „+x DUST”: {screens.find_salvage_buttons(img)}")
+    buy = screens.find_buy_button(img)
+    print(f"Craft - przycisk z ceną: {buy}")
+    if buy is not None:
+        print(f"Craft - przycisk '+': {screens.find_plus_button(img, buy)}")
+    dialog = screens.find_open_dialog(img)
+    print(f"Okno potwierdzenia: {dialog}")
+    wide = screens.find_wide_bottom_button(img)
+    print(f"Szeroki przycisk na dole (Next Card / PROCEED): {wide}")
+    print(f"Porażka (Defeated.): {screens.has_defeat_text(img, wide)}")
+    print(f"Wygrana (Victory.): {screens.has_victory_text(img, wide)}")
+    sel = screens.find_depth_selector(img)
+    if sel is not None:
+        print(f"Wybór głębokości: układ {sel.kind}, wybrana {sel.current}, "
+              f"widoczne {[t.number for t in sel.tiles]}")
+    else:
+        print("Wybór głębokości: nie znaleziono")
+    warning = screens.frontier_warning(img)
+    print("Profile - wrogowie mają bonus: "
+          + {True: "TAK (gear za słaby)", False: "nie (normal strength)", None: "nie znaleziono selektora głębokości"}[warning])
+    print(f"Kafelki Depth Collapse: {len(det.tile_taps)} {det.tile_taps}")
+    print(f"Przycisk CAST: {det.cast_button}")
     print(f"DROP: {det.drop}")
     print(f"Znaleziono kulek: {len(det.balls)}")
     for i, b in enumerate(det.balls):
