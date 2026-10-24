@@ -237,6 +237,16 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   tylko na widocznej karcie (szczegóły ~5×/s, miniatury 2×/s).
   Najwięcej daje jednak sam emulator: niższa rozdzielczość (np. 540×960)
   i FPS (np. 30) w ustawieniach LDPlayera.
+- **Suwaki szybkości** (Tempo → Szybkość; `speed_board_pct`,
+  `speed_react_pct`, `speed_tap_pct`, 25–400 %, domyślnie 100) — mnożą czasy
+  swojej grupy, także w turbo: plansza (przeciąganie, przytrzymanie na DROP,
+  przerwy między kulkami), reakcja i przejścia (czas reakcji, kafelki minigier,
+  pozostałe przerwy), tapanie w walce. 200 % = czasy o połowę krótsze.
+  Przeciągnięcie (150 ms) i przytrzymanie na DROP (80 ms) mają minimum, przy
+  którym kulka jeszcze trafia. Czasy samej gry się nie zmieniają.
+- **Restart po nieznanym ekranie** (`restart_on_unknown`, domyślnie włączony;
+  Ochrona → Nieznane ekrany) — po `unknown_screen_after_s` na nierozpoznanym
+  ekranie bot zapisuje zrzut i restartuje grę.
 - **Obraz przez scrcpy** (`capture_method`, domyślnie `"scrcpy"`; GUI:
   Tempo → Wydajność → „Obraz z emulatora”) — zamiast `screencap` przy
   każdej klatce bot uruchamia na emulatorze serwer scrcpy 3.1

@@ -21,7 +21,7 @@
 #define MyAppName "Dust Mine Bot"
 ; build_installer.bat podaje wersje z version.py (/DMyAppVersion=...)
 #ifndef MyAppVersion
-  #define MyAppVersion "1.4.0"
+  #define MyAppVersion "1.5.0"
 #endif
 #define MyAppPublisher "Twoja nazwa / pseudonim"
 #define MyAppExeName "DustMineBot.exe"

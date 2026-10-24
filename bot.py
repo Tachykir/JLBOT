@@ -130,6 +130,9 @@ class BotConfig:
     # - żeby można je było przesłać i dodać ich obsługę.
     save_unknown_screens: bool = True
     unknown_screen_after_s: float = 30.0
+    # Po `unknown_screen_after_s` na nierozpoznanym ekranie (i zapisaniu
+    # zrzutu) restartuje grę zamiast czekać - bot wraca do znanego stanu.
+    restart_on_unknown: bool = True
     # Log akcji do CSV (action_logs obok programu): każde tapnięcie, swipe,
     # przeciągnięcie i przytrzymanie z czasem, ekranem i torem.
     action_log: bool = False
@@ -197,6 +200,11 @@ class BotConfig:
     # kliknięcie obok kafelka. Kosztuje tylko chwilę (bot poprawia), a
     # 100% skuteczności wygląda nieludzko. 0 = wyłączone.
     mistake_chance: float = 0.03
+    # Suwaki tempa w procentach (100 = jak w ustawieniach, 200 = 2x szybciej,
+    # 50 = 2x wolniej). Mnożą czasy swojej grupy (SPEED_GROUPS), także w turbo.
+    speed_board_pct: int = 100
+    speed_react_pct: int = 100
+    speed_tap_pct: int = 100
 
     # Tryb turbo: maksymalna szybkość zamiast "ludzkiego" tempa - zamiast
     # ustawień z zakładki Tempo bot używa TURBO_TIMING (minimalne przerwy,
@@ -435,11 +443,15 @@ class BotConfig:
             ("foreground_lost_timeout", float),
             ("max_drag_attempts_per_ball", int),
             ("mistake_chance", float),
+            ("speed_board_pct", int),
+            ("speed_react_pct", int),
+            ("speed_tap_pct", int),
             ("salvage_when_full", bool),
             ("idle_fallback_enabled", bool),
             ("save_unknown_screens", bool),
             ("action_log", bool),
             ("unknown_screen_after_s", float),
+            ("restart_on_unknown", bool),
             ("salvage_items", int),
             ("play_debris", bool),
             ("skip_fishing", bool),
@@ -512,6 +524,7 @@ class BotConfig:
             "save_unknown_screens": self.save_unknown_screens,
             "action_log": self.action_log,
             "unknown_screen_after_s": self.unknown_screen_after_s,
+            "restart_on_unknown": self.restart_on_unknown,
             "drop_choice": self.drop_choice,
             "salvage_when_full": self.salvage_when_full,
             "salvage_items": self.salvage_items,
@@ -525,6 +538,9 @@ class BotConfig:
             "reaction_delay": self.reaction_delay.to_dict(),
             "tap_hold_ms": self.tap_hold_ms.to_dict(),
             "mistake_chance": self.mistake_chance,
+            "speed_board_pct": self.speed_board_pct,
+            "speed_react_pct": self.speed_react_pct,
+            "speed_tap_pct": self.speed_tap_pct,
             "between_drags_delay": self.between_drags_delay.to_dict(),
             "empty_detections_to_exit": self.empty_detections_to_exit,
             "max_seconds_per_game_screen": self.max_seconds_per_game_screen,
@@ -593,6 +609,56 @@ TURBO_TIMING = {
 }
 # pozostałe przerwy (_sleep) w turbo są tyle razy krótsze
 TURBO_SLEEP_FACTOR = 0.3
+
+# Suwaki tempa: które czasy należą do którego suwaka (pole BotConfig).
+# Pozostałe przerwy (_sleep) idą za suwakiem "reakcja i przejścia".
+SPEED_GROUPS = {
+    "drag_duration_ms": "speed_board_pct",
+    "drag_end_hold_ms": "speed_board_pct",
+    "between_drags_delay": "speed_board_pct",
+    "reaction_delay": "speed_react_pct",
+    "tile_tap_delay": "speed_react_pct",
+    "idle_poll_interval": "speed_react_pct",
+    "idle_click_interval": "speed_tap_pct",
+    "tap_hold_ms": "speed_tap_pct",
+}
+SPEED_MIN_PCT, SPEED_MAX_PCT = 25, 400
+# Przyspieszanie nie schodzi poniżej tych wartości (gra przesuwa kulkę za
+# palcem z opóźnieniem - za krótkie przeciągnięcie / przytrzymanie = kulka
+# nie dojeżdża do DROP; za krótki tap gra może zignorować).
+SPEED_FLOORS = {
+    "drag_duration_ms": 150.0,
+    "drag_end_hold_ms": 80.0,
+    "tap_hold_ms": 10.0,
+    "idle_click_interval": 0.08,
+    "idle_poll_interval": 0.05,
+}
+
+
+def speed_factor(pct) -> float:
+    """Mnożnik czasu z suwaka: 200 % -> 0.5 (czasy o połowę krótsze)."""
+    try:
+        pct = int(pct)
+    except (TypeError, ValueError):
+        return 1.0
+    return 100.0 / min(SPEED_MAX_PCT, max(SPEED_MIN_PCT, pct))
+
+
+def scale_timing(name: str, value, factor: float):
+    """Czas `value` (RandomRange albo liczba) przemnożony przez `factor`, przy
+    przyspieszaniu nie krótszy niż SPEED_FLOORS (ani niż wartość wyjściowa,
+    jeśli była już niższa)."""
+    if factor == 1.0:
+        return value
+    floor = SPEED_FLOORS.get(name, 0.0)
+
+    def one(v: float) -> float:
+        scaled = v * factor
+        return max(scaled, min(floor, v)) if factor < 1.0 else scaled
+
+    if isinstance(value, RandomRange):
+        return RandomRange(one(value.min), one(value.max))
+    return one(float(value))
 
 
 @dataclass
@@ -677,6 +743,7 @@ class DustMineBot:
         self._last_drop_choice = 0.0
         self._unknown_since: float | None = None   # od kiedy ekran nierozpoznany
         self._unknown_saved = False
+        self._unknown_restart = False               # restart po nieznanym ekranie zgłoszony
         self._inventory_full = False            # po "Inventory Full": Salvage na ekranie dropu
         self._inventory_salvage_pending = False # potem: rozebrać przedmioty w Inventory
         self._forced_salvage: int | None = None # ręczne żądanie z GUI: ile przedmiotów
@@ -748,20 +815,28 @@ class DustMineBot:
     def _stop(self) -> bool:
         return self._stop_event.is_set()
 
-    def _sleep(self, seconds: float, fixed: bool = False) -> bool:
+    def _sleep(self, seconds: float, fixed: bool = False, speed_scaled: bool = False) -> bool:
         """Śpi `seconds` sekund albo do wywołania stop(). Zwraca True, jeśli
         przerwano przez stop(). W trybie turbo przerwy są krótsze, chyba że
         `fixed` (np. czekanie na start gry po restarcie, przerwa harmonogramu)."""
         self._play_tick()
         if not fixed and getattr(self.config, "turbo", False):
             seconds *= TURBO_SLEEP_FACTOR
+        if not fixed and not speed_scaled:  # speed_scaled: czas z _t(), suwak już policzony
+            seconds *= speed_factor(getattr(self.config, "speed_react_pct", 100))
         return self._stop_event.wait(max(0.0, seconds))
 
     def _t(self, name: str):
-        """Ustawienie tempa: z TURBO_TIMING w trybie turbo, inaczej z configu."""
+        """Ustawienie tempa: z TURBO_TIMING w trybie turbo, inaczej z configu,
+        przemnożone przez suwak tempa swojej grupy (SPEED_GROUPS)."""
         if getattr(self.config, "turbo", False) and name in TURBO_TIMING:
-            return TURBO_TIMING[name]
-        return getattr(self.config, name)
+            value = TURBO_TIMING[name]
+        else:
+            value = getattr(self.config, name)
+        group = SPEED_GROUPS.get(name)
+        if group is None:
+            return value
+        return scale_timing(name, value, speed_factor(getattr(self.config, group, 100)))
 
     def pause(self) -> None:
         """Wstrzymuje klikanie/przeciąganie, ale wątek nadal robi
@@ -973,6 +1048,11 @@ class DustMineBot:
         if self._manual_restart_requested:
             self._manual_restart_requested = False
             if self._do_restart_app("ręczne żądanie z GUI"):
+                return True
+        if getattr(self, "_unknown_restart", False) and self._unknown_since is not None:
+            elapsed = time.monotonic() - self._unknown_since
+            self._note_unknown(None)  # nowy licznik po restarcie
+            if self._do_restart_app(f"nieznany ekran od {elapsed:.0f} s"):
                 return True
         if self._check_foreground_watchdog():
             return True
@@ -1429,28 +1509,34 @@ class DustMineBot:
     def _react(self) -> None:
         """Czas reakcji na nowy ekran (plansza / minigra)."""
         rd = self._t("reaction_delay")
-        self._sleep(humanize.human_delay(rd.min, rd.max))
+        self._sleep(humanize.human_delay(rd.min, rd.max), speed_scaled=True)
 
     def _mistake(self) -> bool:
         return random.random() < self._t("mistake_chance")
 
     def _note_unknown(self, frame: np.ndarray | None) -> None:
         """Liczy, jak długo ekran pozostaje nierozpoznany (frame=None =
-        rozpoznany); po `unknown_screen_after_s` zapisuje jeden zrzut."""
+        rozpoznany); po `unknown_screen_after_s` zapisuje jeden zrzut i
+        (restart_on_unknown) zgłasza restart gry - wykona go _check_watchdogs."""
         cfg = self.config
         if frame is None:
             self._unknown_since = None
             self._unknown_saved = False
+            self._unknown_restart = False
             return
         now = time.monotonic()
         if self._unknown_since is None:
             self._unknown_since = now
             return
-        if (not cfg.save_unknown_screens or self._unknown_saved
-                or now - self._unknown_since < cfg.unknown_screen_after_s):
+        elapsed = now - self._unknown_since
+        if elapsed < cfg.unknown_screen_after_s:
             return
-        self._unknown_saved = True
-        self._save_debug_frame(frame, f"nie rozpoznaję ekranu od {now - self._unknown_since:.0f} s")
+        if cfg.save_unknown_screens and not self._unknown_saved:
+            self._unknown_saved = True
+            self._save_debug_frame(frame, f"nie rozpoznaję ekranu od {elapsed:.0f} s")
+        if getattr(cfg, "restart_on_unknown", False) and not getattr(self, "_unknown_restart", False):
+            self._unknown_restart = True
+            logger.warning("[%s] nieznany ekran od %.0f s - restartuję grę", cfg.name, elapsed)
 
     def _save_debug_frame(self, frame: np.ndarray, reason: str) -> None:
         """Zapisuje zrzut do folderu unknown_screens (do diagnozy)."""
@@ -1708,7 +1794,7 @@ class DustMineBot:
                 else:
                     self._tap(*humanize.random_point_in_circle(x, y, radius))
                 tapped += 1
-                self._sleep(humanize.human_delay(self._t("tile_tap_delay").min, self._t("tile_tap_delay").max))
+                self._sleep(humanize.human_delay(self._t("tile_tap_delay").min, self._t("tile_tap_delay").max), speed_scaled=True)
 
     def _skip_fishing(self) -> None:
         """Minigra "Fishing Hole": od razu klika CAST (bez celowania),
@@ -1978,4 +2064,4 @@ class DustMineBot:
             self.stats.drags += 1
             balls_before_drag = len(det.balls)
 
-            self._sleep(humanize.human_delay(self._t("between_drags_delay").min, self._t("between_drags_delay").max))
+            self._sleep(humanize.human_delay(self._t("between_drags_delay").min, self._t("between_drags_delay").max), speed_scaled=True)

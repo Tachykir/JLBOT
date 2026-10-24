@@ -36,11 +36,11 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton, QLabel, QLineEdit, QSpinBox,
     QDoubleSpinBox, QPlainTextEdit, QSplitter, QGroupBox, QMessageBox, QFileDialog,
     QTimeEdit, QCheckBox, QDialog, QDialogButtonBox, QScrollArea, QFrame, QTabWidget, QComboBox,
-    QInputDialog, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QInputDialog, QStackedWidget, QSlider, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 
 from bot import (BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS, DROP_CHOICES, DEPTH_MODES,
-                 unknown_screens_dir)
+                 SPEED_MIN_PCT, SPEED_MAX_PCT, unknown_screens_dir)
 from gui_worker import BotWorker, SnapshotWorker
 from preview_widget import PreviewWidget, EditMode
 from dashboard import DashboardWidget
@@ -485,6 +485,30 @@ class MainWindow(QMainWindow):
         container = QWidget(); container.setLayout(row)
         return spin_min, spin_max, container
 
+    @staticmethod
+    def speed_text(pct: int) -> str:
+        if pct == 100:
+            return "100 % · bez zmian"
+        return f"{pct} % · " + (f"{pct / 100:.2g}× szybciej" if pct > 100 else f"{100 / pct:.2g}× wolniej").replace(".", ",")
+
+    def _speed_row(self):
+        """Suwak tempa w procentach (100 % = czasy jak w ustawieniach)."""
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(SPEED_MIN_PCT, SPEED_MAX_PCT)
+        slider.setSingleStep(5); slider.setPageStep(25)
+        slider.setValue(100)
+        label = QLabel(self.speed_text(100)); label.setMinimumWidth(130)
+        slider.speed_label = label  # napis odświeżany też przy wczytaniu (sygnały są wtedy zablokowane)
+        slider.valueChanged.connect(lambda v: label.setText(self.speed_text(v)))
+        slider.valueChanged.connect(self._apply_config_fields)
+        reset = QPushButton("100 %"); reset.setToolTip("Przywróć tempo z ustawień")
+        reset.clicked.connect(lambda: slider.setValue(100))
+        row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("wolniej")); row.addWidget(slider, 1); row.addWidget(QLabel("szybciej"))
+        row.addWidget(label); row.addWidget(reset)
+        container = QWidget(); container.setLayout(row)
+        return slider, container
+
     def _build_ui(self) -> None:
         self._build_toolbar()
 
@@ -904,6 +928,21 @@ class MainWindow(QMainWindow):
         self.field_turbo.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_turbo)
 
+        form.addRow(self._section("Szybkość"))
+        self.field_speed_board, box = self._speed_row()
+        box.setToolTip("Przeciąganie kulek, przytrzymanie na DROP i przerwy między przeciągnięciami")
+        form.addRow("Plansza (kulki):", box)
+        self.field_speed_react, box = self._speed_row()
+        box.setToolTip("Czas reakcji na nowy ekran, kafelki minigier i pozostałe przerwy między akcjami")
+        form.addRow("Reakcja i przejścia:", box)
+        self.field_speed_tap, box = self._speed_row()
+        box.setToolTip("Odstęp między tapnięciami JUST LOOT w walce i długość tapnięcia")
+        form.addRow("Tapanie w walce:", box)
+        form.addRow(self._hint("Suwaki mnożą czasy poniżej (i w turbo): 200 % = czasy o połowę krótsze, "
+                               "50 % = dwa razy dłuższe. Przeciągnięcie i przytrzymanie na DROP nie schodzą "
+                               "poniżej minimum, przy którym kulka jeszcze trafia. Czasy gry (walka, "
+                               "animacje, ładowanie) się nie zmieniają."))
+
         self.field_idle_interval_min, self.field_idle_interval_max, box = self._range_row(0.1, 30.0, 0.1, " s")
         form.addRow("Odstęp między kliknięciami:", box)
         self.field_drag_ms_min, self.field_drag_ms_max, box = self._range_row(50, 5000, 50, " ms", decimals=0)
@@ -1126,6 +1165,11 @@ class MainWindow(QMainWindow):
         self.field_unknown_after.setSuffix(" s"); self.field_unknown_after.setDecimals(0)
         self.field_unknown_after.valueChanged.connect(self._apply_config_fields)
         form.addRow("Po jakim czasie:", self.field_unknown_after)
+        self.field_restart_unknown = QCheckBox("Potem zrestartuj grę")
+        self.field_restart_unknown.setToolTip("Po tym czasie na nierozpoznanym ekranie bot zapisuje zrzut "
+                                              "(jeśli włączone) i restartuje grę, zamiast czekać")
+        self.field_restart_unknown.toggled.connect(self._apply_config_fields)
+        form.addRow(self.field_restart_unknown)
         form.addRow(self._hint("Zrzut trafia do folderu unknown_screens obok programu, a w logu pojawia "
                                "się ostrzeżenie. Prześlij go, żeby dodać obsługę tego ekranu."))
         open_dir = QPushButton("📁 Otwórz folder unknown_screens")
@@ -1429,6 +1473,7 @@ class MainWindow(QMainWindow):
                 self.field_salvage_hold_max,
                 self.field_black_timeout, self.field_fg_lost, self.field_settle,
                 self.field_idle_fallback, self.field_save_unknown, self.field_unknown_after,
+                self.field_restart_unknown, self.field_speed_board, self.field_speed_react, self.field_speed_tap,
                 *[pw[1] for pw in self.point_widgets.values()])
 
     def _load_fields_from_entry(self, entry: InstanceEntry) -> None:
@@ -1496,6 +1541,12 @@ class MainWindow(QMainWindow):
             self.field_idle_fallback.setChecked(cfg.idle_fallback_enabled)
             self.field_save_unknown.setChecked(cfg.save_unknown_screens)
             self.field_unknown_after.setValue(cfg.unknown_screen_after_s)
+            self.field_restart_unknown.setChecked(cfg.restart_on_unknown)
+            self.field_speed_board.setValue(cfg.speed_board_pct)
+            self.field_speed_react.setValue(cfg.speed_react_pct)
+            self.field_speed_tap.setValue(cfg.speed_tap_pct)
+            for slider in (self.field_speed_board, self.field_speed_react, self.field_speed_tap):
+                slider.speed_label.setText(self.speed_text(slider.value()))
             for key, (value, radius, _pick, _reset) in self.point_widgets.items():
                 x, y, r = getattr(cfg, key)
                 value.setText(f"x {x * 100:.1f}% · y {y * 100:.1f}% ekranu"
@@ -1534,7 +1585,8 @@ class MainWindow(QMainWindow):
                                                           or bool(self.field_loadout.text().strip())))
         fallback = self.field_idle_fallback.isChecked() or not self.field_idle_just_loot.isChecked()
         self.idle_point_box.setVisible(fallback)
-        self.field_unknown_after.setEnabled(enabled and self.field_save_unknown.isChecked())
+        self.field_unknown_after.setEnabled(enabled and (self.field_save_unknown.isChecked()
+                                                         or self.field_restart_unknown.isChecked()))
         salvage = enabled and self.field_salvage_full.isChecked()
         for w in (self.field_salvage_items, self.field_salvage_hold_min, self.field_salvage_hold_max):
             w.setEnabled(salvage)
@@ -1658,6 +1710,10 @@ class MainWindow(QMainWindow):
         cfg.idle_fallback_enabled = self.field_idle_fallback.isChecked()
         cfg.save_unknown_screens = self.field_save_unknown.isChecked()
         cfg.unknown_screen_after_s = self.field_unknown_after.value()
+        cfg.restart_on_unknown = self.field_restart_unknown.isChecked()
+        cfg.speed_board_pct = self.field_speed_board.value()
+        cfg.speed_react_pct = self.field_speed_react.value()
+        cfg.speed_tap_pct = self.field_speed_tap.value()
         for key, (_value, radius, _pick, _reset) in self.point_widgets.items():
             x, y, _r = getattr(cfg, key)
             setattr(cfg, key, (x, y, radius.value() / 100.0))
