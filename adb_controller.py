@@ -203,11 +203,11 @@ class ADBController:
                 done = True
             except (TimeoutError, RuntimeError) as e:
                 # polecenie mogło się już (częściowo) wykonać - nie powtarzamy go
-                self.close()
+                self._close_shell()
                 raise ADBError(f"[{self.serial}] akcja przez adb shell nie powiodła się: {e}") from e
             except (OSError, EOFError) as e:
                 logger.warning("[%s] sesja adb shell: %s - wracam do osobnych wywołań na 60 s", self.serial, e)
-                self.close()
+                self._close_shell()
                 self._shell_retry_at = time.monotonic() + 60
         if not done:
             self._run(["shell"] + args, timeout=timeout)
@@ -215,7 +215,11 @@ class ADBController:
             self._perf("input_ms", (time.monotonic() - start) * 1000)
 
     def close(self) -> None:
-        """Zamyka stałą sesję (przy zatrzymaniu bota)."""
+        """Zamyka stałą sesję i strumień obrazu (przy zatrzymaniu bota)."""
+        self._close_shell()
+        self._close_stream()
+
+    def _close_shell(self) -> None:
         if self._shell is not None:
             self._shell.close()
             self._shell = None
@@ -488,12 +492,89 @@ class ADBController:
     # Wyjście: screenshot
     # ------------------------------------------------------------------ #
     device_width = 0   # szerokość ekranu urządzenia z ostatniego zrzutu
+    # obraz przez scrcpy (strumień wideo) zamiast screencap - patrz enable_stream
+    stream = None
+    _stream_cfg: tuple[int, int] | None = None     # (szerokość przetwarzania, kl./s)
+    _stream_retry_at = 0.0
+    _device_size: tuple[int, int] | None = None
+    capture_method = "screencap"                   # aktualnie używany sposób (do GUI)
+
+    def enable_stream(self, processing_width: int, max_fps: int = 30) -> None:
+        """Włącza obraz przez scrcpy; strumień startuje przy najbliższym zrzucie.
+        Można wołać często - nic nie robi, dopóki ustawienia się nie zmienią."""
+        cfg = (int(processing_width), int(max_fps))
+        if cfg == self._stream_cfg:
+            return
+        self._close_stream()  # nowe ustawienia - strumień wystartuje od nowa
+        self._stream_cfg = cfg
+        self._stream_retry_at = 0.0
+
+    def disable_stream(self) -> None:
+        if self._stream_cfg is None:
+            return
+        self._stream_cfg = None
+        self._close_stream()
+
+    def _close_stream(self) -> None:
+        if self.stream is not None:
+            self.stream.close()
+            self.stream = None
+
+    def _real_screen_size(self) -> tuple[int, int]:
+        """(szerokość, wysokość) ekranu - "Override size" ma pierwszeństwo."""
+        if self._device_size is None:
+            out = self._run(["shell", "wm", "size"]).stdout.decode(errors="replace")
+            sizes = {}
+            for line in out.splitlines():
+                if ":" in line and "x" in line:
+                    key, value = line.split(":", 1)
+                    w, h = value.strip().split("x")
+                    sizes[key.strip().lower()] = (int(w), int(h))
+            size = sizes.get("override size") or sizes.get("physical size") or next(iter(sizes.values()), None)
+            if size is None:
+                raise ADBError(f"Nie udało się odczytać rozmiaru ekranu: {out}")
+            self._device_size = size
+        return self._device_size
+
+    def _stream_frame(self, fresh_after: float) -> np.ndarray | None:
+        """Klatka ze strumienia scrcpy albo None (strumień wyłączony / niedostępny)."""
+        if self._stream_cfg is None or time.monotonic() < self._stream_retry_at:
+            return None
+        try:
+            if self.stream is None or not self.stream.alive:
+                self._close_stream()
+                import scrcpy_capture
+                width, fps = self._stream_cfg
+                dev_w, dev_h = self._real_screen_size()
+                target_w = width if 0 < width < dev_w else dev_w
+                # max_size ogranicza dłuższy bok - liczymy go z docelowej szerokości
+                long_side = int(round(max(dev_w, dev_h) * target_w / dev_w))
+                self.stream = scrcpy_capture.ScrcpyStream(self.adb_path, self.serial, long_side, fps)
+                self.stream.start()
+            img = self.stream.latest(fresh_after=fresh_after)
+            dev_w, dev_h = self._real_screen_size()
+            if (img.shape[1] > img.shape[0]) != (dev_w > dev_h):
+                dev_w = dev_h  # ekran obrócony - wm size podaje orientację naturalną
+            small = _shrink(img, self.max_width)
+            self.scale = dev_w / small.shape[1]
+            self.capture_method = "scrcpy"
+            return small
+        except Exception as e:  # noqa: BLE001 - każdy błąd strumienia = powrót do screencap
+            logger.warning("[%s] obraz przez scrcpy niedostępny (%s) - używam screencap, "
+                           "ponowna próba za 30 s", self.serial, e)
+            self._close_stream()
+            self._stream_retry_at = time.monotonic() + 30
+            self.capture_method = "screencap"
+            return None
 
     def screenshot(self) -> np.ndarray:
         """Zrzut ekranu (BGR) z pomiarem czasu, rozmiaru danych i liczby
         zrzutów na sekundę (perf - widoczne w GUI)."""
         start = time.monotonic()
-        img = self._screenshot()
+        img = self._stream_frame(start)
+        if img is None:
+            self.capture_method = "screencap"
+            img = self._screenshot()
         now = time.monotonic()
         self._perf("capture_ms", (now - start) * 1000)
         if self._last_capture_at:

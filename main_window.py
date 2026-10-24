@@ -740,10 +740,13 @@ class MainWindow(QMainWindow):
             return ""
         text = (f"Zrzut ekranu {stats.capture_ms:.0f} ms · akcja {stats.input_ms:.0f} ms · "
                 f"{stats.fps:.1f} zrzutu/s".replace(".", ","))
+        method = getattr(stats, "capture_method", "")
+        if method:
+            text += f" · {method}"
         if long:
             if stats.device_width:
                 text += f" · ekran emulatora {stats.device_width} px szerokości"
-            if stats.device_width > 720:
+            if stats.device_width > 720 and method != "scrcpy":
                 text += (". Wskazówka: ustaw w LDPlayerze rozdzielczość 540×960 - bot i tak pracuje na "
                          "540 px, a zrzut będzie kilka razy mniejszy i szybszy.")
         return text
@@ -942,6 +945,16 @@ class MainWindow(QMainWindow):
         self.field_proc_width.setSpecialValueText("pełna rozdzielczość")
         self.field_proc_width.valueChanged.connect(self._apply_config_fields)
         form.addRow("Analizuj zrzut w:", self.field_proc_width)
+
+        self.field_capture = QComboBox()
+        self.field_capture.addItem("scrcpy - strumień wideo (szybko)", "scrcpy")
+        self.field_capture.addItem("screencap - zrzut przez ADB (wolno)", "screencap")
+        self.field_capture.setToolTip(
+            "scrcpy: emulator wysyła obraz jako wideo już zmniejszone do szerokości analizy - klatka "
+            "jest gotowa od razu. Gra działa w normalnej rozdzielczości. Przy błędzie strumienia bot "
+            "sam przechodzi na chwilę na screencap.")
+        self.field_capture.currentIndexChanged.connect(self._apply_config_fields)
+        form.addRow("Obraz z emulatora:", self.field_capture)
         form.addRow(self._hint("Zrzut ekranu jest przed analizą pomniejszany do tej szerokości - przy "
                                "1080×1920 i 540 px bot zużywa ok. 3× mniej CPU, a rozpoznawanie działa "
                                "tak samo. Kliknięcia trafiają w pełnej rozdzielczości. Jeszcze mniej "
@@ -1406,7 +1419,7 @@ class MainWindow(QMainWindow):
                 self.field_drag_ms_min, self.field_drag_ms_max, self.field_hold_end_min, self.field_hold_end_max,
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
-                self.field_mistake, self.field_proc_width, self.field_turbo,
+                self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
                 self.field_play_debris, self.field_skip_fishing,
                 self.field_depth_mode, self.field_farm_depth, self.field_depth_pct, self.field_depth_interval,
                 self.field_loadout, self.field_depth_repeat, self.field_depth_push,
@@ -1456,6 +1469,7 @@ class MainWindow(QMainWindow):
             self.field_hold_max.setValue(cfg.tap_hold_ms.max)
             self.field_mistake.setValue(cfg.mistake_chance * 100)
             self.field_proc_width.setValue(max(0, cfg.processing_width))
+            self.field_capture.setCurrentIndex(max(0, self.field_capture.findData(cfg.capture_method)))
             self.field_play_debris.setChecked(cfg.play_debris)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
             self.field_depth_mode.setCurrentIndex(max(0, self.field_depth_mode.findData(cfg.depth_mode)))
@@ -1617,6 +1631,7 @@ class MainWindow(QMainWindow):
             self.field_hold_min.value(), max(self.field_hold_min.value(), self.field_hold_max.value()))
         cfg.mistake_chance = self.field_mistake.value() / 100.0
         cfg.processing_width = self.field_proc_width.value()
+        cfg.capture_method = self.field_capture.currentData() or "scrcpy"
         cfg.play_debris = self.field_play_debris.isChecked()
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
         cfg.depth_mode = self.field_depth_mode.currentData() or "fixed"

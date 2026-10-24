@@ -237,6 +237,17 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   tylko na widocznej karcie (szczegóły ~5×/s, miniatury 2×/s).
   Najwięcej daje jednak sam emulator: niższa rozdzielczość (np. 540×960)
   i FPS (np. 30) w ustawieniach LDPlayera.
+- **Obraz przez scrcpy** (`capture_method`, domyślnie `"scrcpy"`; GUI:
+  Tempo → Wydajność → „Obraz z emulatora”) — zamiast `screencap` przy
+  każdej klatce bot uruchamia na emulatorze serwer scrcpy 3.1
+  (`vendor/scrcpy/scrcpy-server`, Apache 2.0), który wysyła ekran jako
+  wideo H.264 już zmniejszone do `processing_width`. Dekoder (PyAV, `av`
+  w requirements) trzyma w tle najnowszą klatkę, więc zrzut trwa kilka
+  ms zamiast 150–400 ms. Gra działa w swojej normalnej rozdzielczości.
+  `stream_fps` (domyślnie 30) ogranicza liczbę klatek. Przy błędzie
+  strumienia (brak `av`, serwer nie wstał, zerwane połączenie) bot sam
+  wraca do `screencap` i próbuje ponownie po 30 s. Metoda i czas zrzutu
+  są widoczne w linii wydajności na karcie instancji.
 - **Dokładny status** — zamiast ogólnego „czekanie / zbieranie” lista
   instancji i kafelki w „Wszystkie instancje” pokazują, co bot robi w tej
   chwili, np. „Walka na głębokości 1137 – czekam na wynik”, „Ekran dropu –

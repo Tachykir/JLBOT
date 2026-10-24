@@ -49,6 +49,8 @@ a = Analysis(
     binaries=adb_binaries,
     datas=[
         ("config.example.json", "."),
+        # serwer scrcpy (obraz z emulatora jako wideo) - patrz scrcpy_capture.py
+        ("vendor/scrcpy/scrcpy-server", "vendor/scrcpy"),
     ],
     hiddenimports=[
         # PySide6 czasem wymaga jawnego wskazania tych modułów -
@@ -57,6 +59,8 @@ a = Analysis(
         "PySide6.QtCore",
         "PySide6.QtGui",
         "PySide6.QtWidgets",
+        # dekoder H.264 strumienia scrcpy - importowany dopiero w wątku
+        "av",
     ],
     hookspath=[],
     hooksconfig={},

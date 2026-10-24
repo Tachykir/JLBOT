@@ -19,7 +19,7 @@
 ;   do rozesłania.
 
 #define MyAppName "Dust Mine Bot"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.4.0"
 #define MyAppPublisher "Twoja nazwa / pseudonim"
 #define MyAppExeName "DustMineBot.exe"
 #define MyBuildDir "dist\DustMineBot"

@@ -163,6 +163,11 @@ class BotConfig:
     # kliknięcia są przeliczane z powrotem na pełną rozdzielczość.
     # 0 = pełna rozdzielczość.
     processing_width: int = 540
+    # Skąd brać obraz: "scrcpy" - strumień wideo (szybko, klatka gotowa w kilka
+    # ms), "screencap" - zrzut przez adb (wolno, ale bez dodatkowego serwera).
+    # Przy błędzie strumienia bot sam wraca na chwilę do screencap.
+    capture_method: str = "scrcpy"
+    stream_fps: int = 30
 
     # Czas trwania gestu przeciągania kulki (ms). Losowany zakres.
     drag_duration_ms: RandomRange = field(default_factory=lambda: RandomRange(800, 1300))
@@ -448,6 +453,8 @@ class BotConfig:
             ("farm_depth", int),
             ("depth_mode", str),
             ("processing_width", int),
+            ("capture_method", str),
+            ("stream_fps", int),
             ("depth_below_max_pct", float),
             ("loadout_name", str),
             ("depth_repeat_fights", int),
@@ -549,6 +556,8 @@ class BotConfig:
             "farm_depth": self.farm_depth,
             "depth_mode": self.depth_mode,
             "processing_width": self.processing_width,
+            "capture_method": self.capture_method,
+            "stream_fps": self.stream_fps,
             "depth_below_max_pct": self.depth_below_max_pct,
             "loadout_name": self.loadout_name,
             "depth_repeat_fights": self.depth_repeat_fights,
@@ -614,6 +623,7 @@ class BotStats:
     input_ms: float = 0.0
     fps: float = 0.0
     device_width: int = 0
+    capture_method: str = ""
 
 
 class DustMineBot:
@@ -645,6 +655,7 @@ class DustMineBot:
                     self.stats.input_ms = perf.get("input_ms", 0.0)
                     self.stats.fps = perf.get("fps", 0.0)
                     self.stats.device_width = getattr(self.adb, "device_width", 0)
+                    self.stats.capture_method = getattr(self.adb, "capture_method", "")
                 _cb(name, frame, det, mode)
             on_frame = _frame_cb
         self._on_frame = on_frame
@@ -1234,6 +1245,11 @@ class DustMineBot:
     def _apply_performance(self) -> None:
         if hasattr(self.adb, "max_width"):
             self.adb.max_width = max(0, int(self.config.processing_width))
+        if hasattr(self.adb, "enable_stream"):
+            if getattr(self.config, "capture_method", "screencap") == "scrcpy":
+                self.adb.enable_stream(self.config.processing_width, self.config.stream_fps)
+            else:
+                self.adb.disable_stream()
 
     @staticmethod
     def _non_board_screen(frame: np.ndarray) -> str | None:
