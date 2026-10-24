@@ -12,13 +12,20 @@ systemu).
 
 ---
 
-## Najszybciej: build.bat
+## Najszybciej: build_installer.bat
 
-Na Windowsie, w folderze projektu, uruchom dwuklikiem **`build.bat`**.
-Skrypt sam tworzy środowisko `.venv`, instaluje zależności i PyInstaller,
-buduje `dist\DustMineBot\DustMineBot.exe`, a jeśli jest zainstalowany
-Inno Setup 6 - także instalator `installer_output\DustMineBot-Setup.exe`.
-Poniżej te same kroki ręcznie.
+Na Windowsie, w folderze projektu, uruchom dwuklikiem
+**`build_installer.bat`**. Skrypt sam:
+
+1. tworzy środowisko `.venv`, instaluje zależności i PyInstaller,
+2. pobiera ADB (Android Platform Tools) do `vendor\adb\`, jeśli go nie ma,
+3. buduje `dist\DustMineBot\DustMineBot.exe` (z serwerem scrcpy i PyAV),
+4. instaluje Inno Setup 6 przez `winget`, jeśli go nie ma,
+5. buduje instalator `installer_output\DustMineBot-Setup.exe` z wersją
+   z `version.py` i otwiera folder z wynikiem.
+
+Wystarczy Python 3.10–3.13 z python.org (z „Add python.exe to PATH”)
+i internet przy pierwszym uruchomieniu. Poniżej te same kroki ręcznie.
 
 ## Krok 1: Przygotowanie środowiska budowania
 
