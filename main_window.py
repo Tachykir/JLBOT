@@ -18,29 +18,33 @@ Layout:
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
+import random
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, Slot, QTime, QTimer
+from PySide6.QtCore import Qt, Slot, QTime, QTimer, QRectF
 from PySide6.QtCore import QUrl
 import theme
 import action_log
 from version import APP_VERSION
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence, QPainter, QPalette
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QGridLayout,
     QListWidget, QListWidgetItem, QPushButton, QLabel, QLineEdit, QSpinBox,
     QDoubleSpinBox, QPlainTextEdit, QSplitter, QGroupBox, QMessageBox, QFileDialog,
     QTimeEdit, QCheckBox, QDialog, QDialogButtonBox, QScrollArea, QFrame, QTabWidget, QComboBox,
     QInputDialog, QStackedWidget, QSlider, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QToolTip,
 )
 
 from bot import (BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS, DROP_CHOICES, DEPTH_MODES,
                  SPEED_MIN_PCT, SPEED_MAX_PCT, unknown_screens_dir)
+from scheduler import day_timeline, PLAY, BREAK, OFFLINE, LIMIT
 from gui_worker import BotWorker, SnapshotWorker
 from preview_widget import PreviewWidget, EditMode
 from dashboard import DashboardWidget
@@ -135,6 +139,89 @@ class InstanceEntry:
 _DAY_LABELS = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"]
 
 
+def _hm(seconds: float) -> str:
+    """Czas w formie „6 h 20 min” (albo „40 min”)."""
+    minutes = round(seconds / 60)
+    h, m = divmod(minutes, 60)
+    return f"{h} h {m:02d} min" if h else f"{m} min"
+
+
+class DayTimelineWidget(QWidget):
+    """
+    Pasek doby dnia: sesje gry (zielony), przerwy (żółty), poza
+    harmonogramem (szary) i wyczerpany limit dzienny (czerwony). Najechanie
+    myszą pokazuje godziny i rodzaj odcinka; czerwona kreska to „teraz”.
+    """
+
+    COLORS = {PLAY: "#3fa34d", BREAK: "#e0a526", OFFLINE: "#6b6b6b", LIMIT: "#c0504d"}
+    LABELS = {PLAY: "gra", BREAK: "przerwa", OFFLINE: "poza harmonogramem", LIMIT: "limit dzienny wyczerpany"}
+    MARGIN = 10
+    BAR_TOP = 4
+    BAR_H = 28
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(62)
+        self.setMouseTracking(True)
+        self._day: dt.date | None = None
+        self._segments: list[tuple[dt.datetime, dt.datetime, str]] = []
+
+    def set_segments(self, day: dt.date, segments) -> None:
+        self._day = day
+        self._segments = segments
+        self.update()
+
+    def _x_at(self, t: dt.datetime) -> float:
+        width = self.width() - 2 * self.MARGIN
+        minutes = (t - dt.datetime.combine(self._day, dt.time())).total_seconds() / 60
+        return self.MARGIN + width * minutes / 1440
+
+    def _segment_at(self, x: float):
+        if self._day is None or not self._segments:
+            return None
+        width = self.width() - 2 * self.MARGIN
+        minute = (x - self.MARGIN) / width * 1440
+        for s, e, kind in self._segments:
+            if s.hour * 60 + s.minute <= minute < (e - dt.datetime.combine(self._day, dt.time())).total_seconds() / 60:
+                return s, e, kind
+        return None
+
+    def paintEvent(self, event) -> None:
+        if self._day is None:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pal = self.palette()
+        p.setPen(Qt.NoPen)
+        p.setBrush(pal.color(QPalette.AlternateBase))
+        p.drawRoundedRect(QRectF(self.MARGIN, self.BAR_TOP, self.width() - 2 * self.MARGIN, self.BAR_H), 4, 4)
+        for s, e, kind in self._segments:
+            x1, x2 = self._x_at(s), self._x_at(e)
+            p.setBrush(QColor(self.COLORS[kind]))
+            p.drawRect(QRectF(x1, self.BAR_TOP, max(1.0, x2 - x1), self.BAR_H))
+        if self._day == dt.date.today():
+            x = self._x_at(dt.datetime.now())
+            p.setBrush(pal.color(QPalette.Text))
+            p.drawRect(QRectF(x - 1, self.BAR_TOP - 3, 2, self.BAR_H + 6))
+        p.setPen(pal.color(QPalette.Text))
+        font = p.font()
+        font.setPointSize(max(7, font.pointSize() - 1))
+        p.setFont(font)
+        for hour in range(0, 25, 3):
+            x = self._x_at(dt.datetime.combine(self._day, dt.time()) + dt.timedelta(hours=hour))
+            p.drawText(QRectF(x - 15, self.BAR_TOP + self.BAR_H + 4, 30, 16), Qt.AlignCenter, f"{hour:02d}")
+        p.end()
+
+    def mouseMoveEvent(self, event) -> None:
+        hit = self._segment_at(event.position().x())
+        if hit is None:
+            QToolTip.hideText()
+            return
+        s, e, kind = hit
+        QToolTip.showText(event.globalPosition().toPoint(),
+                          f"{s:%H:%M}–{e:%H:%M}: {self.LABELS[kind]}", self)
+
+
 class ScheduleEditorDialog(QDialog):
     """
     Edytor harmonogramu pracy instancji - lista okien czasowych, w
@@ -145,10 +232,10 @@ class ScheduleEditorDialog(QDialog):
     """
 
     def __init__(self, windows: list[ScheduleWindow], close_game_during_break: bool = True,
-                 daily_limit_hours: RandomRange | None = None, parent=None):
+                 daily_limit_hours: RandomRange | None = None, schedule_seed: int = 1, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Harmonogram pracy")
-        self.resize(680, 560)
+        self.resize(680, 760)
         # kopia robocza - oryginał podmieniamy dopiero po "OK"
         self._windows: list[ScheduleWindow] = list(windows)
 
@@ -259,6 +346,21 @@ class ScheduleEditorDialog(QDialog):
         root.addLayout(limit_row)
         self._update_limit_enabled()
 
+        seed_row = QHBoxLayout()
+        self.field_seed = QSpinBox()
+        self.field_seed.setRange(0, 999_999)
+        self.field_seed.setValue(schedule_seed)
+        self.field_seed.setToolTip("Ziarno losowania planu. Ten sam numer = ten sam plan (sesje, przerwy,\n"
+                                   "rozmycie granic, limit dzienny). Zmień go, żeby dostać inny układ.")
+        self.btn_reroll = QPushButton("🎲 Losuj ponownie")
+        self.btn_reroll.setToolTip("Losuje nowe ziarno - nowe sesje i przerwy w tych samych oknach.")
+        self.btn_reroll.clicked.connect(self._reroll_seed)
+        seed_row.addWidget(QLabel("Ziarno planu:"))
+        seed_row.addWidget(self.field_seed)
+        seed_row.addWidget(self.btn_reroll)
+        seed_row.addStretch(1)
+        root.addLayout(seed_row)
+
         self.check_close_game = QCheckBox("Zamykaj grę (force-stop) na przerwach, poza oknami i po limicie dziennym")
         self.check_close_game.setChecked(close_game_during_break)
         self.check_close_game.setToolTip(
@@ -268,12 +370,40 @@ class ScheduleEditorDialog(QDialog):
         )
         root.addWidget(self.check_close_game)
 
+        root.addWidget(self._heading("Podgląd dnia"))
+        day_row = QHBoxLayout()
+        self.combo_day = QComboBox()
+        today = dt.date.today()
+        for i in range(7):
+            day = today + dt.timedelta(days=i)
+            name = "dziś" if i == 0 else "jutro" if i == 1 else _DAY_LABELS[day.weekday()]
+            self.combo_day.addItem(f"{name}, {day:%d.%m}")
+        day_row.addWidget(self.combo_day)
+        day_row.addStretch(1)
+        root.addLayout(day_row)
+
+        self.timeline = DayTimelineWidget()
+        root.addWidget(self.timeline)
+        legend = "  ".join(f'<span style="color:{DayTimelineWidget.COLORS[k]}">■</span> {DayTimelineWidget.LABELS[k]}'
+                           for k in (PLAY, BREAK, OFFLINE, LIMIT))
+        root.addWidget(QLabel(legend))
+        self.timeline_stats = QLabel()
+        self.timeline_stats.setWordWrap(True)
+        root.addWidget(self.timeline_stats)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
         self._refresh_list()
+        self._refresh_timeline()
+        # sygnały podglądu podpinamy dopiero tu, gdy wszystkie widgety istnieją
+        self.field_seed.valueChanged.connect(self._refresh_timeline)
+        self.combo_day.currentIndexChanged.connect(self._refresh_timeline)
+        self.field_limit_min.valueChanged.connect(self._refresh_timeline)
+        self.field_limit_max.valueChanged.connect(self._refresh_timeline)
+        self.check_daily_limit.toggled.connect(self._refresh_timeline)
 
     # ------------------------------------------------------------------ #
     def _minmax_row(self, minimum, maximum, step, decimals):
@@ -329,6 +459,36 @@ class ScheduleEditorDialog(QDialog):
             label += f", rozmycie ±{w.jitter_minutes:.0f} min"
         return label
 
+    @staticmethod
+    def _heading(text: str) -> QLabel:
+        label = QLabel(f"<b>{text}</b>")
+        label.setStyleSheet("margin-top: 6px;")
+        return label
+
+    def _reroll_seed(self) -> None:
+        self.field_seed.setValue((self.field_seed.value() + random.randint(1, 999_998)) % 1_000_000)
+
+    def _refresh_timeline(self, *_) -> None:
+        day = dt.date.today() + dt.timedelta(days=self.combo_day.currentIndex())
+        segments = day_timeline(self._windows, self.result_daily_limit_hours(), self.field_seed.value(), day)
+        self.timeline.set_segments(day, segments)
+        self.timeline_stats.setText(self._timeline_stats(segments))
+
+    def _timeline_stats(self, segments) -> str:
+        def total(kind: str) -> float:
+            return sum((e - s).total_seconds() for s, e, k in segments if k == kind)
+
+        sessions = sum(1 for _s, _e, k in segments if k == PLAY)
+        parts = [f"Sesje: {sessions}", f"gra {_hm(total(PLAY))}", f"przerwy {_hm(total(BREAK))}"]
+        if total(OFFLINE):
+            parts.append(f"poza oknami {_hm(total(OFFLINE))}")
+        limit_start = next((s for s, _e, k in segments if k == LIMIT), None)
+        if limit_start is not None:
+            parts.append(f"limit dzienny wyczerpany o {limit_start:%H:%M}")
+        if not self._windows:
+            parts.insert(0, "Brak okien – bot gra bez ograniczeń godzinowych.")
+        return " · ".join(parts)
+
     def _refresh_list(self, select_row: int | None = None) -> None:
         self.list_widget.blockSignals(True)
         self.list_widget.clear()
@@ -350,6 +510,7 @@ class ScheduleEditorDialog(QDialog):
             jitter_minutes=15,
         ))
         self._refresh_list(select_row=len(self._windows) - 1)
+        self._refresh_timeline()
 
     def _remove_window(self) -> None:
         row = self.list_widget.currentRow()
@@ -357,6 +518,7 @@ class ScheduleEditorDialog(QDialog):
             return
         del self._windows[row]
         self._refresh_list(select_row=min(row, len(self._windows) - 1))
+        self._refresh_timeline()
 
     def _on_row_changed(self, row: int) -> None:
         if row < 0 or row >= len(self._windows):
@@ -410,9 +572,13 @@ class ScheduleEditorDialog(QDialog):
         self.list_widget.blockSignals(True)
         self.list_widget.item(row).setText(self.window_label(self._windows[row]))
         self.list_widget.blockSignals(False)
+        self._refresh_timeline()
 
     def result_windows(self) -> list[ScheduleWindow]:
         return self._windows
+
+    def result_schedule_seed(self) -> int:
+        return self.field_seed.value()
 
     def result_close_game_during_break(self) -> bool:
         return self.check_close_game.isChecked()
@@ -469,6 +635,17 @@ class MainWindow(QMainWindow):
         area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         area.setWidget(content)
         return area
+
+    def _percent_spin(self, tooltip: str) -> QDoubleSpinBox:
+        """Pole procentowe 0-100 % (w configu to ułamek 0-1)."""
+        spin = QDoubleSpinBox()
+        spin.setRange(0.0, 100.0)
+        spin.setSingleStep(5.0)
+        spin.setDecimals(0)
+        spin.setSuffix(" %")
+        spin.setToolTip(tooltip)
+        spin.valueChanged.connect(self._apply_config_fields)
+        return spin
 
     def _range_row(self, minimum, maximum, step, suffix, decimals=2):
         """Pole zakresu "od ... do ..." - bot losuje wartość z przedziału."""
@@ -811,6 +988,10 @@ class MainWindow(QMainWindow):
             "Gdy nie rozpozna ekranu, nic nie klika (chyba że włączysz punkt awaryjny w zakładce Punkty).")
         self.field_idle_just_loot.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_idle_just_loot)
+        self.field_just_loot_radius = self._percent_spin(
+            "Jak daleko od środka przycisku bot może kliknąć: 0 % = zawsze w środku,\n"
+            "100 % = losowo aż do brzegu przycisku JUST LOOT.")
+        form.addRow("Obszar kliknięcia JUST LOOT:", self.field_just_loot_radius)
 
         self.field_drop_choice = QComboBox()
         for key, (label, _row) in DROP_CHOICES.items():
@@ -974,6 +1155,14 @@ class MainWindow(QMainWindow):
         self.field_human_drag = QCheckBox("Ludzki ruch przy przeciąganiu")
         self.field_human_drag.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_human_drag)
+        self.field_grab_radius = self._percent_spin(
+            "Gdzie na kulce bot łapie palcem: 0 % = zawsze w środku kulki,\n"
+            "100 % = losowo aż do jej brzegu.")
+        form.addRow("Punkt chwytu kulki:", self.field_grab_radius)
+        self.field_release_radius = self._percent_spin(
+            "Gdzie nad DROP bot puszcza kulkę: 0 % = zawsze w środku DROP,\n"
+            "100 % = losowo aż do jego brzegu.")
+        form.addRow("Punkt puszczenia na DROP:", self.field_release_radius)
         form.addRow(self._hint("Palec jedzie po losowej krzywej, przyspiesza i zwalnia, łapie kulkę w "
                                "losowym miejscu, a kulki zbiera w losowej kolejności. Wyłączone: "
                                "prosta linia środek–środek, kulki po kolei."))
@@ -1466,11 +1655,13 @@ class MainWindow(QMainWindow):
 
     def _config_widgets(self) -> tuple:
         return (self.field_name, self.field_serial, self.field_game_package, self.field_game_activity,
-                self.field_idle_just_loot, self.field_drop_choice, self.field_idle_x, self.field_idle_y, self.field_idle_radius,
+                self.field_idle_just_loot, self.field_just_loot_radius, self.field_drop_choice,
+                self.field_idle_x, self.field_idle_y, self.field_idle_radius,
                 self.field_region_x1, self.field_region_y1, self.field_region_x2, self.field_region_y2,
                 self.field_idle_interval_min, self.field_idle_interval_max,
                 self.field_drag_ms_min, self.field_drag_ms_max, self.field_hold_end_min, self.field_hold_end_max,
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
+                self.field_grab_radius, self.field_release_radius,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
                 self.field_play_debris, self.field_skip_fishing, self.field_fishing_aim,
@@ -1517,6 +1708,9 @@ class MainWindow(QMainWindow):
             self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
             self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
             self.field_human_drag.setChecked(cfg.drag_style == "human")
+            self.field_just_loot_radius.setValue(cfg.just_loot_click_radius * 100)
+            self.field_grab_radius.setValue(cfg.drag_grab_radius * 100)
+            self.field_release_radius.setValue(cfg.drag_release_radius * 100)
             self.field_reaction_min.setValue(cfg.reaction_delay.min)
             self.field_reaction_max.setValue(cfg.reaction_delay.max)
             self.field_hold_min.setValue(cfg.tap_hold_ms.min)
@@ -1614,6 +1808,7 @@ class MainWindow(QMainWindow):
         if cfg.daily_limit_hours is not None:
             lim = cfg.daily_limit_hours
             text += f"\nLimit dzienny: {lim.min:g}–{lim.max:g} h"
+        text += f"\nZiarno planu: {cfg.schedule_seed}"
         text += "\nZamykanie gry na przerwach: " + ("tak" if cfg.close_game_during_break else "nie")
         return text
 
@@ -1633,10 +1828,12 @@ class MainWindow(QMainWindow):
             entry.config.schedule,
             close_game_during_break=entry.config.close_game_during_break,
             daily_limit_hours=entry.config.daily_limit_hours,
+            schedule_seed=entry.config.schedule_seed,
             parent=self,
         )
         if dialog.exec() == QDialog.Accepted:
             entry.config.schedule = dialog.result_windows()
+            entry.config.schedule_seed = dialog.result_schedule_seed()
             entry.config.close_game_during_break = dialog.result_close_game_during_break()
             entry.config.daily_limit_hours = dialog.result_daily_limit_hours()
             self.schedule_summary_label.setText(self._schedule_summary_text(entry.config))
@@ -1688,6 +1885,9 @@ class MainWindow(QMainWindow):
             self.field_between_drags_min.value(),
             max(self.field_between_drags_min.value(), self.field_between_drags_max.value()))
         cfg.drag_style = "human" if self.field_human_drag.isChecked() else "straight"
+        cfg.just_loot_click_radius = self.field_just_loot_radius.value() / 100.0
+        cfg.drag_grab_radius = self.field_grab_radius.value() / 100.0
+        cfg.drag_release_radius = self.field_release_radius.value() / 100.0
         cfg.reaction_delay = RandomRange(
             self.field_reaction_min.value(), max(self.field_reaction_min.value(), self.field_reaction_max.value()))
         cfg.tap_hold_ms = RandomRange(

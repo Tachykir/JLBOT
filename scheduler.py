@@ -16,6 +16,10 @@ Model:
     minucie.
   - Dzienny limit (daily_limit_hours w BotConfig) - losowany raz na
     dzień kalendarzowy; po jego wyczerpaniu bot jest offline do północy.
+  - Cały harmonogram jest losowany z ziarna (schedule_seed w BotConfig):
+    ten sam seed = ten sam plan dnia. Zmiana seeda ("losuj ponownie")
+    daje nowe sesje i przerwy. Dzięki temu podgląd w GUI (day_timeline)
+    pokazuje dokładnie to, co bot ułoży.
 
 Brak okien = bot gra zawsze (z ewentualnym limitem dziennym).
 
@@ -43,10 +47,12 @@ class RandomRange:
     min: float
     max: float
 
-    def sample(self) -> float:
+    def sample(self, rng: random.Random | None = None) -> float:
         if self.max <= self.min:
             return self.min
-        return random.uniform(self.min, self.max)
+        if rng is None:
+            rng = random
+        return rng.uniform(self.min, self.max)
 
     @staticmethod
     def from_value(value) -> "RandomRange":
@@ -226,6 +232,9 @@ class SchedulePlanner:
     def __init__(self, config):
         self.config = config
         self._schedule_ref = None
+        self._seed_ref = None
+        # generator sesji/przerw bieżącego wystąpienia okna
+        self._occ_rng: random.Random | None = None
         # (indeks okna, dzień startu) -> (start, koniec) po rozmyciu
         self._bounds_cache: dict[tuple[int, dt.date], tuple[dt.datetime, dt.datetime]] = {}
         self._session_key: tuple[int, dt.date] | None = None
@@ -241,9 +250,20 @@ class SchedulePlanner:
         """Sekundy gry policzone w dniu `now`."""
         return self._played_s.get(now.date(), 0.0)
 
+    def _seed(self) -> int:
+        return int(getattr(self.config, "schedule_seed", 0))
+
+    def _rng(self, *parts) -> random.Random:
+        """Osobny generator dla jednej części harmonogramu (dzień, okno,
+        wystąpienie). Wynik zależy tylko od seeda i tych części, a nie od
+        tego, kiedy bot wywoła decide() - stąd podgląd jest wiarygodny."""
+        return random.Random("|".join(str(p) for p in (self._seed(), *parts)))
+
     def _reset_if_schedule_changed(self) -> None:
-        if self.config.schedule is not self._schedule_ref:
+        seed = self._seed()
+        if self.config.schedule is not self._schedule_ref or seed != self._seed_ref:
             self._schedule_ref = self.config.schedule
+            self._seed_ref = seed
             self._bounds_cache.clear()
             self._session_key = None
             self._session_end = None
@@ -262,7 +282,7 @@ class SchedulePlanner:
         if limit is None:
             return None
         if day not in self._limit_s:
-            self._limit_s[day] = max(0.0, limit.sample()) * 3600
+            self._limit_s[day] = max(0.0, limit.sample(self._rng("limit", day))) * 3600
             # nie trzymaj historii w nieskończoność
             for old in [d for d in self._limit_s if d < day - dt.timedelta(days=2)]:
                 del self._limit_s[old]
@@ -280,8 +300,9 @@ class SchedulePlanner:
             length_min = (end - start).total_seconds() / 60
             jitter = min(window.jitter_minutes, length_min / 4)
             if jitter > 0:
-                start += dt.timedelta(minutes=random.uniform(0, jitter))
-                end -= dt.timedelta(minutes=random.uniform(0, jitter))
+                rng = self._rng("jitter", *key)
+                start += dt.timedelta(minutes=rng.uniform(0, jitter))
+                end -= dt.timedelta(minutes=rng.uniform(0, jitter))
             self._bounds_cache[key] = (start, end)
             for old in [k for k in self._bounds_cache if k[1] < day - dt.timedelta(days=2)]:
                 del self._bounds_cache[old]
@@ -338,6 +359,7 @@ class SchedulePlanner:
             self._session_key = key
             self._session_end = None
             self._break_until = None
+            self._occ_rng = self._rng("occ", *key)
 
         if self._break_until is not None:
             if now < self._break_until:
@@ -347,7 +369,7 @@ class SchedulePlanner:
         if self._session_end is not None and now >= self._session_end:
             # sesja się skończyła - przerwa (najwyżej do końca okna)
             self._session_end = None
-            brk = window.break_minutes.sample() if window.break_minutes else 0.0
+            brk = window.break_minutes.sample(self._occ_rng) if window.break_minutes else 0.0
             self._break_until = min(now + dt.timedelta(minutes=brk), end)
             if self._break_until > now:
                 return Decision(False, "break", self._break_until)
@@ -361,9 +383,55 @@ class SchedulePlanner:
             if window.session_minutes is None:
                 self._session_end = end
             else:
-                session_end = now + dt.timedelta(minutes=window.session_minutes.sample())
+                session_end = now + dt.timedelta(minutes=window.session_minutes.sample(self._occ_rng))
                 if end - session_end < MIN_SESSION:
                     session_end = end
                 self._session_end = session_end
 
         return Decision(True, "session", self._session_end)
+
+
+# --------------------------------------------------------------------- #
+# Podgląd harmonogramu (GUI)
+# --------------------------------------------------------------------- #
+
+@dataclass
+class _PreviewConfig:
+    """Minimalny config potrzebny planerowi - bez ADB i reszty BotConfig."""
+    schedule: list
+    daily_limit_hours: RandomRange | None
+    schedule_seed: int
+
+
+# rodzaje odcinków dnia zwracanych przez day_timeline()
+PLAY, BREAK, OFFLINE, LIMIT = "play", "break", "offline", "limit"
+_KIND_BY_REASON = {"always": PLAY, "session": PLAY, "break": BREAK, "daily_limit": LIMIT}
+
+
+def day_timeline(schedule: list[ScheduleWindow], daily_limit_hours: RandomRange | None,
+                 seed: int, day: dt.date,
+                 step: dt.timedelta = dt.timedelta(minutes=1)) -> list[tuple[dt.datetime, dt.datetime, str]]:
+    """
+    Odcinki dnia `day` jak je ułoży bot z danym seedem: lista
+    (początek, koniec, rodzaj), rodzaj to PLAY / BREAK / OFFLINE / LIMIT.
+
+    Symulacja idzie krokami `step` przez dwa dni (żeby okno z poprzedniego
+    dnia, przechodzące przez północ, miało właściwy stan), a wynik jest
+    przycięty do `day`. Dokładność to `step` - przerwa zaczyna się co
+    najwyżej `step` po końcu sesji, tak jak w prawdziwym pętli bota.
+    """
+    planner = SchedulePlanner(_PreviewConfig(list(schedule), daily_limit_hours, seed))
+    day_start = dt.datetime.combine(day, dt.time())
+    day_end = day_start + dt.timedelta(days=1)
+    t = day_start - dt.timedelta(days=1)
+    segments: list[list] = []
+    while t < day_end:
+        kind = _KIND_BY_REASON.get(planner.decide(t).reason, OFFLINE)
+        if segments and segments[-1][2] == kind:
+            segments[-1][1] = t + step
+        else:
+            segments.append([t, t + step, kind])
+        t += step
+    return [(max(s, day_start), min(e, day_end), kind)
+            for s, e, kind in segments if e > day_start and s < day_end]
+

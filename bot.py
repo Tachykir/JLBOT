@@ -91,7 +91,7 @@ DEPTH_MODES = {
     "max_pct": "Maksymalna minus X%",
 }
 
-PER_INSTANCE_FIELDS = ("name", "schedule", "daily_limit_hours", "close_game_during_break",
+PER_INSTANCE_FIELDS = ("name", "schedule", "schedule_seed", "daily_limit_hours", "close_game_during_break",
                        "schedule_poll_interval", "farm_depth", "depth_mode",
                        "depth_below_max_pct")
 
@@ -124,6 +124,11 @@ class BotConfig:
     # nie rozpozna żadnego ekranu. Domyślnie wyłączone - klikanie "na
     # ślepo" na nieznanym ekranie może trafić w coś przypadkowego.
     idle_fallback_enabled: bool = False
+
+    # Obszar kliknięcia przycisku JUST LOOT: promień losowania punktu jako
+    # ułamek promienia przycisku (0 = zawsze środek, 1 = aż do brzegu).
+    # Domyślnie 0.45 - punkt blisko środka, ale nie idealnie w nim.
+    just_loot_click_radius: float = 0.45
 
     # Zapisywanie zrzutów ekranów, których bot nie rozpoznaje dłużej niż
     # `unknown_screen_after_s` sekund (folder unknown_screens obok programu)
@@ -189,6 +194,12 @@ class BotConfig:
     # tor jest prosty, ale punkty chwytu i kolejność nadal są losowe.
     drag_style: str = "human"
 
+    # Obszar, z którego bot losuje punkty chwytu i puszczenia kulki, jako
+    # ułamek promienia kulki (chwyt) i promienia DROP (puszczenie).
+    # 0 = zawsze środek, 1 = aż do brzegu. Domyślnie 0.4 i 0.3 - jak dawniej.
+    drag_grab_radius: float = 0.4
+    drag_release_radius: float = 0.3
+
     # --- "Ludzkie" zachowanie --- #
     # Czas reakcji (s) od pojawienia się planszy / minigry do pierwszego
     # ruchu - człowiek potrzebuje chwili, żeby zauważyć zmianę ekranu.
@@ -250,6 +261,11 @@ class BotConfig:
     # Dzienny limit czasu gry (godziny), losowany raz na dzień z zakresu.
     # None = bez limitu. Po wyczerpaniu bot jest offline do północy.
     daily_limit_hours: RandomRange | None = None
+
+    # Ziarno losowania harmonogramu: sesje, przerwy, rozmycie granic i
+    # dzienny limit wynikają z niego (patrz scheduler.py). Ten sam seed =
+    # ten sam plan; „losuj ponownie” w GUI zmienia seed.
+    schedule_seed: int = 1
 
     # Co ile sekund sprawdzać, czy nadal jesteśmy w oknie harmonogramu
     # (podczas oczekiwania poza godzinami pracy - nie ma sensu sprawdzać
@@ -434,6 +450,8 @@ class BotConfig:
             d.schedule = schedule_from_list(data["schedule"])
         if data.get("daily_limit_hours") is not None:
             d.daily_limit_hours = RandomRange.from_value(data["daily_limit_hours"])
+        if data.get("schedule_seed") is not None:
+            d.schedule_seed = int(data["schedule_seed"])
         if "foreign_app_packages" in data:
             d.foreign_app_packages = tuple(data["foreign_app_packages"] or ())
         for key, conv in (
@@ -481,9 +499,15 @@ class BotConfig:
             ("depth_repeat_fights", int),
             ("depth_push_taps", int),
             ("depth_check_interval_min", float),
+            ("just_loot_click_radius", float),
+            ("drag_grab_radius", float),
+            ("drag_release_radius", float),
         ):
             if key in data and data[key] is not None:
                 setattr(d, key, conv(data[key]))
+        for key in ("just_loot_click_radius", "drag_grab_radius", "drag_release_radius"):
+            if not 0.0 <= getattr(d, key) <= 1.0:
+                raise ValueError(f"[{d.name}] {key} musi być w zakresie 0-1: {getattr(d, key)!r}")
         for key in POINT_DEFAULTS:
             if data.get(key):
                 vals = [float(v) for v in data[key]]
@@ -544,6 +568,9 @@ class BotConfig:
             "drag_duration_ms": self.drag_duration_ms.to_dict(),
             "drag_end_hold_ms": self.drag_end_hold_ms.to_dict(),
             "drag_style": self.drag_style,
+            "drag_grab_radius": self.drag_grab_radius,
+            "drag_release_radius": self.drag_release_radius,
+            "just_loot_click_radius": self.just_loot_click_radius,
             "reaction_delay": self.reaction_delay.to_dict(),
             "tap_hold_ms": self.tap_hold_ms.to_dict(),
             "mistake_chance": self.mistake_chance,
@@ -556,6 +583,7 @@ class BotConfig:
             "idle_poll_interval": self.idle_poll_interval,
             "schedule": schedule_to_list(self.schedule),
             "daily_limit_hours": self.daily_limit_hours.to_dict() if self.daily_limit_hours else None,
+            "schedule_seed": self.schedule_seed,
             "schedule_poll_interval": self.schedule_poll_interval,
             "close_game_during_break": self.close_game_during_break,
             "game_package": self.game_package,
@@ -1701,7 +1729,7 @@ class DustMineBot:
                     return None  # JUST LOOT na następnej klatce
             if button is not None:
                 self._act("Ekran główny – klikam JUST LOOT (nowa walka)")
-                return humanize.random_point_in_circle(button.x, button.y, button.r * 0.45)
+                return humanize.random_point_in_circle(button.x, button.y, button.r * cfg.just_loot_click_radius)
             proceed = screens.find_wide_bottom_button(frame)
             if proceed is not None:
                 self._push_depth_pending = True  # koniec walki - potem "›"
@@ -1993,8 +2021,8 @@ class DustMineBot:
             self.adb.swipe(ball.x, ball.y, drop.x, drop.y, duration_ms=int(duration))
             return drop.x, drop.y
 
-        start = humanize.random_point_in_circle(ball.x, ball.y, ball.r * 0.4)
-        end = humanize.random_point_in_circle(drop.x, drop.y, drop.r * 0.3)
+        start = humanize.random_point_in_circle(ball.x, ball.y, ball.r * cfg.drag_grab_radius)
+        end = humanize.random_point_in_circle(drop.x, drop.y, drop.r * cfg.drag_release_radius)
         hold = self._t("drag_end_hold_ms").sample()
         if self._mistake():
             # puszczenie kulki tuż obok DROP - zostanie, bot spróbuje ponownie

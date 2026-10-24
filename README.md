@@ -171,6 +171,14 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   (nowsze Androidy) — bot sam to sprawdza i przy starcie loguje, czy
   jest dostępne; bez niego tor jest prosty, ale losowy chwyt i
   kolejność zostają.
+- **`drag_grab_radius`** / **`drag_release_radius`** (domyślnie `0.4` i
+  `0.3`) — obszar, z którego bot losuje punkt chwytu kulki i punkt
+  puszczenia nad DROP, jako ułamek promienia kulki i DROP-a: `0` = zawsze
+  środek, `1` = aż do brzegu. GUI: zakładka Ogólne, „Styl ruchu”
+  (w procentach).
+- **`just_loot_click_radius`** (domyślnie `0.45`) — obszar kliknięcia
+  przycisku JUST LOOT, ten sam ułamek promienia przycisku. GUI: „Klikanie
+  w trybie czekania”.
 - **Minigry** — w trybie idle bot rozpoznaje też:
   - **Depth Collapse** (brązowe kafelki „TAP”): klika wszystkie kafelki
     w „ludzkiej” kolejności, z losowym punktem kliknięcia; nachodzące na
@@ -463,6 +471,13 @@ uruchamiana ponownie na start kolejnej sesji. Aktualny stan (np.
 ],
 "daily_limit_hours": {"min": 5, "max": 6}
 ```
+
+Cały plan (sesje, przerwy, rozmycie granic i limit dzienny) losuje się z
+**ziarna** `schedule_seed` (domyślnie 1). Ten sam numer daje ten sam plan;
+przycisk „🎲 Losuj ponownie” w edytorze zmienia ziarno. Edytor pokazuje
+też **podgląd dnia** (od dziś na tydzień do przodu): pasek doby z sesjami
+(zielony), przerwami (żółty), czasem poza oknami (szary) i wyczerpanym
+limitem (czerwony) - dokładnie to, co bot ułoży z danym ziarnem.
 
 Licznik limitu dziennego jest trzymany w pamięci — po ponownym
 uruchomieniu aplikacji liczy od zera.
