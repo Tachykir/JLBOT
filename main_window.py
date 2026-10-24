@@ -91,7 +91,8 @@ _POINTS = [
 # (pole BotStats, etykieta) - panel statystyk
 _STAT_FIELDS = [
     ("cycles", "Plansze"), ("balls_collected", "Kulki"), ("drags", "Przeciągnięcia"),
-    ("debris_games", "Depth Collapse"), ("fishing_skipped", "Fishing pominięte"), ("defeats", "Porażki"),
+    ("debris_games", "Depth Collapse"), ("fishing_hits", "Fishing trafione"), ("fishing_casts", "Fishing rzuty"),
+    ("fishing_skipped", "Fishing pominięte"), ("defeats", "Porażki"),
     ("pack_rounds", "Rundy paczek"), ("packs_opened", "Otwarte paczki"), ("drops", "Dropy po walce"), ("salvaged", "Rozebrane"),
     ("restarts", "Restarty gry"), ("errors", "Błędy"),
 ]
@@ -1010,10 +1011,18 @@ class MainWindow(QMainWindow):
         self.field_play_debris.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_play_debris)
         form.addRow(self._hint("Brązowe kafelki „TAP” - bot klika wszystkie przed końcem czasu."))
-        self.field_skip_fishing = QCheckBox("Fishing Hole – od razu CAST (pomiń minigrę)")
+        self.field_skip_fishing = QCheckBox("Fishing Hole – obsługuj minigrę")
         self.field_skip_fishing.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_skip_fishing)
-        form.addRow(self._hint("Bot nie celuje wskaźnikiem, tylko od razu klika CAST, co kończy minigrę."))
+        self.field_fishing_aim = QComboBox()
+        self.field_fishing_aim.addItem("celuj w strefę", True)
+        self.field_fishing_aim.addItem("od razu CAST (pomiń)", False)
+        self.field_fishing_aim.currentIndexChanged.connect(self._apply_config_fields)
+        form.addRow("Rzut:", self.field_fishing_aim)
+        form.addRow(self._hint("Celowanie: bot śledzi wskaźnik przez kilka klatek, wylicza jego ruch i "
+                               "naciska CAST tak, żeby stanął na środku jasnej strefy. Po każdym rzucie "
+                               "sprawdza, gdzie wskaźnik stanął, i sam poprawia opóźnienie - pierwsze "
+                               "rzuty mogą być niecelne, potem trafia. Najlepiej działa z obrazem scrcpy."))
         return w
 
     def _tab_packs(self) -> QWidget:
@@ -1464,7 +1473,7 @@ class MainWindow(QMainWindow):
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
-                self.field_play_debris, self.field_skip_fishing,
+                self.field_play_debris, self.field_skip_fishing, self.field_fishing_aim,
                 self.field_depth_mode, self.field_farm_depth, self.field_depth_pct, self.field_depth_interval,
                 self.field_loadout, self.field_depth_repeat, self.field_depth_push,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
@@ -1517,6 +1526,7 @@ class MainWindow(QMainWindow):
             self.field_capture.setCurrentIndex(max(0, self.field_capture.findData(cfg.capture_method)))
             self.field_play_debris.setChecked(cfg.play_debris)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
+            self.field_fishing_aim.setCurrentIndex(0 if cfg.fishing_aim else 1)
             self.field_depth_mode.setCurrentIndex(max(0, self.field_depth_mode.findData(cfg.depth_mode)))
             self.field_farm_depth.setValue(max(0, cfg.farm_depth))
             self.field_depth_pct.setValue(int(round(cfg.depth_below_max_pct)))
@@ -1577,6 +1587,7 @@ class MainWindow(QMainWindow):
         fixed = self.field_depth_mode.currentData() in (None, "fixed")
         self.field_farm_depth.setEnabled(enabled and fixed)
         self.field_depth_pct.setEnabled(enabled and self.field_depth_mode.currentData() == "max_pct")
+        self.field_fishing_aim.setEnabled(enabled and self.field_skip_fishing.isChecked())
         self.field_depth_repeat.setEnabled(enabled and self.field_depth_mode.currentData() in ("max", "max_normal"))
         mode = self.field_depth_mode.currentData()
         self.field_depth_push.setEnabled(enabled and mode != "max_pct"
@@ -1686,6 +1697,7 @@ class MainWindow(QMainWindow):
         cfg.capture_method = self.field_capture.currentData() or "scrcpy"
         cfg.play_debris = self.field_play_debris.isChecked()
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
+        cfg.fishing_aim = bool(self.field_fishing_aim.currentData())
         cfg.depth_mode = self.field_depth_mode.currentData() or "fixed"
         cfg.farm_depth = self.field_farm_depth.value()
         cfg.depth_below_max_pct = float(self.field_depth_pct.value())

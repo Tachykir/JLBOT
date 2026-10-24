@@ -91,6 +91,7 @@ class ScrcpyStream:
         self._frame: np.ndarray | None = None
         self._frame_at = 0.0
         self._frame_seq = 0
+        self.last_frame_at = 0.0         # time.monotonic() klatki ostatnio oddanej przez latest()
         self._error: Exception | None = None
         self._closed = False
 
@@ -198,6 +199,7 @@ class ScrcpyStream:
                     raise StreamError(str(self._error))
                 if self._frame is not None:
                     if fresh_after is None or self._frame_at >= fresh_after or time.monotonic() >= fresh_deadline:
+                        self.last_frame_at = self._frame_at
                         return self._frame
                 remaining = (fresh_deadline if self._frame is not None else deadline) - time.monotonic()
                 if self._frame is None and remaining <= 0:

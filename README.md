@@ -237,6 +237,14 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   tylko na widocznej karcie (szczegóły ~5×/s, miniatury 2×/s).
   Najwięcej daje jednak sam emulator: niższa rozdzielczość (np. 540×960)
   i FPS (np. 30) w ustawieniach LDPlayera.
+- **Fishing Hole z celowaniem** (`fishing_aim`, domyślnie włączone; GUI:
+  Minigry → Rzut) — `fishing.py` (przeniesione z gałęzi dustbot2) wykrywa
+  wskaźnik, pasek i jasną strefę, dopasowuje ruch tam i z powrotem ze stałą
+  prędkością do wszystkich klatek rzutu i naciska CAST tak, żeby wskaźnik
+  stanął na środku strefy. Po rzucie odczytuje, gdzie stanął, i poprawia
+  opóźnienie (`fishing_latency_ms`, start 150 ms). W logu każdy rzut: cel,
+  miejsce zatrzymania, trafienie/pudło, błąd w ms. Statystyki: „Fishing
+  trafione” / „Fishing rzuty”.
 - **Suwaki szybkości** (Tempo → Szybkość; `speed_board_pct`,
   `speed_react_pct`, `speed_tap_pct`, 25–400 %, domyślnie 100) — mnożą czasy
   swojej grupy, także w turbo: plansza (przeciąganie, przytrzymanie na DROP,

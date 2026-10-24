@@ -327,8 +327,15 @@ class BotConfig:
     # Odstęp między kolejnymi kliknięciami kafelków (s). Losowany zakres.
     # Na planszę jest ~8 s, a samo kliknięcie przez ADB trwa ~0.1-0.3 s.
     tile_tap_delay: RandomRange = field(default_factory=lambda: RandomRange(0.05, 0.25))
-    # "Fishing Hole": od razu klikaj CAST, żeby pominąć minigrę.
+    # "Fishing Hole": obsługuj minigrę (False = bot jej nie dotyka).
     skip_fishing: bool = True
+    # True: celuj - CAST w chwili, gdy wskaźnik będzie na środku strefy
+    # (model ruchu + kalibracja opóźnienia, patrz fishing.py).
+    # False: od razu CAST (pomija minigrę, zwykle pudło).
+    fishing_aim: bool = True
+    # Początkowe opóźnienie (ms) od zrzutu do dotarcia tapu do gry; bot sam
+    # je poprawia po każdym rzucie (z miejsca, w którym stanął wskaźnik).
+    fishing_latency_ms: float = 150.0
 
     # --- Automatyczne otwieranie paczek (patrz packs.py) --- #
     # Domyślnie wyłączone, dopóki rozpoznawanie ekranów nie zostanie
@@ -455,6 +462,8 @@ class BotConfig:
             ("salvage_items", int),
             ("play_debris", bool),
             ("skip_fishing", bool),
+            ("fishing_aim", bool),
+            ("fishing_latency_ms", float),
             ("auto_packs", bool),
             ("packs_defeat_streak", int),
             ("packs_check_interval_min", float),
@@ -562,6 +571,8 @@ class BotConfig:
             "play_debris": self.play_debris,
             "tile_tap_delay": self.tile_tap_delay.to_dict(),
             "skip_fishing": self.skip_fishing,
+            "fishing_aim": self.fishing_aim,
+            "fishing_latency_ms": self.fishing_latency_ms,
             "auto_packs": self.auto_packs,
             "packs_defeat_streak": self.packs_defeat_streak,
             "packs_check_interval_min": self.packs_check_interval_min,
@@ -672,6 +683,8 @@ class BotStats:
     restarts: int = 0
     debris_games: int = 0
     fishing_skipped: int = 0
+    fishing_casts: int = 0             # rzuty z celowaniem
+    fishing_hits: int = 0              # ... w tym trafione w strefę
     defeats: int = 0
     drops: int = 0
     salvaged: int = 0
@@ -993,7 +1006,10 @@ class DustMineBot:
                 elif kind == "debris":
                     self._debris_loop()
                 elif kind == "fishing":
-                    self._skip_fishing()
+                    if getattr(self.config, "fishing_aim", False):
+                        self._play_fishing()
+                    else:
+                        self._skip_fishing()
             except ADBError as e:
                 logger.error("[%s] błąd ADB: %s", self.config.name, e)
                 self.stats.errors += 1
@@ -1795,6 +1811,108 @@ class DustMineBot:
                     self._tap(*humanize.random_point_in_circle(x, y, radius))
                 tapped += 1
                 self._sleep(humanize.human_delay(self._t("tile_tap_delay").min, self._t("tile_tap_delay").max), speed_scaled=True)
+
+    def _play_fishing(self, max_seconds: float = 12.0) -> None:
+        """
+        Minigra "Fishing Hole" z celowaniem: zbiera pozycje wskaźnika z
+        kolejnych klatek, dopasowuje model ruchu (tam i z powrotem ze stałą
+        prędkością) i naciska CAST tak, żeby wskaźnik stanął na środku
+        strefy. Po rzucie odczytuje, gdzie wskaźnik stanął, i poprawia
+        szacunek opóźnienia na następny raz. Gdy nie da się wycelować
+        (brak strefy / modelu przez max_seconds), klika CAST od razu.
+        """
+        import fishing
+        cfg = self.config
+        if getattr(self, "_fish_cal", None) is None:
+            self._fish_cal = fishing.LatencyCalibrator(latency_ms=float(cfg.fishing_latency_ms))
+        cal = self._fish_cal
+        tracker = None
+        cast_btn = None
+        det = None
+        deadline = time.monotonic() + max_seconds
+        missing = 0
+
+        def clock_ms() -> float:
+            return time.monotonic() * 1000.0
+
+        plan = None
+        while not self._stop and time.monotonic() < deadline:
+            if self._paused:
+                self._sleep(0.2, fixed=True)
+                continue
+            frame = self.adb.screenshot()
+            t_ms = (getattr(self.adb, "frame_time", 0.0) or time.monotonic()) * 1000.0
+            fd = fishing.detect(frame)
+            if cast_btn is None:  # przycisk stoi w miejscu - wystarczy znaleźć go raz
+                det = vision.detect_all(frame, region=self._region())
+                cast_btn = det.cast_button
+            if self._on_frame is not None:
+                self._on_frame(cfg.name, frame, det, "fishing")
+            if fd is None or cast_btn is None:
+                missing += 1
+                if missing >= 4:          # minigra się skończyła albo to nie ten ekran
+                    return
+                continue
+            missing = 0
+            if fd.stopped:                # rzut już przyjęty (np. po restarcie pętli)
+                return
+            if tracker is None:
+                tracker = fishing.FishingTracker(frame_width=float(frame.shape[1]))
+            tracker.update(t_ms, fd)
+            self._act("Fishing Hole – śledzę wskaźnik" + (
+                f" (strefa {tracker.zone[0]:.0f}–{tracker.zone[1]:.0f} px)" if tracker.zone else ""))
+            plan = fishing.plan_cast(tracker, clock_ms(), cal.latency_ms)
+            if plan is None:
+                continue
+            # daleki rzut: lepiej dozbierać klatek; bliski - czekamy i rzucamy
+            if plan.tap_at_ms - clock_ms() > 350:
+                plan = None
+                continue
+            wait_s = (plan.tap_at_ms - clock_ms()) / 1000.0
+            if wait_s > 0:
+                self._sleep(wait_s, fixed=True)
+            break
+
+        if self._stop or cast_btn is None:
+            return
+        cx, cy = cast_btn.center
+        if plan is None:
+            self._act("Fishing Hole – nie udało się wycelować, klikam CAST")
+            self._tap(*humanize.random_point_in_circle(cx, cy, min(cast_btn.w, cast_btn.h) * 0.3))
+            self.stats.fishing_skipped += 1
+            self._sleep(random.uniform(1.0, 2.0))
+            return
+        self._act(f"Fishing Hole – CAST (cel {plan.target_x:.0f} px)")
+        self._tap(*humanize.random_point_in_circle(cx, cy, min(cast_btn.w, cast_btn.h) * 0.3))
+        self.stats.fishing_casts += 1
+
+        # gdzie stanął wskaźnik -> trafienie i kalibracja opóźnienia
+        after: list[tuple[float, float]] = []
+        stop_deadline = time.monotonic() + 1.5
+        stopped_x = None
+        while not self._stop and time.monotonic() < stop_deadline:
+            frame = self.adb.screenshot()
+            t_ms = (getattr(self.adb, "frame_time", 0.0) or time.monotonic()) * 1000.0
+            fd = fishing.detect(frame)
+            if fd is None:
+                break
+            after.append((t_ms, fd.indicator_x))
+            if fd.stopped or fishing.stopped_position(after) is not None:
+                stopped_x = fd.indicator_x
+                break
+            self._sleep(0.03, fixed=True)
+        if stopped_x is not None and tracker.zone is not None and tracker.speed:
+            z0, z1 = tracker.zone
+            hit = z0 <= stopped_x <= z1
+            error = cal.update(plan, stopped_x, tracker.speed)
+            if hit:
+                self.stats.fishing_hits += 1
+            logger.info("[%s] Fishing: cel %.0f, stanął %.0f (strefa %.0f–%.0f) – %s, błąd %+.0f ms, "
+                        "opóźnienie teraz %.0f ms, trafienia %d/%d", cfg.name, plan.target_x, stopped_x,
+                        z0, z1, "TRAFIONY" if hit else "pudło", error, cal.latency_ms,
+                        self.stats.fishing_hits, self.stats.fishing_casts)
+            self._act(f"Fishing Hole – {'trafiony' if hit else 'pudło'} ({error:+.0f} ms)")
+        self._sleep(random.uniform(1.0, 2.0))
 
     def _skip_fishing(self) -> None:
         """Minigra "Fishing Hole": od razu klika CAST (bez celowania),

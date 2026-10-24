@@ -497,6 +497,7 @@ class ADBController:
     _stream_cfg: tuple[int, int] | None = None     # (szerokość przetwarzania, kl./s)
     _stream_retry_at = 0.0
     _device_size: tuple[int, int] | None = None
+    frame_time = 0.0   # time.monotonic() chwili, z której jest ostatni zrzut
     capture_method = "screencap"                   # aktualnie używany sposób (do GUI)
 
     def enable_stream(self, processing_width: int, max_fps: int = 30) -> None:
@@ -558,6 +559,7 @@ class ADBController:
             small = _shrink(img, self.max_width)
             self.scale = dev_w / small.shape[1]
             self.capture_method = "scrcpy"
+            self.frame_time = getattr(self.stream, "last_frame_at", 0.0) or time.monotonic()
             return small
         except Exception as e:  # noqa: BLE001 - każdy błąd strumienia = powrót do screencap
             logger.warning("[%s] obraz przez scrcpy niedostępny (%s) - używam screencap, "
@@ -575,6 +577,7 @@ class ADBController:
         if img is None:
             self.capture_method = "screencap"
             img = self._screenshot()
+            self.frame_time = start  # screencap łapie ekran zaraz po wywołaniu
         now = time.monotonic()
         self._perf("capture_ms", (now - start) * 1000)
         if self._last_capture_at:
