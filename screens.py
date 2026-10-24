@@ -1331,6 +1331,65 @@ def find_season_pass_close(bgr: np.ndarray) -> tuple[int, int] | None:
     return x + w // 2, y + h // 2
 
 
+@_per_frame
+def find_action_menu_close(bgr: np.ndarray) -> tuple[int, int] | None:
+    """
+    Szczegóły przedmiotu z menu akcji na dole (Swap / Unequip / Reforge
+    Affixes / Temper Quality / Post to RAID / Close): panel z wierszami
+    równej wysokości oddzielonymi cienkimi liniami, pierwszy wiersz
+    wypełniony jasnym kolorem. Zwraca środek ostatniego wiersza ("Close").
+    """
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    y0 = int(0.3 * H)
+    col = np.median(gray[y0:, int(0.1 * W):int(0.9 * W)], axis=1)
+    bright = col >= 150
+    y = 0
+    while y < len(col):
+        if not bright[y]:
+            y += 1
+            continue
+        start = y
+        while y < len(col) and bright[y]:
+            y += 1
+        band = y - start
+        if not (0.06 * W <= band <= 0.14 * W):
+            continue
+        # wiersze pod jasnym: tło panelu i cienkie jaśniejsze linie co `step`
+        below = col[y:y + int(8 * band)]
+        if below.size < 3 * band:
+            continue
+        panel = float(np.median(below[:band]))
+        lines = [i for i in range(1, len(below) - 1)
+                 if below[i] >= panel + 8 and below[i - 1] < panel + 8 and below[i] < 120]
+        seps = [0] + lines  # krawędź jasnego wiersza też jest granicą
+        steps = np.diff(seps)
+        if len(steps) < 3:
+            continue
+        step = float(np.median(steps))
+        if not (0.8 * band <= step <= 1.3 * band):
+            continue
+        run = [seps[0]]
+        for a in seps[1:]:
+            if abs(a - run[-1] - step) <= 3:
+                run.append(a)
+            else:
+                break
+        if len(run) < 4:
+            continue
+        last = run[-1]
+        after = below[last + 2:last + int(step) + 2]
+        if after.size == 0:
+            continue
+        # zwykle ostatnia linia to dolna krawędź panelu (pod nią ciemniej)
+        if float(np.median(after[:max(1, int(step) // 2)])) < panel - 5:
+            close_y = y + run[-2] + (last - run[-2]) / 2
+        else:
+            close_y = y + last + step / 2
+        return W // 2, int(y0 + close_y)
+    return None
+
+
 # --------------------------------------------------------------------- #
 # Ekrany przejściowe i wymagające uwagi gracza
 # --------------------------------------------------------------------- #
