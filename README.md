@@ -176,6 +176,10 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   puszczenia nad DROP, jako ułamek promienia kulki i DROP-a: `0` = zawsze
   środek, `1` = aż do brzegu. GUI: zakładka Ogólne, „Styl ruchu”
   (w procentach).
+- **`drag_points`** (domyślnie brak = automatycznie) — zakres liczby
+  punktów pośrednich toru jednego przeciągnięcia, np. `{"min": 8, "max": 12}`.
+  Mało punktów = prosty, skokowy ruch; dużo = płynniejszy, dłuższy gest.
+  GUI: „Punkty na torze kulki” (zaznacz „Ustaw liczbę punktów ręcznie”).
 - **`just_loot_click_radius`** (domyślnie `0.45`) — obszar kliknięcia
   przycisku JUST LOOT, ten sam ułamek promienia przycisku. GUI: „Klikanie
   w trybie czekania”.

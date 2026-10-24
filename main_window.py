@@ -1159,6 +1159,14 @@ class MainWindow(QMainWindow):
             "Gdzie na kulce bot łapie palcem: 0 % = zawsze w środku kulki,\n"
             "100 % = losowo aż do jej brzegu.")
         form.addRow("Punkt chwytu kulki:", self.field_grab_radius)
+        self.field_drag_points_custom = QCheckBox("Ustaw liczbę punktów toru ręcznie")
+        self.field_drag_points_custom.setToolTip("Wyłączone = liczba punktów zależy od długości drogi kulki.")
+        self.field_drag_points_custom.toggled.connect(self._apply_config_fields)
+        form.addRow(self.field_drag_points_custom)
+        self.field_drag_points_min, self.field_drag_points_max, box = self._range_row(1, 60, 1, " pkt", decimals=0)
+        box.setToolTip("Ile punktów pośrednich ma tor jednego przeciągnięcia - każdy to osobny ruch palca.\n"
+                       "Mało punktów = bardziej prosty, „skokowy” ruch; dużo = płynniejszy, dłuższy gest.")
+        form.addRow("Punkty na torze kulki:", box)
         self.field_release_radius = self._percent_spin(
             "Gdzie nad DROP bot puszcza kulkę: 0 % = zawsze w środku DROP,\n"
             "100 % = losowo aż do jego brzegu.")
@@ -1662,6 +1670,7 @@ class MainWindow(QMainWindow):
                 self.field_drag_ms_min, self.field_drag_ms_max, self.field_hold_end_min, self.field_hold_end_max,
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
                 self.field_grab_radius, self.field_release_radius,
+                self.field_drag_points_custom, self.field_drag_points_min, self.field_drag_points_max,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
                 self.field_play_debris, self.field_skip_fishing, self.field_fishing_aim,
@@ -1711,6 +1720,10 @@ class MainWindow(QMainWindow):
             self.field_just_loot_radius.setValue(cfg.just_loot_click_radius * 100)
             self.field_grab_radius.setValue(cfg.drag_grab_radius * 100)
             self.field_release_radius.setValue(cfg.drag_release_radius * 100)
+            self.field_drag_points_custom.setChecked(cfg.drag_points is not None)
+            pts = cfg.drag_points or RandomRange(4, 7)
+            self.field_drag_points_min.setValue(pts.min)
+            self.field_drag_points_max.setValue(pts.max)
             self.field_reaction_min.setValue(cfg.reaction_delay.min)
             self.field_reaction_max.setValue(cfg.reaction_delay.max)
             self.field_hold_min.setValue(cfg.tap_hold_ms.min)
@@ -1888,6 +1901,14 @@ class MainWindow(QMainWindow):
         cfg.just_loot_click_radius = self.field_just_loot_radius.value() / 100.0
         cfg.drag_grab_radius = self.field_grab_radius.value() / 100.0
         cfg.drag_release_radius = self.field_release_radius.value() / 100.0
+        custom = self.field_drag_points_custom.isChecked()
+        self.field_drag_points_min.setEnabled(custom)
+        self.field_drag_points_max.setEnabled(custom)
+        if custom:
+            lo = self.field_drag_points_min.value()
+            cfg.drag_points = RandomRange(lo, max(lo, self.field_drag_points_max.value()))
+        else:
+            cfg.drag_points = None
         cfg.reaction_delay = RandomRange(
             self.field_reaction_min.value(), max(self.field_reaction_min.value(), self.field_reaction_max.value()))
         cfg.tap_hold_ms = RandomRange(

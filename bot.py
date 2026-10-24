@@ -199,6 +199,10 @@ class BotConfig:
     # 0 = zawsze środek, 1 = aż do brzegu. Domyślnie 0.4 i 0.3 - jak dawniej.
     drag_grab_radius: float = 0.4
     drag_release_radius: float = 0.3
+    # Liczba punktów pośrednich toru przeciągnięcia, losowana z zakresu.
+    # None = automatycznie: zależy od długości drogi (punkty co ~1.5
+    # promienia kulki), jak dotychczas.
+    drag_points: RandomRange | None = None
 
     # --- "Ludzkie" zachowanie --- #
     # Czas reakcji (s) od pojawienia się planszy / minigry do pierwszego
@@ -450,6 +454,11 @@ class BotConfig:
             d.schedule = schedule_from_list(data["schedule"])
         if data.get("daily_limit_hours") is not None:
             d.daily_limit_hours = RandomRange.from_value(data["daily_limit_hours"])
+        if data.get("drag_points") is not None:
+            pts = RandomRange.from_value(data["drag_points"])
+            if pts.min < 1:
+                raise ValueError(f"[{d.name}] drag_points musi mieć minimum >= 1: {data['drag_points']!r}")
+            d.drag_points = RandomRange(round(pts.min), round(max(pts.min, pts.max)))
         if data.get("schedule_seed") is not None:
             d.schedule_seed = int(data["schedule_seed"])
         if "foreign_app_packages" in data:
@@ -570,6 +579,7 @@ class BotConfig:
             "drag_style": self.drag_style,
             "drag_grab_radius": self.drag_grab_radius,
             "drag_release_radius": self.drag_release_radius,
+            "drag_points": self.drag_points.to_dict() if self.drag_points else None,
             "just_loot_click_radius": self.just_loot_click_radius,
             "reaction_delay": self.reaction_delay.to_dict(),
             "tap_hold_ms": self.tap_hold_ms.to_dict(),
@@ -2050,11 +2060,15 @@ class DustMineBot:
         self._adb_drag(path, duration, hold)
         return end
 
-    @staticmethod
-    def _dense_path(start, end, ball_r: float) -> list[tuple[int, int]]:
-        """Ludzki tor z liczbą punktów zależną od długości: kolejne punkty
-        najwyżej ~1.5 promienia kulki od siebie, żeby palec nie
-        "przeskakiwał" dalej, niż kulka nadąża."""
+    def _dense_path(self, start, end, ball_r: float) -> list[tuple[int, int]]:
+        """Ludzki tor. Liczba punktów pośrednich: z `drag_points`, jeśli
+        ustawiona; inaczej zależy od długości - kolejne punkty najwyżej
+        ~1.5 promienia kulki od siebie, żeby palec nie "przeskakiwał"
+        dalej, niż kulka nadąża."""
+        pts = self.config.drag_points
+        if pts is not None:
+            lo = int(pts.min)
+            return humanize.drag_path(start, end, min_points=lo, max_points=max(lo, int(pts.max)))
         dist = float(np.hypot(end[0] - start[0], end[1] - start[1]))
         n = int(np.clip(dist / max(8.0, 1.5 * ball_r), 4, 14))
         return humanize.drag_path(start, end, min_points=n, max_points=n + 2)
