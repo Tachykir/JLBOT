@@ -120,6 +120,10 @@ class ScrcpyStream:
         self._server = subprocess.Popen([self.adb_path, "-s", self.serial, "shell", cmd],
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                         creationflags=_FLAGS)
+        # wyjście serwera czytamy na bieżąco, żeby przy braku połączenia pokazać,
+        # co serwer napisał, zamiast czekać aż się zakończy
+        self._server_log: list[str] = []
+        threading.Thread(target=self._read_server_log, daemon=True).start()
         self._sock = self._connect(connect_timeout)
         self._sock.settimeout(None)
         _recv_exact(self._sock, 64)                   # nazwa urządzenia
@@ -131,6 +135,15 @@ class ScrcpyStream:
         self._thread.start()
         logger.info("[%s] strumień scrcpy %dx%d, do %d kl./s", self.serial, w, h, self.max_fps)
 
+    def _read_server_log(self) -> None:
+        for raw in iter(self._server.stdout.readline, b""):
+            self._server_log.append(raw.decode(errors="replace").rstrip())
+            del self._server_log[:-20]
+
+    def _server_output(self) -> str:
+        lines = [line for line in getattr(self, "_server_log", []) if line]
+        return " | ".join(lines[-5:])[-400:] or "brak wyjścia serwera"
+
     def _connect(self, timeout: float) -> socket.socket:
         # adb forward przyjmuje połączenie od razu, nawet zanim serwer zacznie
         # nasłuchiwać - wtedy zamyka je bez danych; dopiero bajt "dummy"
@@ -139,8 +152,7 @@ class ScrcpyStream:
         last = None
         while time.monotonic() < deadline:
             if self._server is not None and self._server.poll() is not None:
-                out = self._server.stdout.read().decode(errors="replace") if self._server.stdout else ""
-                raise StreamError(f"serwer scrcpy zakończył się: {out.strip()[-300:]}")
+                raise StreamError(f"serwer scrcpy zakończył się: {self._server_output()}")
             s = socket.create_connection(("127.0.0.1", self.port), timeout=2)
             try:
                 s.settimeout(2)
@@ -150,7 +162,12 @@ class ScrcpyStream:
                 last = e
             s.close()
             time.sleep(0.1)
-        raise StreamError(f"nie udało się połączyć ze strumieniem ({last})")
+        if last is None:
+            # port przyjmował połączenia, ale serwer nie wysłał bajtu potwierdzenia
+            raise StreamError(f"serwer nie odpowiada na połączenie (proces żyje, brak bajtu "
+                              f"potwierdzenia) - wyjście serwera: {self._server_output()}")
+        raise StreamError(f"nie udało się połączyć ze strumieniem ({last}) - "
+                          f"wyjście serwera: {self._server_output()}")
 
     def _decode_loop(self) -> None:
         try:
