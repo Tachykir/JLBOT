@@ -91,6 +91,9 @@ DEPTH_MODES = {
     "max_pct": "Maksymalna minus X%",
 }
 
+# mnożnik odstępu między kafelkami zależny od odległości (patrz tile_delay_by_distance)
+TILE_DISTANCE_FACTOR = (0.5, 3.0)
+
 PER_INSTANCE_FIELDS = ("name", "schedule", "schedule_seed", "daily_limit_hours", "close_game_during_break",
                        "schedule_poll_interval", "farm_depth", "depth_mode",
                        "depth_below_max_pct")
@@ -350,6 +353,10 @@ class BotConfig:
     # Odstęp między kolejnymi kliknięciami kafelków (s). Losowany zakres.
     # Na planszę jest ~8 s, a samo kliknięcie przez ADB trwa ~0.1-0.3 s.
     tile_tap_delay: RandomRange = field(default_factory=lambda: RandomRange(0.05, 0.25))
+    # Gdy włączone, odstęp między kafelkami rośnie z odległością do następnego
+    # kafelka: zakres tile_tap_delay mnożony przez (odległość / rozmiar kafelka),
+    # ograniczony do TILE_DISTANCE_FACTOR. Sąsiednie kafelki = zakres bez zmian.
+    tile_delay_by_distance: bool = False
     # "Fishing Hole": obsługuj minigrę (False = bot jej nie dotyka).
     skip_fishing: bool = True
     # True: celuj - CAST w chwili, gdy wskaźnik będzie na środku strefy
@@ -535,6 +542,7 @@ class BotConfig:
                 setattr(d, key, RandomRange.from_value(data[key]))
         if "tile_tap_delay" in data:
             d.tile_tap_delay = RandomRange.from_value(data["tile_tap_delay"])
+        d.tile_delay_by_distance = bool(data.get("tile_delay_by_distance", d.tile_delay_by_distance))
         if data.get("idle_target"):
             if data["idle_target"] not in ("just_loot", "fixed"):
                 raise ValueError(f"[{d.name}] idle_target musi być 'just_loot' albo 'fixed': {data['idle_target']!r}")
@@ -616,6 +624,7 @@ class BotConfig:
             "max_drag_attempts_per_ball": self.max_drag_attempts_per_ball,
             "play_debris": self.play_debris,
             "tile_tap_delay": self.tile_tap_delay.to_dict(),
+            "tile_delay_by_distance": self.tile_delay_by_distance,
             "skip_fishing": self.skip_fishing,
             "fishing_aim": self.fishing_aim,
             "fishing_latency_ms": self.fishing_latency_ms,
@@ -1871,7 +1880,8 @@ class DustMineBot:
 
             radius = det.tile_size * 0.25
             self._act(f"Depth Collapse – klikam kafelki ({len(det.tile_taps)} na ekranie)")
-            for x, y in self._tap_order(det.tile_taps):
+            order = list(self._tap_order(det.tile_taps))
+            for idx, (x, y) in enumerate(order):
                 if self._stop or self._paused:
                     break
                 if self._mistake():
@@ -1883,7 +1893,14 @@ class DustMineBot:
                 else:
                     self._tap(*humanize.random_point_in_circle(x, y, radius))
                 tapped += 1
-                self._sleep(humanize.human_delay(self._t("tile_tap_delay").min, self._t("tile_tap_delay").max), speed_scaled=True)
+                delay = self._t("tile_tap_delay")
+                lo, hi = delay.min, delay.max
+                if cfg.tile_delay_by_distance and idx + 1 < len(order):
+                    nx, ny = order[idx + 1]
+                    gap = float(np.hypot(nx - x, ny - y)) / max(det.tile_size, 1.0)
+                    factor = float(np.clip(gap, *TILE_DISTANCE_FACTOR))
+                    lo, hi = lo * factor, hi * factor
+                self._sleep(humanize.human_delay(lo, hi), speed_scaled=True)
 
     def _play_fishing(self, max_seconds: float = 12.0) -> None:
         """

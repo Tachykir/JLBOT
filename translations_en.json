@@ -377,5 +377,7 @@
  "Drżenie dłoni na torze:": "Hand tremor on the path:",
  "Drżenie dłoni: losowe odchylenie punktów toru od idealnej linii. 0 = palec idzie gładko.": "Hand tremor: random deviation of the path points from a perfect line. 0 = the finger moves smoothly.",
  "Odstęp między kliknięciami kafelków:": "Interval between tile taps:",
- "Odstęp między kolejnymi kliknięciami kafelków Depth Collapse. Losowany z zakresu.": "Interval between consecutive Depth Collapse tile taps. Drawn from the range."
+ "Odstęp między kolejnymi kliknięciami kafelków Depth Collapse. Losowany z zakresu.": "Interval between consecutive Depth Collapse tile taps. Drawn from the range.",
+ "Odstęp zależy od odległości między kafelkami": "Interval depends on the distance between tiles",
+ "Dalszy kafelek = dłuższy odstęp. Sąsiednie kafelki losują z podanego zakresu, dalsze - z zakresu pomnożonego przez odległość (0,5–3×).": "A farther tile = a longer interval. Neighbouring tiles draw from the given range, farther ones from the range multiplied by the distance (0.5–3×)."
 }
