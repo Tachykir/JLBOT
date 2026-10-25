@@ -193,7 +193,10 @@ class BotConfig:
     #                po kolei (dawne zachowanie).
     # "human" wymaga `input motionevent` (nowsze Androidy); bez niego
     # tor jest prosty, ale punkty chwytu i kolejność nadal są losowe.
-    drag_style: str = "human"   # "human" | "straight" | klucz presetu (swipe_presets.KEYS)
+    drag_style: str = "human"   # "human" | "straight"
+    # Wariant ruchu w trybie "human": "default" = ustawienia ręczne, albo klucz
+    # presetu z swipe_presets.KEYS (zmienia kształt toru, nie czas).
+    drag_variant: str = "default"
 
     # Obszar, z którego bot losuje punkty chwytu i puszczenia kulki, jako
     # ułamek promienia kulki (chwyt) i promienia DROP (puszczenie).
@@ -600,10 +603,14 @@ class BotConfig:
                 raise ValueError(f"[{d.name}] drop_choice musi być jednym z {list(DROP_CHOICES)}: {data['drop_choice']!r}")
             d.drop_choice = data["drop_choice"]
         if data.get("drag_style"):
-            if data["drag_style"] not in ("human", "straight") + swipe_presets.KEYS:
-                raise ValueError(f"[{d.name}] drag_style musi być 'human', 'straight' albo presetem "
-                                 f"{list(swipe_presets.KEYS)}: {data['drag_style']!r}")
+            if data["drag_style"] not in ("human", "straight"):
+                raise ValueError(f"[{d.name}] drag_style musi być 'human' albo 'straight': {data['drag_style']!r}")
             d.drag_style = data["drag_style"]
+        if data.get("drag_variant"):
+            if data["drag_variant"] != "default" and data["drag_variant"] not in swipe_presets.KEYS:
+                raise ValueError(f"[{d.name}] drag_variant musi być 'default' albo presetem "
+                                 f"{list(swipe_presets.KEYS)}: {data['drag_variant']!r}")
+            d.drag_variant = data["drag_variant"]
         d.game_package = data.get("game_package") or None
         d.game_activity = data.get("game_activity") or None
         if d.board_region is not None:
@@ -641,6 +648,7 @@ class BotConfig:
             "drag_duration_ms": self.drag_duration_ms.to_dict(),
             "drag_end_hold_ms": self.drag_end_hold_ms.to_dict(),
             "drag_style": self.drag_style,
+            "drag_variant": self.drag_variant,
             "drag_grab_radius": self.drag_grab_radius,
             "drag_release_radius": self.drag_release_radius,
             "drag_points": self.drag_points.to_dict() if self.drag_points else None,

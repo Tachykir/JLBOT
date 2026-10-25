@@ -171,10 +171,10 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   (nowsze Androidy) — bot sam to sprawdza i przy starcie loguje, czy
   jest dostępne; bez niego tor jest prosty, ale losowy chwyt i
   kolejność zostają.
-  Presety (`swipe_presets.py`) to osobne rodzaje gestu, wybierane jako styl:
-  prosty skok, łuk w górę/w dół, litera S, przestrzelenie, szeroki łuk, nerwowy.
-  Preset przeciąga kulkę własnymi wartościami (czas, punkty, kształt), a nie
-  ustawieniami ręcznymi; suwaki tempa i tryb turbo nadal działają na czas.
+  Wariant ruchu (`drag_variant`, tylko w trybie „human”) zmienia kształt toru na
+  jeden z presetów z `swipe_presets.py`: prosty skok, łuk w górę/w dół, litera S,
+  przestrzelenie, szeroki łuk, nerwowy. Czas, przytrzymanie i punkty chwytu zostają
+  ręczne; `default` = same ustawienia ręczne.
 - **`drag_grab_radius`** / **`drag_release_radius`** (domyślnie `0.4` i
   `0.3`) — obszar, z którego bot losuje punkt chwytu kulki i punkt
   puszczenia nad DROP, jako ułamek promienia kulki i DROP-a: `0` = zawsze

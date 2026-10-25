@@ -42,7 +42,7 @@ class SwipePreset:
 
 
 PRESETS: list[SwipePreset] = [
-    SwipePreset("default", "Domyślny", "Ustawienia fabryczne bota - mieszanka łuków i prostych.",
+    SwipePreset("factory", "Domyślny", "Ustawienia fabryczne bota - mieszanka łuków i prostych.",
                 "auto", 0, (0.04, 0.22), 0.2, (800, 1300), (180, 350), None, 1.2, 0.4, 0.3),
     SwipePreset("fast_jump", "Prosty skok", "Krótki, prawie prosty gest - kulka leci od razu na DROP.",
                 "straight", 0, (0.0, 0.01), 0.0, (200, 300), (60, 120), (2, 3), 0.2, 0.1, 0.1),
@@ -67,24 +67,12 @@ def get(key: str) -> SwipePreset:
     return _BY_KEY[key]
 
 
-# klucze presetów jako wartości drag_style (obok "human" i "straight")
+# klucze presetów - warianty ruchu w trybie ludzkim (config: drag_variant)
 KEYS = tuple(_BY_KEY)
 
-
-def effective(cfg):
-    """Konfig, którym bot przeciąga kulkę. Dla stylu-presetu zwraca kopię
-    z wartościami presetu (bez punktów zależnych od odległości), inaczej
-    sam konfig."""
-    if cfg.drag_style not in _BY_KEY:
-        return cfg
-    eff = copy.copy(cfg)
-    apply(eff, cfg.drag_style)
-    eff.drag_points_by_distance = False
-    return eff
-
-
+# pola toru, które wariant nadpisuje; czas, przytrzymanie i punkty chwytu zostają ręczne
 def apply(cfg, key: str) -> None:
-    """Wpisuje preset do configu (wartości w ms i ułamkach, tak jak w BotConfig)."""
+    """Wpisuje cały preset do configu (wszystkie pola ruchu, w jednostkach BotConfig)."""
     p = get(key)
     cfg.drag_duration_ms = RandomRange(*p.duration)
     cfg.drag_end_hold_ms = RandomRange(*p.hold)
@@ -98,8 +86,26 @@ def apply(cfg, key: str) -> None:
     cfg.drag_overshoot = p.overshoot
 
 
+def effective(cfg):
+    """Konfig, którym bot przeciąga kulkę. Dla trybu ludzkiego z wybranym
+    wariantem zwraca kopię, w której tor (kształt, wygięcie, punkty, drżenie,
+    przestrzelenie) pochodzi z presetu. Czas i punkty chwytu zostają ręczne."""
+    if cfg.drag_style != "human" or cfg.drag_variant not in _BY_KEY:
+        return cfg
+    p = _BY_KEY[cfg.drag_variant]
+    eff = copy.copy(cfg)
+    eff.drag_points = RandomRange(*p.points) if p.points else None
+    eff.drag_jitter_px = p.jitter
+    eff.drag_bend = RandomRange(*p.bend)
+    eff.drag_shape = p.shape
+    eff.drag_bend_sign = p.bend_sign
+    eff.drag_overshoot = p.overshoot
+    eff.drag_points_by_distance = False
+    return eff
+
+
 def values_from_config(cfg) -> dict:
-    """Aktualne wartości, jakich użyje bot, w postaci jak w presecie (do podglądu)."""
+    """Aktualne wartości, jakich użyje bot (do podglądu)."""
     cfg = effective(cfg)
     return {
         "duration": (cfg.drag_duration_ms.min, cfg.drag_duration_ms.max),

@@ -1236,13 +1236,20 @@ class MainWindow(QMainWindow):
         self.field_drag_style = QComboBox()
         self.field_drag_style.addItem("Ludzki ruch (ustawienia ręczne)", "human")
         self.field_drag_style.addItem("Prosty: środek–środek", "straight")
-        for preset in swipe_presets.PRESETS:
-            self.field_drag_style.addItem(preset.name, preset.key)
-        self.field_drag_style.setToolTip("Sposób przeciągania kulki. Presety to gotowe rodzaje gestu; "
-                                         "działają zamiast ustawień ręcznych poniżej.")
+        self.field_drag_style.setToolTip("Ludzki: tor z ustawień poniżej (lub wybranego wariantu). "
+                                         "Prosty: jedna linia od środka kulki do środka DROP.")
         self.field_drag_style.currentIndexChanged.connect(self._apply_config_fields)
         self.field_drag_style.currentIndexChanged.connect(self._show_drag_style)
         form.addRow("Sposób przeciągania:", self.field_drag_style)
+        self.field_drag_variant = QComboBox()
+        self.field_drag_variant.addItem("Ustawienia ręczne", "default")
+        for preset in swipe_presets.PRESETS:
+            self.field_drag_variant.addItem(preset.name, preset.key)
+        self.field_drag_variant.setToolTip("Wariant toru dla trybu ludzkiego: zmienia kształt, wygięcie, punkty, "
+                                           "drżenie i przestrzelenie. Czas i punkty chwytu zostają ręczne.")
+        self.field_drag_variant.currentIndexChanged.connect(self._apply_config_fields)
+        self.field_drag_variant.currentIndexChanged.connect(self._show_drag_style)
+        form.addRow("Wariant ruchu (tryb ludzki):", self.field_drag_variant)
         form.addRow(self.drag_style_desc)
         form.addRow(self.swipe_preview)
         self.field_grab_radius = self._percent_spin(
@@ -1779,7 +1786,7 @@ class MainWindow(QMainWindow):
                 self.field_region_x1, self.field_region_y1, self.field_region_x2, self.field_region_y2,
                 self.field_idle_interval_min, self.field_idle_interval_max,
                 self.field_drag_ms_min, self.field_drag_ms_max, self.field_hold_end_min, self.field_hold_end_max,
-                self.field_between_drags_min, self.field_between_drags_max, self.field_drag_style,
+                self.field_between_drags_min, self.field_between_drags_max, self.field_drag_style, self.field_drag_variant,
                 self.field_grab_radius, self.field_release_radius, self.field_drag_jitter,
                 self.field_bend_min, self.field_bend_max,
                 self.field_pts_by_dist, self.field_pts_near_min, self.field_pts_near_max,
@@ -1841,6 +1848,7 @@ class MainWindow(QMainWindow):
             self.field_between_drags_min.setValue(cfg.between_drags_delay.min)
             self.field_between_drags_max.setValue(cfg.between_drags_delay.max)
             self.field_drag_style.setCurrentIndex(max(0, self.field_drag_style.findData(cfg.drag_style)))
+            self.field_drag_variant.setCurrentIndex(max(0, self.field_drag_variant.findData(cfg.drag_variant)))
             self._show_drag_style()
             self.field_just_loot_radius.setValue(cfg.just_loot_click_radius * 100)
             self.field_grab_radius.setValue(cfg.drag_grab_radius * 100)
@@ -1920,27 +1928,20 @@ class MainWindow(QMainWindow):
         self._refresh_swipe_preview()
 
     def _show_drag_style(self, *_) -> None:
-        """Opis wybranego stylu i podgląd jego torów."""
-        key = self.field_drag_style.currentData()
-        if key in swipe_presets.KEYS:
+        """Opis wybranego stylu/wariantu i podgląd torów, jakie bot wykona."""
+        key = self.field_drag_variant.currentData()
+        if self.field_drag_style.currentData() == "straight":
+            self.drag_style_desc.setText(tr("Prosta linia od środka kulki do środka DROP."))
+        elif key in swipe_presets.KEYS:
             self.drag_style_desc.setText(tr(swipe_presets.get(key).description))
-            self.swipe_preview.set_values(swipe_presets.values_from_config(self._style_config(key)))
         else:
-            self.drag_style_desc.setText(tr("Ustawienia ręczne z tej zakładki: czas, punkty, drżenie, wygięcie."
-                                            if key == "human" else
-                                            "Prosta linia od środka kulki do środka DROP."))
-            self._refresh_swipe_preview()
-
-    @staticmethod
-    def _style_config(key: str) -> BotConfig:
-        cfg = BotConfig(name="styl")
-        cfg.drag_style = key
-        return cfg
+            self.drag_style_desc.setText(tr("Ustawienia ręczne z tej zakładki: czas, punkty, drżenie, wygięcie."))
+        self._refresh_swipe_preview()
 
     def _refresh_swipe_preview(self) -> None:
         """Podgląd pokazuje ustawienia, które bot faktycznie będzie używał."""
         preview = getattr(self, "swipe_preview", None)
-        if preview is not None and self.field_drag_style.currentData() not in swipe_presets.KEYS:
+        if preview is not None:
             preview.set_values(swipe_presets.values_from_config(self.shared_config))
 
     def _show_stats(self, stats: BotStats | None) -> None:
@@ -2069,6 +2070,8 @@ class MainWindow(QMainWindow):
             self.field_between_drags_min.value(),
             max(self.field_between_drags_min.value(), self.field_between_drags_max.value()))
         cfg.drag_style = self.field_drag_style.currentData() or "human"
+        cfg.drag_variant = self.field_drag_variant.currentData() or "default"
+        self.field_drag_variant.setEnabled(cfg.drag_style == "human")
         cfg.just_loot_click_radius = self.field_just_loot_radius.value() / 100.0
         cfg.drag_grab_radius = self.field_grab_radius.value() / 100.0
         cfg.drag_release_radius = self.field_release_radius.value() / 100.0
