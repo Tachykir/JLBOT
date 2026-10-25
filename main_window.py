@@ -797,7 +797,7 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         action("🔍 Wykryj emulatory", self._autodetect_instances,
                "Dodaj instancje dla wszystkich urządzeń widocznych w `adb devices`")
-        action("➕ Dodaj", self._add_instance_dialog, "Dodaj pustą instancję (ADB serial ustawisz w zakładce Ogólne)")
+        action("➕ Dodaj", self._add_instance_dialog, "Dodaj pustą instancję (ADB serial ustawisz w zakładce Instancja)")
         action("🗑 Usuń", self._remove_selected_instance, "Usuń zaznaczoną instancję")
         tb.addSeparator()
         action("▶▶ Start wszystkich", self._start_all, "Uruchom bota na wszystkich instancjach")
@@ -1178,7 +1178,7 @@ class MainWindow(QMainWindow):
                                "poniżej minimum, przy którym kulka jeszcze trafia. Czasy gry (walka, "
                                "animacje, ładowanie) się nie zmieniają."))
 
-        self.field_idle_interval_min, self.field_idle_interval_max, box = self._range_row(0.1, 30.0, 0.1, " s")
+        self.field_idle_interval_min, self.field_idle_interval_max, box = self._range_row(1, 30000, 10, " ms", decimals=0)
         form.addRow("Odstęp między kliknięciami:", box)
         self.field_drag_ms_min, self.field_drag_ms_max, box = self._range_row(50, 5000, 50, " ms", decimals=0)
         form.addRow("Czas przeciągania kulki:", box)
@@ -1380,7 +1380,7 @@ class MainWindow(QMainWindow):
         form = self._form()
         w.setLayout(form)
         form.addRow(self._hint("Automatyczny restart gry, gdy coś pójdzie nie tak. Wymaga pakietu gry "
-                               "(zakładka Ogólne)."))
+                               "(zakładka Instancja)."))
         self.field_black_timeout = QDoubleSpinBox(); self.field_black_timeout.setRange(5, 600)
         self.field_black_timeout.setSuffix(" s"); self.field_black_timeout.setDecimals(0)
         self.field_black_timeout.valueChanged.connect(self._apply_config_fields)
@@ -1747,8 +1747,9 @@ class MainWindow(QMainWindow):
             for f, v in zip((self.field_region_x1, self.field_region_y1,
                              self.field_region_x2, self.field_region_y2), region):
                 f.setValue(v)
-            self.field_idle_interval_min.setValue(cfg.idle_click_interval.min)
-            self.field_idle_interval_max.setValue(cfg.idle_click_interval.max)
+            # konfig trzyma sekundy, GUI pokazuje milisekundy
+            self.field_idle_interval_min.setValue(cfg.idle_click_interval.min * 1000)
+            self.field_idle_interval_max.setValue(cfg.idle_click_interval.max * 1000)
             self.field_drag_ms_min.setValue(cfg.drag_duration_ms.min)
             self.field_drag_ms_max.setValue(cfg.drag_duration_ms.max)
             self.field_hold_end_min.setValue(cfg.drag_end_hold_ms.min)
@@ -1932,9 +1933,9 @@ class MainWindow(QMainWindow):
         # niepełny / odwrócony prostokąt = cały ekran
         cfg.board_region = region if region[2] > region[0] and region[3] > region[1] else None
         # "do" mniejsze niż "od" przycinamy do "od"
+        lo_ms = self.field_idle_interval_min.value()
         cfg.idle_click_interval = RandomRange(
-            self.field_idle_interval_min.value(),
-            max(self.field_idle_interval_min.value(), self.field_idle_interval_max.value()))
+            lo_ms / 1000, max(lo_ms, self.field_idle_interval_max.value()) / 1000)
         cfg.drag_duration_ms = RandomRange(
             self.field_drag_ms_min.value(), max(self.field_drag_ms_min.value(), self.field_drag_ms_max.value()))
         cfg.drag_end_hold_ms = RandomRange(
