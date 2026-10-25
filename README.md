@@ -486,6 +486,15 @@ limitem (czerwony) - dokładnie to, co bot ułoży z danym ziarnem.
 Licznik limitu dziennego jest trzymany w pamięci — po ponownym
 uruchomieniu aplikacji liczy od zera.
 
+### Język interfejsu
+
+Domyślnie GUI jest po polsku. Wybór „English” na pasku narzędzi (obok motywu)
+przełącza etykiety, przyciski, podpowiedzi i zakładki na angielski - zmiana
+działa po ponownym uruchomieniu programu. Tłumaczenia są w pliku
+`translations_en.json` (polski tekst → angielski); tekst bez tłumaczenia
+zostaje po polsku. Po polsku pozostają komunikaty okien z pytaniami oraz
+wpisy logu i opisy działań bota.
+
 ## Krok 3: uruchomienie
 
 ### Opcja A: GUI (zalecane)

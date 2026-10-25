@@ -45,6 +45,8 @@ from PySide6.QtWidgets import (
 from bot import (BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULTS, DROP_CHOICES, DEPTH_MODES,
                  SPEED_MIN_PCT, SPEED_MAX_PCT, unknown_screens_dir)
 from scheduler import day_timeline, PLAY, BREAK, OFFLINE, LIMIT
+import i18n
+from i18n import tr
 from gui_worker import BotWorker, SnapshotWorker
 from preview_widget import PreviewWidget, EditMode
 from dashboard import DashboardWidget
@@ -143,7 +145,7 @@ def _hm(seconds: float) -> str:
     """Czas w formie „6 h 20 min” (albo „40 min”)."""
     minutes = round(seconds / 60)
     h, m = divmod(minutes, 60)
-    return f"{h} h {m:02d} min" if h else f"{m} min"
+    return f"{h} {tr('h')} {m:02d} {tr('min')}" if h else f"{m} {tr('min')}"
 
 
 class DayTimelineWidget(QWidget):
@@ -219,7 +221,7 @@ class DayTimelineWidget(QWidget):
             return
         s, e, kind = hit
         QToolTip.showText(event.globalPosition().toPoint(),
-                          f"{s:%H:%M}–{e:%H:%M}: {self.LABELS[kind]}", self)
+                          f"{s:%H:%M}–{e:%H:%M}: {tr(self.LABELS[kind])}", self)
 
 
 class ScheduleEditorDialog(QDialog):
@@ -377,7 +379,7 @@ class ScheduleEditorDialog(QDialog):
         for i in range(7):
             day = today + dt.timedelta(days=i)
             name = "dziś" if i == 0 else "jutro" if i == 1 else _DAY_LABELS[day.weekday()]
-            self.combo_day.addItem(f"{name}, {day:%d.%m}")
+            self.combo_day.addItem(f"{tr(name)}, {day:%d.%m}")
         day_row.addWidget(self.combo_day)
         day_row.addStretch(1)
         root.addLayout(day_row)
@@ -404,6 +406,7 @@ class ScheduleEditorDialog(QDialog):
         self.field_limit_min.valueChanged.connect(self._refresh_timeline)
         self.field_limit_max.valueChanged.connect(self._refresh_timeline)
         self.check_daily_limit.toggled.connect(self._refresh_timeline)
+        i18n.translate_tree(self)
 
     # ------------------------------------------------------------------ #
     def _minmax_row(self, minimum, maximum, step, decimals):
@@ -479,14 +482,15 @@ class ScheduleEditorDialog(QDialog):
             return sum((e - s).total_seconds() for s, e, k in segments if k == kind)
 
         sessions = sum(1 for _s, _e, k in segments if k == PLAY)
-        parts = [f"Sesje: {sessions}", f"gra {_hm(total(PLAY))}", f"przerwy {_hm(total(BREAK))}"]
+        parts = [f"{tr('Sesje')}: {sessions}", f"{tr('gra')} {_hm(total(PLAY))}",
+                 f"{tr('przerwy')} {_hm(total(BREAK))}"]
         if total(OFFLINE):
-            parts.append(f"poza oknami {_hm(total(OFFLINE))}")
+            parts.append(f"{tr('poza oknami')} {_hm(total(OFFLINE))}")
         limit_start = next((s for s, _e, k in segments if k == LIMIT), None)
         if limit_start is not None:
-            parts.append(f"limit dzienny wyczerpany o {limit_start:%H:%M}")
+            parts.append(f"{tr('limit dzienny wyczerpany o')} {limit_start:%H:%M}")
         if not self._windows:
-            parts.insert(0, "Brak okien – bot gra bez ograniczeń godzinowych.")
+            parts.insert(0, tr("Brak okien – bot gra bez ograniczeń godzinowych."))
         return " · ".join(parts)
 
     def _refresh_list(self, select_row: int | None = None) -> None:
@@ -719,8 +723,8 @@ class MainWindow(QMainWindow):
         for text, tip in (("📋  Przegląd", "Wszystkie instancje: podgląd, liczby, akcje dla wszystkich"),
                           ("⚙  Instancje", "Podgląd na żywo i ustawienia wybranej instancji"),
                           ("🧾  Log akcji", "Zapis każdej akcji bota do CSV i jego podgląd")):
-            item = QListWidgetItem(text)
-            item.setToolTip(tip)
+            item = QListWidgetItem(tr(text))
+            item.setToolTip(tr(tip))
             self.nav.addItem(item)
         rail_lay.addWidget(self.nav, 1)
         self.nav_running = QLabel("")
@@ -761,8 +765,9 @@ class MainWindow(QMainWindow):
         vsplit.setStretchFactor(1, 1)
         vsplit.setSizes([640, 150])
 
-        self.statusBar().showMessage("Wybierz instancję z listy albo wykryj emulatory przyciskiem na pasku narzędzi.")
+        self.statusBar().showMessage(tr("Wybierz instancję z listy albo wykryj emulatory przyciskiem na pasku narzędzi."))
         self._set_config_form_enabled(False)
+        i18n.translate_tree(self)
 
     def _on_page_changed(self, index: int) -> None:
         if self.nav.currentRow() != index:
@@ -775,7 +780,7 @@ class MainWindow(QMainWindow):
             self._refresh_action_log()
 
     def _build_toolbar(self) -> None:
-        tb = self.addToolBar("Główne")
+        tb = self.addToolBar(tr("Główne"))
         tb.setMovable(False)
         tb.setFloatable(False)
         tb.setContextMenuPolicy(Qt.PreventContextMenu)
@@ -803,7 +808,7 @@ class MainWindow(QMainWindow):
         action("▶▶ Start wszystkich", self._start_all, "Uruchom bota na wszystkich instancjach")
         action("■■ Stop wszystkich", self._stop_all, "Zatrzymaj bota na wszystkich instancjach")
         tb.addSeparator()
-        tb.addWidget(QLabel(" 🌓 Motyw: "))
+        tb.addWidget(QLabel(" 🌓 Motyw: "))  # tekst przetłumaczy i18n.translate_tree
         self.theme_combo = QComboBox()
         for key, label in theme.THEMES.items():
             self.theme_combo.addItem(label, key)
@@ -812,6 +817,24 @@ class MainWindow(QMainWindow):
         self.theme_combo.currentIndexChanged.connect(
             lambda _i: theme.apply_theme(self.theme_combo.currentData()))
         tb.addWidget(self.theme_combo)
+
+        tb.addWidget(QLabel(" 🌐 Language: "))
+        self.language_combo = QComboBox()
+        for key, label in i18n.LANGUAGES.items():
+            self.language_combo.addItem(label, key)
+        self.language_combo.setCurrentIndex(max(0, self.language_combo.findData(i18n.current_language())))
+        self.language_combo.setToolTip("Interface language (applies after restarting the program)")
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        tb.addWidget(self.language_combo)
+
+    def _on_language_changed(self, _index: int) -> None:
+        lang = self.language_combo.currentData()
+        if lang == i18n.current_language():
+            return
+        i18n.set_language(lang)
+        QMessageBox.information(self, "Dust Mine Bot",
+                                "Restart the program to switch the interface language.\n"
+                                "Zmiana języka wymaga ponownego uruchomienia programu.")
 
     def _build_instances_panel(self) -> QWidget:
         panel = QWidget()
@@ -861,7 +884,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        self.preview_title = QLabel("<b>Podgląd</b> – wybierz instancję")
+        self.preview_title = QLabel(tr("<b>Podgląd</b> – wybierz instancję"))
         self.preview_title.setStyleSheet("font-size: 15px;")
         layout.addWidget(self.preview_title)
         legend = QLabel(
@@ -1631,7 +1654,7 @@ class MainWindow(QMainWindow):
         self.instance_list.setCurrentItem(item)
 
     def _format_list_label(self, entry: InstanceEntry) -> str:
-        status_pl = STATUS_LABELS_PL.get(entry.status, entry.status)
+        status_pl = tr(STATUS_LABELS_PL.get(entry.status, entry.status))
         if entry.status in ("idle", "collecting", "debris", "fishing") and entry.activity:
             status_pl = entry.activity  # dokładnie, co bot robi w tej chwili
         if entry.status in ("break", "offline") and entry.schedule_text:
@@ -1683,7 +1706,7 @@ class MainWindow(QMainWindow):
         self.selected_name = name
         entry = self.instances[name]
 
-        self.preview_title.setText(f"<b>Podgląd</b> - {name}")
+        self.preview_title.setText(f"<b>{tr('Podgląd')}</b> - {name}")
         self._load_fields_from_entry(entry)
         self._set_config_form_enabled(True)
 
@@ -1803,8 +1826,8 @@ class MainWindow(QMainWindow):
                 slider.speed_label.setText(self.speed_text(slider.value()))
             for key, (value, radius, _pick, _reset) in self.point_widgets.items():
                 x, y, r = getattr(cfg, key)
-                value.setText(f"x {x * 100:.1f}% · y {y * 100:.1f}% ekranu"
-                              + ("  (domyślny)" if (x, y, r) == POINT_DEFAULTS[key] else ""))
+                value.setText(f"x {x * 100:.1f}% · y {y * 100:.1f}% {tr('ekranu')}"
+                              + (f"  {tr('(domyślny)')}" if (x, y, r) == POINT_DEFAULTS[key] else ""))
                 radius.setValue(r * 100)
         finally:
             for w in fields:
@@ -1907,7 +1930,7 @@ class MainWindow(QMainWindow):
             w.setEnabled(enabled)
         if not enabled:
             self.schedule_summary_label.setText("—")
-            self.preview_title.setText("<b>Podgląd</b> – wybierz instancję")
+            self.preview_title.setText(tr("<b>Podgląd</b> – wybierz instancję"))
             self._show_stats(None)
         self._update_dependent_enabled()
 
@@ -2105,7 +2128,7 @@ class MainWindow(QMainWindow):
         entry.list_item.setData(Qt.UserRole, new_name)
         entry.list_item.setText(self._format_list_label(entry))
         self._rebuild_dashboard()
-        self.preview_title.setText(f"<b>Podgląd</b> - {new_name}")
+        self.preview_title.setText(f"<b>{tr('Podgląd')}</b> - {new_name}")
         self._log_local(f"Zmieniono nazwę instancji '{old_name}' -> '{new_name}'")
 
     # ------------------------------------------------------------------ #
@@ -2378,13 +2401,14 @@ class MainWindow(QMainWindow):
         def total(attr: str) -> int:
             return sum(getattr(e.last_stats, attr, 0) for e in self.instances.values() if e.last_stats)
         self.dashboard.set_summary(
-            f"Działa: <b>{running}/{len(self.instances)}</b> &nbsp;·&nbsp; łącznie: plansze {total('cycles')}, "
-            f"kulki {total('balls_collected')}, porażki {total('defeats')}, dropy {total('drops')}, "
-            f"rozebrane {total('salvaged')}, błędy {total('errors')}")
+            f"{tr('Działa')}: <b>{running}/{len(self.instances)}</b> &nbsp;·&nbsp; {tr('łącznie')}: "
+            f"{tr('plansze')} {total('cycles')}, {tr('kulki')} {total('balls_collected')}, "
+            f"{tr('porażki')} {total('defeats')}, {tr('dropy')} {total('drops')}, "
+            f"{tr('rozebrane')} {total('salvaged')}, {tr('błędy')} {total('errors')}")
         totals = {k: total(k) for k, _label in DashboardWidget.KPIS if k != "running"}
         totals["running"] = f"{running}/{len(self.instances)}"
         self.dashboard.set_totals(totals)
-        self.nav_running.setText(f"działa {running} z {len(self.instances)}")
+        self.nav_running.setText(f"{tr('działa')} {running} {tr('z')} {len(self.instances)}")
 
     def _rebuild_dashboard(self) -> None:
         self.dashboard.rebuild([(n, e.serial) for n, e in self.instances.items()])
@@ -2395,6 +2419,7 @@ class MainWindow(QMainWindow):
         if not self.instances:
             self.dashboard.set_totals({"running": "0/0"})
             self.nav_running.setText("")
+        i18n.translate_tree(self.dashboard)
 
 
     def _restart_app_selected(self) -> None:
