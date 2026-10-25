@@ -1224,6 +1224,15 @@ class MainWindow(QMainWindow):
         self.field_mistake.setSpecialValueText("wyłączone")
         self.field_mistake.valueChanged.connect(self._apply_config_fields)
         form.addRow("Szansa na drobną pomyłkę:", self.field_mistake)
+        self.field_detect_chance = QDoubleSpinBox(); self.field_detect_chance.setRange(0.0, 100.0)
+        self.field_detect_chance.setSingleStep(5.0); self.field_detect_chance.setDecimals(0)
+        self.field_detect_chance.setSuffix(" %"); self.field_detect_chance.setSpecialValueText("wyłączone")
+        self.field_detect_chance.setToolTip("Jak często bot zauważa minigrę z opóźnieniem - np. odwraca uwagę "
+                                            "i dopiero po chwili reaguje.")
+        self.field_detect_chance.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Szansa na opóźnione wykrycie minigry:", self.field_detect_chance)
+        self.field_detect_min, self.field_detect_max, box = self._range_row(0.0, 30.0, 0.5, " s")
+        form.addRow("Opóźnienie wykrycia minigry:", box)
         form.addRow(self._hint("Pomyłka = puszczenie kulki tuż obok DROP albo kliknięcie obok kafelka. "
                                "Bot od razu to poprawia, więc kosztuje tylko chwilę, a 100% skuteczności "
                                "wygląda nieludzko. Czasy są losowane częściej bliżej dolnej granicy, "
@@ -1793,7 +1802,8 @@ class MainWindow(QMainWindow):
                 self.field_pts_far_min, self.field_pts_far_max, self.field_pts_far_radii,
                 self.field_drag_points_custom, self.field_drag_points_min, self.field_drag_points_max,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
-                self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
+                self.field_mistake, self.field_detect_chance, self.field_detect_min, self.field_detect_max,
+                self.field_proc_width, self.field_capture, self.field_turbo,
                 self.field_play_debris, self.field_tile_min, self.field_tile_max, self.field_tile_by_distance,
                 self.field_tile_mult_min, self.field_tile_mult_max,
                 self.field_skip_fishing, self.field_fishing_aim,
@@ -1871,6 +1881,9 @@ class MainWindow(QMainWindow):
             self.field_hold_min.setValue(cfg.tap_hold_ms.min)
             self.field_hold_max.setValue(cfg.tap_hold_ms.max)
             self.field_mistake.setValue(cfg.mistake_chance * 100)
+            self.field_detect_chance.setValue(cfg.minigame_detect_delay_chance * 100)
+            self.field_detect_min.setValue(cfg.minigame_detect_delay.min)
+            self.field_detect_max.setValue(cfg.minigame_detect_delay.max)
             self.field_proc_width.setValue(max(0, cfg.processing_width))
             self.field_capture.setCurrentIndex(max(0, self.field_capture.findData(cfg.capture_method)))
             self.field_play_debris.setChecked(cfg.play_debris)
@@ -2101,6 +2114,9 @@ class MainWindow(QMainWindow):
         cfg.tap_hold_ms = RandomRange(
             self.field_hold_min.value(), max(self.field_hold_min.value(), self.field_hold_max.value()))
         cfg.mistake_chance = self.field_mistake.value() / 100.0
+        cfg.minigame_detect_delay_chance = self.field_detect_chance.value() / 100.0
+        detect_lo = self.field_detect_min.value()
+        cfg.minigame_detect_delay = RandomRange(detect_lo, max(detect_lo, self.field_detect_max.value()))
         cfg.processing_width = self.field_proc_width.value()
         cfg.capture_method = self.field_capture.currentData() or "scrcpy"
         cfg.play_debris = self.field_play_debris.isChecked()

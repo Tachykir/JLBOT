@@ -230,6 +230,10 @@ class BotConfig:
     # Czas reakcji (s) od pojawienia się planszy / minigry do pierwszego
     # ruchu - człowiek potrzebuje chwili, żeby zauważyć zmianę ekranu.
     reaction_delay: RandomRange = field(default_factory=lambda: RandomRange(0.4, 1.8))
+    # Szansa (0-1), że bot zauważy minigrę z dodatkowym opóźnieniem (np. odwróci
+    # uwagę), i długość tego opóźnienia (s). Domyślnie wyłączone; w turbo pomijane.
+    minigame_detect_delay_chance: float = 0.0
+    minigame_detect_delay: RandomRange = field(default_factory=lambda: RandomRange(2.0, 5.0))
     # Jak długo palec trzyma tapnięcie (ms). Zwykłe `input tap` to dotyk
     # 0 ms, zawsze identyczny; prawdziwy trwa ~50-150 ms i lekko się przesuwa.
     tap_hold_ms: RandomRange = field(default_factory=lambda: RandomRange(50, 150))
@@ -509,6 +513,17 @@ class BotConfig:
             if bend.min < 0 or bend.max < bend.min:
                 raise ValueError(f"[{d.name}] drag_bend musi być >= 0 i od <= do: {data['drag_bend']!r}")
             d.drag_bend = bend
+        if "minigame_detect_delay_chance" in data:
+            d.minigame_detect_delay_chance = float(data["minigame_detect_delay_chance"])
+            if not 0.0 <= d.minigame_detect_delay_chance <= 1.0:
+                raise ValueError(f"[{d.name}] minigame_detect_delay_chance musi być w zakresie 0-1: "
+                                 f"{d.minigame_detect_delay_chance!r}")
+        if data.get("minigame_detect_delay") is not None:
+            delay = RandomRange.from_value(data["minigame_detect_delay"])
+            if delay.min < 0 or delay.max < delay.min:
+                raise ValueError(f"[{d.name}] minigame_detect_delay musi być >= 0 i od <= do: "
+                                 f"{data['minigame_detect_delay']!r}")
+            d.minigame_detect_delay = delay
         if "drag_jitter_px" in data:
             d.drag_jitter_px = float(data["drag_jitter_px"])
             if d.drag_jitter_px < 0:
@@ -653,6 +668,8 @@ class BotConfig:
             "drag_release_radius": self.drag_release_radius,
             "drag_points": self.drag_points.to_dict() if self.drag_points else None,
             "drag_jitter_px": self.drag_jitter_px,
+            "minigame_detect_delay_chance": self.minigame_detect_delay_chance,
+            "minigame_detect_delay": self.minigame_detect_delay.to_dict(),
             "drag_bend": self.drag_bend.to_dict(),
             "drag_shape": self.drag_shape,
             "drag_bend_sign": self.drag_bend_sign,
@@ -1122,6 +1139,11 @@ class DustMineBot:
                 if kind is None:
                     # koniec sesji (albo stop) - wróć do harmonogramu
                     continue
+                if kind in ("debris", "fishing") and not self.config.turbo \
+                        and random.random() < self.config.minigame_detect_delay_chance:
+                    delay = self.config.minigame_detect_delay
+                    self._act(f"Minigra – zauważam ją z opóźnieniem")
+                    self._sleep(humanize.human_delay(delay.min, delay.max), speed_scaled=True)
                 self._react()
                 if kind == "dust":
                     self._collect_loop()

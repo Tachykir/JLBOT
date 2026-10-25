@@ -436,5 +436,9 @@
  "Sposób przeciągania:": "Drag style:",
  "Sposób przeciągania kulki. Presety to gotowe rodzaje gestu; działają zamiast ustawień ręcznych poniżej.": "How the ball is dragged. Presets are ready-made gesture types; they replace the manual settings below.",
  "Ustawienia ręczne z tej zakładki: czas, punkty, drżenie, wygięcie.": "Manual settings from this tab: timing, points, tremor, curve.",
- "Prosta linia od środka kulki do środka DROP.": "A straight line from the ball's centre to the centre of DROP."
+ "Prosta linia od środka kulki do środka DROP.": "A straight line from the ball's centre to the centre of DROP.",
+ "Szansa na opóźnione wykrycie minigry:": "Chance of a delayed minigame detection:",
+ "Opóźnienie wykrycia minigry:": "Minigame detection delay:",
+ "Jak często bot zauważa minigrę z opóźnieniem - np. odwraca uwagę i dopiero po chwili reaguje.": "How often the bot notices a minigame late - e.g. it gets distracted and reacts only after a moment.",
+ "Minigra – zauważam ją z opóźnieniem": "Minigame – noticing it late"
 }

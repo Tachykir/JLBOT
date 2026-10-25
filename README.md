@@ -163,6 +163,10 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   Androida), bot ją restartuje. `0` wyłącza. Aplikacje z
   `foreign_app_packages` (Google Play, przeglądarka) powodują restart
   natychmiast.
+- **`minigame_detect_delay_chance`** (domyślnie `0`) i **`minigame_detect_delay`**
+  (domyślnie `2–5` s) — szansa, że bot zauważy minigrę (Depth Collapse, Fishing)
+  z dodatkowym opóźnieniem, i długość tego opóźnienia. GUI: zakładka Tempo,
+  „Zachowanie jak człowiek”. W trybie turbo pomijane.
 - **`drag_style`** (domyślnie `"human"`) — `"human"`: przeciąganie po
   losowej krzywej (łuk C/S, przyspieszanie i zwalnianie, drżenie, czasem
   lekkie przestrzelenie celu), kulka łapana i puszczana w losowym
