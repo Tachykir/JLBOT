@@ -208,6 +208,13 @@ class BotConfig:
     drag_jitter_px: float = 1.2
     # Zakres wygięcia łuku toru przeciągnięcia (ułamek długości drogi).
     drag_bend: RandomRange = field(default_factory=lambda: RandomRange(0.04, 0.22))
+    # Liczba punktów toru zależna od odległości kulki od DROP. Gdy włączone,
+    # dolna i górna granica przechodzą liniowo od zakresu „blisko” (0) do
+    # „daleko” (odległość drag_points_far_radii promieni kulki i dalej).
+    drag_points_by_distance: bool = False
+    drag_points_near: RandomRange = field(default_factory=lambda: RandomRange(4, 7))
+    drag_points_far: RandomRange = field(default_factory=lambda: RandomRange(12, 16))
+    drag_points_far_radii: float = 10.0
 
     # --- "Ludzkie" zachowanie --- #
     # Czas reakcji (s) od pojawienia się planszy / minigry do pierwszego
@@ -464,6 +471,17 @@ class BotConfig:
             d.schedule = schedule_from_list(data["schedule"])
         if data.get("daily_limit_hours") is not None:
             d.daily_limit_hours = RandomRange.from_value(data["daily_limit_hours"])
+        d.drag_points_by_distance = bool(data.get("drag_points_by_distance", d.drag_points_by_distance))
+        for key in ("drag_points_near", "drag_points_far"):
+            if data.get(key) is not None:
+                rng_pts = RandomRange.from_value(data[key])
+                if rng_pts.min < 1 or rng_pts.max < rng_pts.min:
+                    raise ValueError(f"[{d.name}] {key} musi mieć minimum >= 1 i od <= do: {data[key]!r}")
+                setattr(d, key, rng_pts)
+        if "drag_points_far_radii" in data:
+            d.drag_points_far_radii = float(data["drag_points_far_radii"])
+            if d.drag_points_far_radii <= 0:
+                raise ValueError(f"[{d.name}] drag_points_far_radii musi być > 0: {d.drag_points_far_radii!r}")
         if data.get("drag_bend") is not None:
             bend = RandomRange.from_value(data["drag_bend"])
             if bend.min < 0 or bend.max < bend.min:
@@ -608,6 +626,10 @@ class BotConfig:
             "drag_points": self.drag_points.to_dict() if self.drag_points else None,
             "drag_jitter_px": self.drag_jitter_px,
             "drag_bend": self.drag_bend.to_dict(),
+            "drag_points_by_distance": self.drag_points_by_distance,
+            "drag_points_near": self.drag_points_near.to_dict(),
+            "drag_points_far": self.drag_points_far.to_dict(),
+            "drag_points_far_radii": self.drag_points_far_radii,
             "just_loot_click_radius": self.just_loot_click_radius,
             "reaction_delay": self.reaction_delay.to_dict(),
             "tap_hold_ms": self.tap_hold_ms.to_dict(),
@@ -2104,9 +2126,19 @@ class DustMineBot:
         ustawiona; inaczej zależy od długości - kolejne punkty najwyżej
         ~1.5 promienia kulki od siebie, żeby palec nie "przeskakiwał"
         dalej, niż kulka nadąża."""
-        pts = self.config.drag_points
-        jitter = self.config.drag_jitter_px
-        bend = (self.config.drag_bend.min, self.config.drag_bend.max)
+        cfg = self.config
+        pts = cfg.drag_points
+        jitter = cfg.drag_jitter_px
+        bend = (cfg.drag_bend.min, cfg.drag_bend.max)
+        if cfg.drag_points_by_distance:
+            dist = float(np.hypot(end[0] - start[0], end[1] - start[1]))
+            t = float(np.clip(dist / max(1.0, ball_r * cfg.drag_points_far_radii), 0.0, 1.0))
+            near, far = cfg.drag_points_near, cfg.drag_points_far
+            lo = int(round(near.min + (far.min - near.min) * t))
+            hi = int(round(near.max + (far.max - near.max) * t))
+            lo = max(1, lo)
+            return humanize.drag_path(start, end, min_points=lo, max_points=max(lo, hi),
+                                      jitter=jitter, bend=bend)
         if pts is not None:
             lo = int(pts.min)
             return humanize.drag_path(start, end, min_points=lo, max_points=max(lo, int(pts.max)),

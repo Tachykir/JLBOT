@@ -1268,6 +1268,22 @@ class MainWindow(QMainWindow):
         self.field_bend_min, self.field_bend_max, box = self._range_row(0, 100, 1, " %", decimals=0)
         box.setToolTip("Jak mocno tor wygina się w łuk - w procentach długości drogi kulki.")
         form.addRow("Wygięcie toru:", box)
+        self.field_pts_by_dist = QCheckBox("Liczba punktów zależy od odległości od DROP")
+        self.field_pts_by_dist.setToolTip("Gdy włączone, zamiast zakresu powyżej dolna i górna granica punktów "
+                                          "przechodzą między „blisko” a „daleko” od DROP.")
+        self.field_pts_by_dist.toggled.connect(self._apply_config_fields)
+        form.addRow(self.field_pts_by_dist)
+        self.field_pts_near_min, self.field_pts_near_max, box = self._range_row(1, 60, 1, " pkt", decimals=0)
+        form.addRow("Punkty, gdy kulka blisko DROP:", box)
+        self.field_pts_far_min, self.field_pts_far_max, box = self._range_row(1, 60, 1, " pkt", decimals=0)
+        form.addRow("Punkty, gdy kulka daleko od DROP:", box)
+        self.field_pts_far_radii = QDoubleSpinBox()
+        self.field_pts_far_radii.setRange(0.5, 100.0)
+        self.field_pts_far_radii.setSingleStep(0.5)
+        self.field_pts_far_radii.setSuffix(" promieni kulki")
+        self.field_pts_far_radii.setToolTip("Od takiej odległości (w promieniach kulki) obowiązuje zakres „daleko”.")
+        self.field_pts_far_radii.valueChanged.connect(self._apply_config_fields)
+        form.addRow("„Daleko” od odległości:", self.field_pts_far_radii)
         self.field_release_radius = self._percent_spin(
             "Gdzie nad DROP bot puszcza kulkę: 0 % = zawsze w środku DROP,\n"
             "100 % = losowo aż do jego brzegu.")
@@ -1774,6 +1790,8 @@ class MainWindow(QMainWindow):
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
                 self.field_grab_radius, self.field_release_radius, self.field_drag_jitter,
                 self.field_bend_min, self.field_bend_max,
+                self.field_pts_by_dist, self.field_pts_near_min, self.field_pts_near_max,
+                self.field_pts_far_min, self.field_pts_far_max, self.field_pts_far_radii,
                 self.field_drag_points_custom, self.field_drag_points_min, self.field_drag_points_max,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
@@ -1837,6 +1855,12 @@ class MainWindow(QMainWindow):
             self.field_drag_jitter.setValue(cfg.drag_jitter_px)
             self.field_bend_min.setValue(cfg.drag_bend.min * 100)
             self.field_bend_max.setValue(cfg.drag_bend.max * 100)
+            self.field_pts_by_dist.setChecked(cfg.drag_points_by_distance)
+            self.field_pts_near_min.setValue(cfg.drag_points_near.min)
+            self.field_pts_near_max.setValue(cfg.drag_points_near.max)
+            self.field_pts_far_min.setValue(cfg.drag_points_far.min)
+            self.field_pts_far_max.setValue(cfg.drag_points_far.max)
+            self.field_pts_far_radii.setValue(cfg.drag_points_far_radii)
             self.field_drag_points_custom.setChecked(cfg.drag_points is not None)
             pts = cfg.drag_points or RandomRange(4, 7)
             self.field_drag_points_min.setValue(pts.min)
@@ -2058,6 +2082,16 @@ class MainWindow(QMainWindow):
         cfg.drag_jitter_px = self.field_drag_jitter.value()
         bend_lo = self.field_bend_min.value()
         cfg.drag_bend = RandomRange(bend_lo / 100, max(bend_lo, self.field_bend_max.value()) / 100)
+        by_dist = self.field_pts_by_dist.isChecked()
+        near_lo = max(1, self.field_pts_near_min.value())
+        far_lo = max(1, self.field_pts_far_min.value())
+        cfg.drag_points_by_distance = by_dist
+        cfg.drag_points_near = RandomRange(near_lo, max(near_lo, self.field_pts_near_max.value()))
+        cfg.drag_points_far = RandomRange(far_lo, max(far_lo, self.field_pts_far_max.value()))
+        cfg.drag_points_far_radii = max(0.5, self.field_pts_far_radii.value())
+        for w in (self.field_pts_near_min, self.field_pts_near_max, self.field_pts_far_min,
+                  self.field_pts_far_max, self.field_pts_far_radii):
+            w.setEnabled(by_dist)
         custom = self.field_drag_points_custom.isChecked()
         self.field_drag_points_min.setEnabled(custom)
         self.field_drag_points_max.setEnabled(custom)

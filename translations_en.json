@@ -406,5 +406,12 @@
  "✔ Zastosuj preset": "✔ Apply preset",
  "Gotowe zestawy: czas, przytrzymanie, punkty toru, drżenie, wygięcie i punkty chwytu. Podgląd pokazuje wybrany preset.": "Ready-made sets: timing, hold, path points, tremor, curve and grab points. The preview shows the selected preset.",
  "Wygięcie toru:": "Path curve:",
- "Jak mocno tor wygina się w łuk - w procentach długości drogi kulki.": "How strongly the path bends into an arc - as a percentage of the ball's path length."
+ "Jak mocno tor wygina się w łuk - w procentach długości drogi kulki.": "How strongly the path bends into an arc - as a percentage of the ball's path length.",
+ "Liczba punktów zależy od odległości od DROP": "Point count depends on distance from DROP",
+ "Gdy włączone, zamiast zakresu powyżej dolna i górna granica punktów przechodzą między „blisko” a „daleko” od DROP.": "When on, instead of the range above, the lower and upper point bounds move between \"near\" and \"far\" from DROP.",
+ "Punkty, gdy kulka blisko DROP:": "Points when the ball is near DROP:",
+ "Punkty, gdy kulka daleko od DROP:": "Points when the ball is far from DROP:",
+ " promieni kulki": " ball radii",
+ "„Daleko” od odległości:": "\"Far\" from distance:",
+ "Od takiej odległości (w promieniach kulki) obowiązuje zakres „daleko”.": "From this distance (in ball radii) the \"far\" range applies."
 }
