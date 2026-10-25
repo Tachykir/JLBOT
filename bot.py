@@ -91,9 +91,6 @@ DEPTH_MODES = {
     "max_pct": "Maksymalna minus X%",
 }
 
-# mnożnik odstępu między kafelkami zależny od odległości (patrz tile_delay_by_distance)
-TILE_DISTANCE_FACTOR = (0.5, 3.0)
-
 PER_INSTANCE_FIELDS = ("name", "schedule", "schedule_seed", "daily_limit_hours", "close_game_during_break",
                        "schedule_poll_interval", "farm_depth", "depth_mode",
                        "depth_below_max_pct")
@@ -355,8 +352,9 @@ class BotConfig:
     tile_tap_delay: RandomRange = field(default_factory=lambda: RandomRange(0.05, 0.25))
     # Gdy włączone, odstęp między kafelkami rośnie z odległością do następnego
     # kafelka: zakres tile_tap_delay mnożony przez (odległość / rozmiar kafelka),
-    # ograniczony do TILE_DISTANCE_FACTOR. Sąsiednie kafelki = zakres bez zmian.
+    # w granicach tile_distance_multiplier. Sąsiednie kafelki = zakres bez zmian.
     tile_delay_by_distance: bool = False
+    tile_distance_multiplier: RandomRange = field(default_factory=lambda: RandomRange(0.5, 3.0))
     # "Fishing Hole": obsługuj minigrę (False = bot jej nie dotyka).
     skip_fishing: bool = True
     # True: celuj - CAST w chwili, gdy wskaźnik będzie na środku strefy
@@ -543,6 +541,12 @@ class BotConfig:
         if "tile_tap_delay" in data:
             d.tile_tap_delay = RandomRange.from_value(data["tile_tap_delay"])
         d.tile_delay_by_distance = bool(data.get("tile_delay_by_distance", d.tile_delay_by_distance))
+        if data.get("tile_distance_multiplier") is not None:
+            mult = RandomRange.from_value(data["tile_distance_multiplier"])
+            if mult.min <= 0 or mult.max < mult.min:
+                raise ValueError(f"[{d.name}] tile_distance_multiplier musi być dodatni i od <= do: "
+                                 f"{data['tile_distance_multiplier']!r}")
+            d.tile_distance_multiplier = mult
         if data.get("idle_target"):
             if data["idle_target"] not in ("just_loot", "fixed"):
                 raise ValueError(f"[{d.name}] idle_target musi być 'just_loot' albo 'fixed': {data['idle_target']!r}")
@@ -625,6 +629,7 @@ class BotConfig:
             "play_debris": self.play_debris,
             "tile_tap_delay": self.tile_tap_delay.to_dict(),
             "tile_delay_by_distance": self.tile_delay_by_distance,
+            "tile_distance_multiplier": self.tile_distance_multiplier.to_dict(),
             "skip_fishing": self.skip_fishing,
             "fishing_aim": self.fishing_aim,
             "fishing_latency_ms": self.fishing_latency_ms,
@@ -1898,7 +1903,8 @@ class DustMineBot:
                 if cfg.tile_delay_by_distance and idx + 1 < len(order):
                     nx, ny = order[idx + 1]
                     gap = float(np.hypot(nx - x, ny - y)) / max(det.tile_size, 1.0)
-                    factor = float(np.clip(gap, *TILE_DISTANCE_FACTOR))
+                    mult = cfg.tile_distance_multiplier
+                    factor = float(np.clip(gap, mult.min, mult.max))
                     lo, hi = lo * factor, hi * factor
                 self._sleep(humanize.human_delay(lo, hi), speed_scaled=True)
 

@@ -379,5 +379,7 @@
  "Odstęp między kliknięciami kafelków:": "Interval between tile taps:",
  "Odstęp między kolejnymi kliknięciami kafelków Depth Collapse. Losowany z zakresu.": "Interval between consecutive Depth Collapse tile taps. Drawn from the range.",
  "Odstęp zależy od odległości między kafelkami": "Interval depends on the distance between tiles",
- "Dalszy kafelek = dłuższy odstęp. Sąsiednie kafelki losują z podanego zakresu, dalsze - z zakresu pomnożonego przez odległość (0,5–3×).": "A farther tile = a longer interval. Neighbouring tiles draw from the given range, farther ones from the range multiplied by the distance (0.5–3×)."
+ "Dalszy kafelek = dłuższy odstęp. Sąsiednie kafelki losują z podanego zakresu, dalsze - z zakresu pomnożonego przez odległość (0,5–3×).": "A farther tile = a longer interval. Neighbouring tiles draw from the given range, farther ones from the range multiplied by the distance (0.5–3×).",
+ "Mnożnik odległości:": "Distance multiplier:",
+ "Mnożnik zakresu odstępu dla odległości między kafelkami: najbliższy kafelek dostaje „od”, najdalszy „do”, pomiędzy liniowo (odległość w rozmiarach kafelka).": "Multiplier of the interval range by distance between tiles: the nearest tile gets \"from\", the farthest \"to\", linearly in between (distance in tile sizes)."
 }

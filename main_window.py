@@ -1303,6 +1303,10 @@ class MainWindow(QMainWindow):
                                                "odległość (0,5–3×).")
         self.field_tile_by_distance.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_tile_by_distance)
+        self.field_tile_mult_min, self.field_tile_mult_max, box = self._range_row(0.1, 10.0, 0.1, "×", decimals=2)
+        box.setToolTip("Mnożnik zakresu odstępu dla odległości między kafelkami: najbliższy kafelek dostaje "
+                       "„od”, najdalszy „do”, pomiędzy liniowo (odległość w rozmiarach kafelka).")
+        form.addRow("Mnożnik odległości:", box)
         self.field_skip_fishing = QCheckBox("Fishing Hole – obsługuj minigrę")
         self.field_skip_fishing.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_skip_fishing)
@@ -1748,6 +1752,7 @@ class MainWindow(QMainWindow):
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
                 self.field_play_debris, self.field_tile_min, self.field_tile_max, self.field_tile_by_distance,
+                self.field_tile_mult_min, self.field_tile_mult_max,
                 self.field_skip_fishing, self.field_fishing_aim,
                 self.field_depth_mode, self.field_farm_depth, self.field_depth_pct, self.field_depth_interval,
                 self.field_loadout, self.field_depth_repeat, self.field_depth_push,
@@ -1820,6 +1825,8 @@ class MainWindow(QMainWindow):
             self.field_tile_min.setValue(cfg.tile_tap_delay.min * 1000)
             self.field_tile_max.setValue(cfg.tile_tap_delay.max * 1000)
             self.field_tile_by_distance.setChecked(cfg.tile_delay_by_distance)
+            self.field_tile_mult_min.setValue(cfg.tile_distance_multiplier.min)
+            self.field_tile_mult_max.setValue(cfg.tile_distance_multiplier.max)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
             self.field_fishing_aim.setCurrentIndex(0 if cfg.fishing_aim else 1)
             self.field_loadout.setText(cfg.loadout_name)
@@ -2015,6 +2022,11 @@ class MainWindow(QMainWindow):
         tile_lo = self.field_tile_min.value()
         cfg.tile_tap_delay = RandomRange(tile_lo / 1000, max(tile_lo, self.field_tile_max.value()) / 1000)
         cfg.tile_delay_by_distance = self.field_tile_by_distance.isChecked()
+        mult_lo = max(0.1, self.field_tile_mult_min.value())
+        cfg.tile_distance_multiplier = RandomRange(mult_lo, max(mult_lo, self.field_tile_mult_max.value()))
+        on = self.field_tile_by_distance.isChecked()
+        self.field_tile_mult_min.setEnabled(on)
+        self.field_tile_mult_max.setEnabled(on)
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
         cfg.fishing_aim = bool(self.field_fishing_aim.currentData())
         cfg.loadout_name = self.field_loadout.text().strip().upper()
