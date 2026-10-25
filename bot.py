@@ -206,6 +206,8 @@ class BotConfig:
     # Drżenie dłoni na torze przeciągnięcia: odchylenie w pikselach
     # (0 = palec idzie idealnie gładko).
     drag_jitter_px: float = 1.2
+    # Zakres wygięcia łuku toru przeciągnięcia (ułamek długości drogi).
+    drag_bend: RandomRange = field(default_factory=lambda: RandomRange(0.04, 0.22))
 
     # --- "Ludzkie" zachowanie --- #
     # Czas reakcji (s) od pojawienia się planszy / minigry do pierwszego
@@ -462,6 +464,11 @@ class BotConfig:
             d.schedule = schedule_from_list(data["schedule"])
         if data.get("daily_limit_hours") is not None:
             d.daily_limit_hours = RandomRange.from_value(data["daily_limit_hours"])
+        if data.get("drag_bend") is not None:
+            bend = RandomRange.from_value(data["drag_bend"])
+            if bend.min < 0 or bend.max < bend.min:
+                raise ValueError(f"[{d.name}] drag_bend musi być >= 0 i od <= do: {data['drag_bend']!r}")
+            d.drag_bend = bend
         if "drag_jitter_px" in data:
             d.drag_jitter_px = float(data["drag_jitter_px"])
             if d.drag_jitter_px < 0:
@@ -600,6 +607,7 @@ class BotConfig:
             "drag_release_radius": self.drag_release_radius,
             "drag_points": self.drag_points.to_dict() if self.drag_points else None,
             "drag_jitter_px": self.drag_jitter_px,
+            "drag_bend": self.drag_bend.to_dict(),
             "just_loot_click_radius": self.just_loot_click_radius,
             "reaction_delay": self.reaction_delay.to_dict(),
             "tap_hold_ms": self.tap_hold_ms.to_dict(),
@@ -2098,12 +2106,14 @@ class DustMineBot:
         dalej, niż kulka nadąża."""
         pts = self.config.drag_points
         jitter = self.config.drag_jitter_px
+        bend = (self.config.drag_bend.min, self.config.drag_bend.max)
         if pts is not None:
             lo = int(pts.min)
-            return humanize.drag_path(start, end, min_points=lo, max_points=max(lo, int(pts.max)), jitter=jitter)
+            return humanize.drag_path(start, end, min_points=lo, max_points=max(lo, int(pts.max)),
+                                      jitter=jitter, bend=bend)
         dist = float(np.hypot(end[0] - start[0], end[1] - start[1]))
         n = int(np.clip(dist / max(8.0, 1.5 * ball_r), 4, 14))
-        return humanize.drag_path(start, end, min_points=n, max_points=n + 2, jitter=jitter)
+        return humanize.drag_path(start, end, min_points=n, max_points=n + 2, jitter=jitter, bend=bend)
 
     def _adb_drag(self, path, duration: float, hold: float) -> None:
         try:

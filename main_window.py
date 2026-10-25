@@ -47,6 +47,8 @@ from bot import (BotConfig, BotStats, RandomRange, ScheduleWindow, POINT_DEFAULT
 from scheduler import day_timeline, PLAY, BREAK, OFFLINE, LIMIT
 import i18n
 from i18n import tr
+import swipe_presets
+from swipe_preview import SwipePreviewWidget
 from gui_worker import BotWorker, SnapshotWorker
 from preview_widget import PreviewWidget, EditMode
 from dashboard import DashboardWidget
@@ -1227,6 +1229,26 @@ class MainWindow(QMainWindow):
                                "wygląda nieludzko. Czasy są losowane częściej bliżej dolnej granicy, "
                                "czasem dłużej - jak u człowieka."))
 
+        form.addRow(self._section("Presety przeciągnięcia"))
+        self.preset_combo = QComboBox()
+        for preset in swipe_presets.PRESETS:
+            self.preset_combo.addItem(preset.name, preset.key)
+        self.preset_combo.setToolTip("Gotowe zestawy: czas, przytrzymanie, punkty toru, drżenie, wygięcie i "
+                                     "punkty chwytu. Podgląd pokazuje wybrany preset.")
+        self.btn_apply_preset = QPushButton("✔ Zastosuj preset")
+        self.btn_apply_preset.clicked.connect(self._apply_swipe_preset)
+        self.preset_desc = QLabel()
+        self.preset_desc.setWordWrap(True)
+        self.swipe_preview = SwipePreviewWidget()
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(self.preset_combo, 1)
+        preset_row.addWidget(self.btn_apply_preset)
+        form.addRow(preset_row)
+        form.addRow(self.preset_desc)
+        form.addRow(self.swipe_preview)
+        self.preset_combo.currentIndexChanged.connect(self._show_swipe_preset)
+        self._show_swipe_preset()
+
         form.addRow(self._section("Styl ruchu"))
         self.field_human_drag = QCheckBox("Ludzki ruch przy przeciąganiu")
         self.field_human_drag.toggled.connect(self._apply_config_fields)
@@ -1243,6 +1265,9 @@ class MainWindow(QMainWindow):
         box.setToolTip("Ile punktów pośrednich ma tor jednego przeciągnięcia - każdy to osobny ruch palca.\n"
                        "Mało punktów = bardziej prosty, „skokowy” ruch; dużo = płynniejszy, dłuższy gest.")
         form.addRow("Punkty na torze kulki:", box)
+        self.field_bend_min, self.field_bend_max, box = self._range_row(0, 100, 1, " %", decimals=0)
+        box.setToolTip("Jak mocno tor wygina się w łuk - w procentach długości drogi kulki.")
+        form.addRow("Wygięcie toru:", box)
         self.field_release_radius = self._percent_spin(
             "Gdzie nad DROP bot puszcza kulkę: 0 % = zawsze w środku DROP,\n"
             "100 % = losowo aż do jego brzegu.")
@@ -1748,6 +1773,7 @@ class MainWindow(QMainWindow):
                 self.field_drag_ms_min, self.field_drag_ms_max, self.field_hold_end_min, self.field_hold_end_max,
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
                 self.field_grab_radius, self.field_release_radius, self.field_drag_jitter,
+                self.field_bend_min, self.field_bend_max,
                 self.field_drag_points_custom, self.field_drag_points_min, self.field_drag_points_max,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
@@ -1809,6 +1835,8 @@ class MainWindow(QMainWindow):
             self.field_grab_radius.setValue(cfg.drag_grab_radius * 100)
             self.field_release_radius.setValue(cfg.drag_release_radius * 100)
             self.field_drag_jitter.setValue(cfg.drag_jitter_px)
+            self.field_bend_min.setValue(cfg.drag_bend.min * 100)
+            self.field_bend_max.setValue(cfg.drag_bend.max * 100)
             self.field_drag_points_custom.setChecked(cfg.drag_points is not None)
             pts = cfg.drag_points or RandomRange(4, 7)
             self.field_drag_points_min.setValue(pts.min)
@@ -1872,6 +1900,31 @@ class MainWindow(QMainWindow):
             self._show_stats(entry.last_stats)
         else:
             self.schedule_summary_label.setText("—")
+        self._refresh_swipe_preview()
+
+    def _show_swipe_preset(self, *_) -> None:
+        """Opis i podgląd wybranego presetu (jeszcze nie zastosowanego)."""
+        preset = swipe_presets.get(self.preset_combo.currentData())
+        self.preset_desc.setText(tr(preset.description))
+        self.swipe_preview.set_values(swipe_presets.values_from_config(self._preset_config(preset.key)))
+
+    @staticmethod
+    def _preset_config(key: str) -> BotConfig:
+        cfg = BotConfig(name="preset")
+        swipe_presets.apply(cfg, key)
+        return cfg
+
+    def _apply_swipe_preset(self) -> None:
+        swipe_presets.apply(self.shared_config, self.preset_combo.currentData())
+        self._sync_shared(self.shared_config)
+        self._load_fields_from_entry(self._current_entry())
+        self._mark_dirty()
+
+    def _refresh_swipe_preview(self) -> None:
+        """Podgląd pokazuje ustawienia, które bot faktycznie będzie używał."""
+        preview = getattr(self, "swipe_preview", None)
+        if preview is not None:
+            preview.set_values(swipe_presets.values_from_config(self.shared_config))
 
     def _show_stats(self, stats: BotStats | None) -> None:
         for key, _title in _STAT_FIELDS:
@@ -2003,6 +2056,8 @@ class MainWindow(QMainWindow):
         cfg.drag_grab_radius = self.field_grab_radius.value() / 100.0
         cfg.drag_release_radius = self.field_release_radius.value() / 100.0
         cfg.drag_jitter_px = self.field_drag_jitter.value()
+        bend_lo = self.field_bend_min.value()
+        cfg.drag_bend = RandomRange(bend_lo / 100, max(bend_lo, self.field_bend_max.value()) / 100)
         custom = self.field_drag_points_custom.isChecked()
         self.field_drag_points_min.setEnabled(custom)
         self.field_drag_points_max.setEnabled(custom)
@@ -2070,6 +2125,7 @@ class MainWindow(QMainWindow):
         # działają od razu, bez restartu wątku.
         self.preview.set_known_config(self._shown_idle_point(cfg), cfg.board_region, cfg.idle_point_radius)
         self._update_preview_points()
+        self._refresh_swipe_preview()
 
     @staticmethod
     def _shown_idle_point(cfg: BotConfig):

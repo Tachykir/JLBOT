@@ -58,13 +58,15 @@ def _bezier(p0, p1, p2, p3, t: float) -> tuple[float, float]:
 
 
 def drag_path(start: Point, end: Point, rng=random,
-              min_points: int = 4, max_points: int = 7, jitter: float = 1.2) -> list[Point]:
+              min_points: int = 4, max_points: int = 7, jitter: float = 1.2,
+              bend: tuple[float, float] = (0.04, 0.22)) -> list[Point]:
     """
     Zwraca listę punktów od `start` do `end` (włącznie) po losowej,
     naturalnie wyglądającej krzywej. Liczba punktów pośrednich jest
     losowana z [min_points, max_points] - każdy punkt to osobny event
     ruchu, więc nie ma sensu generować ich setek. `jitter` to odchylenie
-    drżenia dłoni w pikselach (0 = bez drżenia).
+    drżenia dłoni w pikselach (0 = bez drżenia), a `bend` to zakres
+    wygięcia łuku jako ułamek długości drogi.
     """
     x0, y0 = start
     x3, y3 = end
@@ -75,14 +77,14 @@ def drag_path(start: Point, end: Point, rng=random,
 
     # wektor prostopadły do kierunku ruchu - w tę stronę wyginamy łuk
     nx, ny = -dy / dist, dx / dist
-    bend = rng.uniform(0.04, 0.22) * dist * rng.choice((-1, 1))
+    bend_amount = rng.uniform(*bend) * dist * rng.choice((-1, 1))
     style = rng.random()
     if style < 0.25:
-        b1, b2 = bend, -bend * rng.uniform(0.5, 1.0)       # S
+        b1, b2 = bend_amount, -bend_amount * rng.uniform(0.5, 1.0)  # S
     elif style < 0.85:
-        b1, b2 = bend, bend * rng.uniform(0.6, 1.2)        # C
+        b1, b2 = bend_amount, bend_amount * rng.uniform(0.6, 1.2)  # C
     else:
-        b1 = b2 = bend * 0.15                               # prawie prosto
+        b1 = b2 = bend_amount * 0.15                          # prawie prosto
 
     t1, t2 = rng.uniform(0.2, 0.4), rng.uniform(0.6, 0.8)
     p1 = (x0 + dx * t1 + nx * b1, y0 + dy * t1 + ny * b1)
