@@ -413,5 +413,22 @@
  "Punkty, gdy kulka daleko od DROP:": "Points when the ball is far from DROP:",
  " promieni kulki": " ball radii",
  "„Daleko” od odległości:": "\"Far\" from distance:",
- "Od takiej odległości (w promieniach kulki) obowiązuje zakres „daleko”.": "From this distance (in ball radii) the \"far\" range applies."
+ "Od takiej odległości (w promieniach kulki) obowiązuje zakres „daleko”.": "From this distance (in ball radii) the \"far\" range applies.",
+ "Ustawienia fabryczne bota - mieszanka łuków i prostych.": "Factory settings of the bot - a mix of arcs and straight moves.",
+ "Prosty skok": "Fast jump",
+ "Krótki, prawie prosty gest - kulka leci od razu na DROP.": "A short, nearly straight gesture - the ball flies straight to DROP.",
+ "Łuk w górę": "Arc up",
+ "Palec idzie łukiem w jedną stronę, wyraźnie wygięty.": "The finger travels in a clear arc, bending one way.",
+ "Łuk w dół": "Arc down",
+ "Jak „Łuk w górę”, tylko w drugą stronę.": "Like \"Arc up\", but bending the other way.",
+ "Litera S": "S-curve",
+ "Tor zmienia stronę w połowie drogi - ruch jak litera S.": "The path changes side halfway - a movement like the letter S.",
+ "Zygzak": "Zigzag",
+ "Palec przeskakuje naprzemiennie na obie strony prostej.": "The finger jumps alternately to both sides of a straight line.",
+ "Przestrzelenie": "Overshoot",
+ "Palec mija DROP i wraca - zawsze, nie tylko czasem.": "The finger passes DROP and comes back - every time, not just sometimes.",
+ "Szeroki łuk": "Wide arc",
+ "Bardzo szeroki, długi łuk z dużą liczbą punktów.": "A very wide, long arc with many points.",
+ "Szarpany tor, mocno drżący, często przestrzeliwany.": "A jerky, strongly shaking path that often overshoots.",
+ "Losowo wszystko: kształt, czas, drżenie i punkty chwytu.": "Everything random: shape, timing, tremor and grab points."
 }

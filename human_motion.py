@@ -57,17 +57,27 @@ def _bezier(p0, p1, p2, p3, t: float) -> tuple[float, float]:
     return x, y
 
 
+SHAPES = ("auto", "straight", "arc", "s", "zigzag")
+
+
 def drag_path(start: Point, end: Point, rng=random,
               min_points: int = 4, max_points: int = 7, jitter: float = 1.2,
-              bend: tuple[float, float] = (0.04, 0.22)) -> list[Point]:
+              bend: tuple[float, float] = (0.04, 0.22), shape: str = "auto",
+              bend_sign: int | None = None, overshoot: float = 0.2) -> list[Point]:
     """
-    Zwraca listę punktów od `start` do `end` (włącznie) po losowej,
-    naturalnie wyglądającej krzywej. Liczba punktów pośrednich jest
-    losowana z [min_points, max_points] - każdy punkt to osobny event
-    ruchu, więc nie ma sensu generować ich setek. `jitter` to odchylenie
-    drżenia dłoni w pikselach (0 = bez drżenia), a `bend` to zakres
-    wygięcia łuku jako ułamek długości drogi.
+    Zwraca listę punktów od `start` do `end` (włącznie) po krzywej.
+    Liczba punktów pośrednich jest losowana z [min_points, max_points] -
+    każdy punkt to osobny event ruchu, więc nie ma sensu generować ich setek.
+
+    `jitter` - odchylenie drżenia dłoni w pikselach (0 = bez drżenia).
+    `bend`   - zakres wygięcia łuku jako ułamek długości drogi.
+    `shape`  - kształt toru (patrz SHAPES): "auto" losuje jak dotąd,
+               "straight" prosta, "arc" łuk, "s" litera S, "zigzag" zygzak.
+    `bend_sign` - w którą stronę wygina się łuk (1 / -1); None = losowo.
+    `overshoot` - prawdopodobieństwo przestrzelenia celu i powrotu.
     """
+    if shape not in SHAPES:
+        raise ValueError(f"nieznany kształt toru: {shape!r}")
     x0, y0 = start
     x3, y3 = end
     dx, dy = x3 - x0, y3 - y0
@@ -77,30 +87,42 @@ def drag_path(start: Point, end: Point, rng=random,
 
     # wektor prostopadły do kierunku ruchu - w tę stronę wyginamy łuk
     nx, ny = -dy / dist, dx / dist
-    bend_amount = rng.uniform(*bend) * dist * rng.choice((-1, 1))
-    style = rng.random()
-    if style < 0.25:
-        b1, b2 = bend_amount, -bend_amount * rng.uniform(0.5, 1.0)  # S
-    elif style < 0.85:
-        b1, b2 = bend_amount, bend_amount * rng.uniform(0.6, 1.2)  # C
-    else:
-        b1 = b2 = bend_amount * 0.15                          # prawie prosto
-
-    t1, t2 = rng.uniform(0.2, 0.4), rng.uniform(0.6, 0.8)
-    p1 = (x0 + dx * t1 + nx * b1, y0 + dy * t1 + ny * b1)
-    p2 = (x0 + dx * t2 + nx * b2, y0 + dy * t2 + ny * b2)
-
+    sign = bend_sign if bend_sign in (1, -1) else rng.choice((-1, 1))
+    bend_amount = rng.uniform(*bend) * dist * sign
     n = rng.randint(min_points, max_points)
-    points: list[Point] = [start]
-    for i in range(1, n + 1):
-        t = _ease_in_out(i / (n + 1))
-        x, y = _bezier(start, p1, p2, end, t)
-        # drżenie dłoni
-        x += rng.gauss(0.0, jitter)
-        y += rng.gauss(0.0, jitter)
-        points.append((int(round(x)), int(round(y))))
 
-    if rng.random() < 0.2:
+    points: list[Point] = [start]
+    if shape == "zigzag":
+        # naprzemiennie w lewo i w prawo od prostej, równomierne kroki
+        for i in range(1, n + 1):
+            t = i / (n + 1)
+            side = bend_amount * (1 if i % 2 else -1)
+            x = x0 + dx * t + nx * side
+            y = y0 + dy * t + ny * side
+            x += rng.gauss(0.0, jitter)
+            y += rng.gauss(0.0, jitter)
+            points.append((int(round(x)), int(round(y))))
+    else:
+        style = rng.random()  # dla "auto": 25 % S, 60 % łuk C, 15 % prawie prosto
+        if shape == "straight" or (shape == "auto" and style >= 0.85):
+            b1 = b2 = bend_amount * 0.15 if shape == "auto" else 0.0
+        elif shape == "s" or (shape == "auto" and style < 0.25):
+            b1, b2 = bend_amount, -bend_amount * rng.uniform(0.5, 1.0)  # S
+        else:  # "arc" albo auto-C
+            b1, b2 = bend_amount, bend_amount * rng.uniform(0.6, 1.2)  # C
+
+        t1, t2 = rng.uniform(0.2, 0.4), rng.uniform(0.6, 0.8)
+        p1 = (x0 + dx * t1 + nx * b1, y0 + dy * t1 + ny * b1)
+        p2 = (x0 + dx * t2 + nx * b2, y0 + dy * t2 + ny * b2)
+        for i in range(1, n + 1):
+            t = _ease_in_out(i / (n + 1))
+            x, y = _bezier(start, p1, p2, end, t)
+            # drżenie dłoni
+            x += rng.gauss(0.0, jitter)
+            y += rng.gauss(0.0, jitter)
+            points.append((int(round(x)), int(round(y))))
+
+    if rng.random() < overshoot:
         # lekkie "przestrzelenie" celu i powrót
         over = rng.uniform(0.03, 0.08) * dist
         side = rng.gauss(0.0, 0.02 * dist)

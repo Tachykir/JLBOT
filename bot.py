@@ -208,6 +208,12 @@ class BotConfig:
     drag_jitter_px: float = 1.2
     # Zakres wygięcia łuku toru przeciągnięcia (ułamek długości drogi).
     drag_bend: RandomRange = field(default_factory=lambda: RandomRange(0.04, 0.22))
+    # Kształt toru: "auto" (losowo jak dotąd), "straight", "arc", "s", "zigzag"
+    drag_shape: str = "auto"
+    # Kierunek wygięcia: 1, -1 albo 0 = losowo
+    drag_bend_sign: int = 0
+    # Prawdopodobieństwo przestrzelenia celu i powrotu (0-1)
+    drag_overshoot: float = 0.2
     # Liczba punktów toru zależna od odległości kulki od DROP. Gdy włączone,
     # dolna i górna granica przechodzą liniowo od zakresu „blisko” (0) do
     # „daleko” (odległość drag_points_far_radii promieni kulki i dalej).
@@ -482,6 +488,18 @@ class BotConfig:
             d.drag_points_far_radii = float(data["drag_points_far_radii"])
             if d.drag_points_far_radii <= 0:
                 raise ValueError(f"[{d.name}] drag_points_far_radii musi być > 0: {d.drag_points_far_radii!r}")
+        if data.get("drag_shape"):
+            if data["drag_shape"] not in ("auto", "straight", "arc", "s", "zigzag"):
+                raise ValueError(f"[{d.name}] drag_shape musi być auto/straight/arc/s/zigzag: {data['drag_shape']!r}")
+            d.drag_shape = data["drag_shape"]
+        if "drag_bend_sign" in data:
+            d.drag_bend_sign = int(data["drag_bend_sign"])
+            if d.drag_bend_sign not in (-1, 0, 1):
+                raise ValueError(f"[{d.name}] drag_bend_sign musi być -1, 0 albo 1: {d.drag_bend_sign!r}")
+        if "drag_overshoot" in data:
+            d.drag_overshoot = float(data["drag_overshoot"])
+            if not 0.0 <= d.drag_overshoot <= 1.0:
+                raise ValueError(f"[{d.name}] drag_overshoot musi być w zakresie 0-1: {d.drag_overshoot!r}")
         if data.get("drag_bend") is not None:
             bend = RandomRange.from_value(data["drag_bend"])
             if bend.min < 0 or bend.max < bend.min:
@@ -626,6 +644,9 @@ class BotConfig:
             "drag_points": self.drag_points.to_dict() if self.drag_points else None,
             "drag_jitter_px": self.drag_jitter_px,
             "drag_bend": self.drag_bend.to_dict(),
+            "drag_shape": self.drag_shape,
+            "drag_bend_sign": self.drag_bend_sign,
+            "drag_overshoot": self.drag_overshoot,
             "drag_points_by_distance": self.drag_points_by_distance,
             "drag_points_near": self.drag_points_near.to_dict(),
             "drag_points_far": self.drag_points_far.to_dict(),
@@ -2130,6 +2151,8 @@ class DustMineBot:
         pts = cfg.drag_points
         jitter = cfg.drag_jitter_px
         bend = (cfg.drag_bend.min, cfg.drag_bend.max)
+        shape = dict(shape=cfg.drag_shape, bend_sign=cfg.drag_bend_sign or None,
+                     overshoot=cfg.drag_overshoot)
         if cfg.drag_points_by_distance:
             dist = float(np.hypot(end[0] - start[0], end[1] - start[1]))
             t = float(np.clip(dist / max(1.0, ball_r * cfg.drag_points_far_radii), 0.0, 1.0))
@@ -2138,14 +2161,15 @@ class DustMineBot:
             hi = int(round(near.max + (far.max - near.max) * t))
             lo = max(1, lo)
             return humanize.drag_path(start, end, min_points=lo, max_points=max(lo, hi),
-                                      jitter=jitter, bend=bend)
+                                      jitter=jitter, bend=bend, **shape)
         if pts is not None:
             lo = int(pts.min)
             return humanize.drag_path(start, end, min_points=lo, max_points=max(lo, int(pts.max)),
-                                      jitter=jitter, bend=bend)
+                                      jitter=jitter, bend=bend, **shape)
         dist = float(np.hypot(end[0] - start[0], end[1] - start[1]))
         n = int(np.clip(dist / max(8.0, 1.5 * ball_r), 4, 14))
-        return humanize.drag_path(start, end, min_points=n, max_points=n + 2, jitter=jitter, bend=bend)
+        return humanize.drag_path(start, end, min_points=n, max_points=n + 2, jitter=jitter, bend=bend,
+                                  **shape)
 
     def _adb_drag(self, path, duration: float, hold: float) -> None:
         try:
