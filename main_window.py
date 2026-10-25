@@ -2252,14 +2252,13 @@ class MainWindow(QMainWindow):
         self.preview.set_named_points([])
         on_shared = self.main_tabs.currentWidget() is self.shared_page
         entry = self._preview_source_entry()
-        on_points_tab = on_shared and self.shared_tabs.tabText(self.shared_tabs.currentIndex()) == "Punkty"
-        if entry is None or not on_points_tab:
+        if entry is None or not on_shared:
             self.shared_preview.set_named_points([])
             return
         pts = []
         for key, label, color in _POINTS:
             x, y, r = getattr(self.shared_config, key)
-            pts.append((label.split(" (")[0], x, y, r, color))
+            pts.append((tr(label.split(" (")[0]), x, y, r, color))
         self.shared_preview.set_named_points(pts)
 
     def _pick_point(self, key: str) -> None:

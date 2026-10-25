@@ -449,5 +449,11 @@
  "Brak instancji": "No instances",
  "Dodaj instancję, żeby mieć podgląd ekranu gry do wskazywania punktów.": "Add an instance to get a game screen preview for picking points.",
  "Pobiera zrzut ekranu z wybranej instancji (gdy bot jest zatrzymany)": "Takes a screenshot from the selected instance (when the bot is stopped)",
- "Pobiera zrzut ekranu z pierwszej instancji (gdy bot jest zatrzymany)": "Takes a screenshot from the first instance (when the bot is stopped)"
+ "Pobiera zrzut ekranu z pierwszej instancji (gdy bot jest zatrzymany)": "Takes a screenshot from the first instance (when the bot is stopped)",
+ "Zakładka PROFILE": "PROFILE tab",
+ "Zakładka CRAFT": "CRAFT tab",
+ "Zakładka INVENTORY": "INVENTORY tab",
+ "Zakładka LOOT PACKS": "LOOT PACKS tab",
+ "Karta bez przycisku": "Card without a button",
+ "Karta bez przycisku („tap anywhere”)": "Card without a button („tap anywhere”)"
 }
