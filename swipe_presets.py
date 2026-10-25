@@ -50,16 +50,12 @@ PRESETS: list[SwipePreset] = [
                 "arc", 1, (0.25, 0.35), 0.1, (900, 1200), (200, 300), (8, 11), 0.5, 0.4, 0.3),
     SwipePreset("s_curve", "Litera S", "Tor zmienia stronę w połowie drogi - ruch jak litera S.",
                 "s", 0, (0.20, 0.30), 0.1, (900, 1200), (200, 300), (8, 10), 0.8, 0.4, 0.3),
-    SwipePreset("zigzag", "Zygzak", "Palec przeskakuje naprzemiennie na obie strony prostej.",
-                "zigzag", 0, (0.10, 0.16), 0.0, (1000, 1400), (200, 300), (9, 13), 0.5, 0.4, 0.3),
     SwipePreset("overshoot", "Przestrzelenie", "Palec mija DROP i wraca - zawsze, nie tylko czasem.",
                 "straight", 0, (0.0, 0.01), 1.0, (400, 600), (80, 150), (3, 4), 0.3, 0.3, 0.6),
     SwipePreset("wide_arc", "Szeroki łuk", "Bardzo szeroki, długi łuk z dużą liczbą punktów.",
                 "arc", 0, (0.35, 0.45), 0.1, (1500, 2000), (300, 400), (14, 18), 0.6, 0.4, 0.3),
     SwipePreset("nervous", "Nerwowy", "Szarpany tor, mocno drżący, często przestrzeliwany.",
                 "auto", 0, (0.15, 0.30), 0.5, (500, 900), (120, 250), (5, 9), 3.0, 0.6, 0.5),
-    SwipePreset("chaos", "Chaos", "Losowo wszystko: kształt, czas, drżenie i punkty chwytu.",
-                "auto", 0, (0.10, 0.35), 0.4, (300, 1500), (50, 400), (4, 12), 4.0, 0.8, 0.8),
 ]
 
 _BY_KEY = {p.key: p for p in PRESETS}
