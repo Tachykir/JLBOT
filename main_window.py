@@ -1294,6 +1294,9 @@ class MainWindow(QMainWindow):
         self.field_play_debris.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_play_debris)
         form.addRow(self._hint("Brązowe kafelki „TAP” - bot klika wszystkie przed końcem czasu."))
+        self.field_tile_min, self.field_tile_max, box = self._range_row(1, 5000, 10, " ms", decimals=0)
+        box.setToolTip("Odstęp między kolejnymi kliknięciami kafelków Depth Collapse. Losowany z zakresu.")
+        form.addRow("Odstęp między kliknięciami kafelków:", box)
         self.field_skip_fishing = QCheckBox("Fishing Hole – obsługuj minigrę")
         self.field_skip_fishing.toggled.connect(self._apply_config_fields)
         form.addRow(self.field_skip_fishing)
@@ -1738,7 +1741,8 @@ class MainWindow(QMainWindow):
                 self.field_drag_points_custom, self.field_drag_points_min, self.field_drag_points_max,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
-                self.field_play_debris, self.field_skip_fishing, self.field_fishing_aim,
+                self.field_play_debris, self.field_tile_min, self.field_tile_max,
+                self.field_skip_fishing, self.field_fishing_aim,
                 self.field_depth_mode, self.field_farm_depth, self.field_depth_pct, self.field_depth_interval,
                 self.field_loadout, self.field_depth_repeat, self.field_depth_push,
                 self.field_auto_packs, self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
@@ -1806,6 +1810,9 @@ class MainWindow(QMainWindow):
             self.field_proc_width.setValue(max(0, cfg.processing_width))
             self.field_capture.setCurrentIndex(max(0, self.field_capture.findData(cfg.capture_method)))
             self.field_play_debris.setChecked(cfg.play_debris)
+            # konfig trzyma sekundy, GUI pokazuje milisekundy
+            self.field_tile_min.setValue(cfg.tile_tap_delay.min * 1000)
+            self.field_tile_max.setValue(cfg.tile_tap_delay.max * 1000)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
             self.field_fishing_aim.setCurrentIndex(0 if cfg.fishing_aim else 1)
             self.field_loadout.setText(cfg.loadout_name)
@@ -1998,6 +2005,8 @@ class MainWindow(QMainWindow):
         cfg.processing_width = self.field_proc_width.value()
         cfg.capture_method = self.field_capture.currentData() or "scrcpy"
         cfg.play_debris = self.field_play_debris.isChecked()
+        tile_lo = self.field_tile_min.value()
+        cfg.tile_tap_delay = RandomRange(tile_lo / 1000, max(tile_lo, self.field_tile_max.value()) / 1000)
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
         cfg.fishing_aim = bool(self.field_fishing_aim.currentData())
         cfg.loadout_name = self.field_loadout.text().strip().upper()

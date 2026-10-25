@@ -375,5 +375,7 @@
  "⚙  Instancje": "⚙  Instances",
  "🧾  Log akcji": "🧾  Action log",
  "Drżenie dłoni na torze:": "Hand tremor on the path:",
- "Drżenie dłoni: losowe odchylenie punktów toru od idealnej linii. 0 = palec idzie gładko.": "Hand tremor: random deviation of the path points from a perfect line. 0 = the finger moves smoothly."
+ "Drżenie dłoni: losowe odchylenie punktów toru od idealnej linii. 0 = palec idzie gładko.": "Hand tremor: random deviation of the path points from a perfect line. 0 = the finger moves smoothly.",
+ "Odstęp między kliknięciami kafelków:": "Interval between tile taps:",
+ "Odstęp między kolejnymi kliknięciami kafelków Depth Collapse. Losowany z zakresu.": "Interval between consecutive Depth Collapse tile taps. Drawn from the range."
 }

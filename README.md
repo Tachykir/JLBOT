@@ -190,7 +190,7 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   - **Depth Collapse** (brązowe kafelki „TAP”): klika wszystkie kafelki
     w „ludzkiej” kolejności, z losowym punktem kliknięcia; nachodzące na
     siebie kafelki są klikane po kolei. Wyłączane `play_debris: false`,
-    odstęp między kliknięciami `tile_tap_delay` (s).
+    odstęp między kliknięciami `tile_tap_delay` (s; GUI: zakładka Minigry, w ms).
   - **Fishing Hole** (przycisk CAST): od razu klika CAST, co pomija
     minigrę. Wyłączane `skip_fishing: false`.
 - **Automatyczne otwieranie paczek** (`auto_packs`, domyślnie wyłączone)
