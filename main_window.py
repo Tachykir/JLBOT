@@ -600,6 +600,8 @@ class MainWindow(QMainWindow):
         self.selected_name: str | None = None
         self._config_path: Path | None = None
         self._dirty = False
+        # ustawienia wspólne - każda instancja dostaje ich kopię, zmiana trafia do wszystkich
+        self.shared_config = BotConfig(name="wspólne")
 
         self._build_ui()
         self._update_title()
@@ -898,23 +900,41 @@ class MainWindow(QMainWindow):
         settings_title.setObjectName("pageTitle")
         layout.addWidget(settings_title)
 
+        self.btn_shared = QPushButton("⚙ Ustawienia wspólne (dla wszystkich instancji)…")
+        self.btn_shared.setMinimumHeight(30)
+        self.btn_shared.setToolTip("Punkty, tempo, minigry, paczki, ochrona i reszta ustawień - "
+                                   "zmiana działa na wszystkich instancjach, także nowo dodanych.")
+        self.btn_shared.clicked.connect(self._open_shared_settings)
+        layout.addWidget(self.btn_shared)
+        layout.addWidget(self._hint("Ustawienia tej instancji: nazwa, urządzenie ADB, pakiet gry, "
+                                    "głębokość farmy i harmonogram."))
+
         self.tabs = QTabWidget()
         self.tabs.setUsesScrollButtons(False)  # wszystkie zakładki zawsze widoczne
-        self.tabs.addTab(self._scroll_tab(self._tab_general()), "Ogólne")
-        self.tabs.addTab(self._scroll_tab(self._tab_points()), "Punkty")
-        self.tabs.addTab(self._scroll_tab(self._tab_tempo()), "Tempo")
-        self.tabs.addTab(self._scroll_tab(self._tab_minigames()), "Minigry")
-        self.tabs.addTab(self._scroll_tab(self._tab_packs()), "Głębokość i paczki")
+        self.tabs.addTab(self._scroll_tab(self._tab_instance()), "Instancja")
         self.tabs.addTab(self._scroll_tab(self._tab_schedule()), "Plan")
-        self.tabs.addTab(self._scroll_tab(self._tab_protection()), "Ochrona")
-        self.tabs.setTabToolTip(1, "Obszary kliknięć: punkt awaryjny, zakładki, karty")
-        self.tabs.setTabToolTip(5, "Harmonogram (osobny dla każdej instancji)")
-        self.tabs.setTabToolTip(6, "Automatyczny restart gry przy problemach")
-        self.tabs.currentChanged.connect(lambda _i: self._update_preview_points())
-        layout.addWidget(self._hint("Ustawienia są wspólne dla wszystkich instancji - zmiana tutaj "
-                                    "ustawia je na każdej. Osobne są tylko nazwa, urządzenie ADB "
-                                    "i harmonogram (zakładka Plan)."))
+        self.tabs.setTabToolTip(1, "Harmonogram (osobny dla każdej instancji)")
         layout.addWidget(self.tabs, stretch=1)
+
+        # okno ustawień wspólnych - działa też bez zaznaczonej instancji
+        self.shared_dialog = QDialog(self)
+        self.shared_dialog.setWindowTitle("Ustawienia wspólne")
+        self.shared_dialog.resize(760, 820)
+        dlg_layout = QVBoxLayout(self.shared_dialog)
+        dlg_layout.addWidget(self._hint("Te ustawienia obowiązują na wszystkich instancjach, także na "
+                                        "nowo dodanych. Zmiany działają od razu."))
+        self.shared_tabs = QTabWidget()
+        self.shared_tabs.setUsesScrollButtons(False)
+        for title, builder in (("Ogólne", self._tab_general), ("Punkty", self._tab_points),
+                               ("Tempo", self._tab_tempo), ("Minigry", self._tab_minigames),
+                               ("Głębokość i paczki", self._tab_packs), ("Ochrona", self._tab_protection)):
+            self.shared_tabs.addTab(self._scroll_tab(builder()), title)
+        self.shared_tabs.currentChanged.connect(lambda _i: self._update_preview_points())
+        dlg_layout.addWidget(self.shared_tabs, stretch=1)
+        close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        close_buttons.rejected.connect(self.shared_dialog.reject)
+        dlg_layout.addWidget(close_buttons)
+        self.shared_dialog.finished.connect(lambda _r: self._update_preview_points())
 
         stats_box = QGroupBox("Statystyki")
         grid = QGridLayout(stats_box)
@@ -953,11 +973,13 @@ class MainWindow(QMainWindow):
                          "540 px, a zrzut będzie kilka razy mniejszy i szybszy.")
         return text
 
-    def _tab_general(self) -> QWidget:
+    def _tab_instance(self) -> QWidget:
+        """Ustawienia tylko tej instancji (reszta jest we wspólnym oknie)."""
         w = QWidget()
         form = self._form()
         w.setLayout(form)
-
+        form.addRow(self._hint("Tylko ta instancja. Pozostałe ustawienia są we wspólnym oknie "
+                               "„Ustawienia wspólne”."))
         self.field_name = QLineEdit()
         self.field_name.setToolTip("Nazwa widoczna na liście i w logach")
         self.field_name.editingFinished.connect(self._apply_config_fields)
@@ -980,6 +1002,33 @@ class MainWindow(QMainWindow):
         self.field_game_activity.setToolTip("Opcjonalna activity do uruchamiania gry, np. pakiet/.MainActivity")
         self.field_game_activity.editingFinished.connect(self._apply_config_fields)
         form.addRow("Activity (opcjonalnie):", self.field_game_activity)
+
+        form.addRow(self._section("Farm na głębokości"))
+        self.field_depth_mode = QComboBox()
+        for key, label in DEPTH_MODES.items():
+            self.field_depth_mode.addItem(label, key)
+        self.field_depth_mode.setToolTip(
+            "Maksymalna odblokowana: bot klika „›”, aż przestanie się dać.\n"
+            "Bez bonusu wrogów: najwyższa głębokość, na której gra pisze „enemies at normal "
+            "strength” (gear wystarcza) - rośnie sama, gdy gear się poprawi.\n"
+            "Maksymalna minus X%: np. maks. 362 i 10% -> 325.")
+        self.field_depth_mode.currentIndexChanged.connect(self._apply_config_fields)
+        form.addRow("Tryb:", self.field_depth_mode)
+        self.field_farm_depth = QSpinBox(); self.field_farm_depth.setRange(0, 9999)
+        self.field_farm_depth.setSpecialValueText("nie zmieniaj")
+        self.field_farm_depth.setToolTip("0 = bot nie rusza wyboru głębokości")
+        self.field_farm_depth.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Farmij na głębokości:", self.field_farm_depth)
+        self.field_depth_pct = QSpinBox(); self.field_depth_pct.setRange(1, 90)
+        self.field_depth_pct.setSuffix(" % poniżej maks.")
+        self.field_depth_pct.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Maks. minus:", self.field_depth_pct)
+        return w
+
+    def _tab_general(self) -> QWidget:
+        w = QWidget()
+        form = self._form()
+        w.setLayout(form)
 
         form.addRow(self._section("Klikanie w trybie czekania"))
         self.field_idle_just_loot = QCheckBox("Klikaj JUST LOOT (bot sam go znajduje)")
@@ -1035,6 +1084,10 @@ class MainWindow(QMainWindow):
         self.btn_advanced.toggled.connect(self._toggle_advanced)
         form.addRow(self.advanced_box)
         return w
+
+    def _open_shared_settings(self) -> None:
+        self._load_fields_from_entry(self._current_entry())
+        self.shared_dialog.exec()
 
     def _toggle_advanced(self, shown: bool) -> None:
         self.advanced_box.setVisible(shown)
@@ -1226,26 +1279,7 @@ class MainWindow(QMainWindow):
         w = QWidget()
         form = self._form()
         w.setLayout(form)
-        form.addRow(self._section("Farm na głębokości"))
-        self.field_depth_mode = QComboBox()
-        for key, label in DEPTH_MODES.items():
-            self.field_depth_mode.addItem(label, key)
-        self.field_depth_mode.setToolTip(
-            "Maksymalna odblokowana: bot klika „›”, aż przestanie się dać.\n"
-            "Bez bonusu wrogów: najwyższa głębokość, na której gra pisze „enemies at normal "
-            "strength” (gear wystarcza) - rośnie sama, gdy gear się poprawi.\n"
-            "Maksymalna minus X%: np. maks. 362 i 10% -> 325.")
-        self.field_depth_mode.currentIndexChanged.connect(self._apply_config_fields)
-        form.addRow("Tryb:", self.field_depth_mode)
-        self.field_farm_depth = QSpinBox(); self.field_farm_depth.setRange(0, 9999)
-        self.field_farm_depth.setSpecialValueText("nie zmieniaj")
-        self.field_farm_depth.setToolTip("0 = bot nie rusza wyboru głębokości")
-        self.field_farm_depth.valueChanged.connect(self._apply_config_fields)
-        form.addRow("Farmij na głębokości:", self.field_farm_depth)
-        self.field_depth_pct = QSpinBox(); self.field_depth_pct.setRange(1, 90)
-        self.field_depth_pct.setSuffix(" % poniżej maks.")
-        self.field_depth_pct.valueChanged.connect(self._apply_config_fields)
-        form.addRow("Maks. minus:", self.field_depth_pct)
+        form.addRow(self._section("Sprawdzanie głębokości"))
         self.field_depth_interval = QSpinBox(); self.field_depth_interval.setRange(1, 1440)
         self.field_depth_interval.setSuffix(" min")
         self.field_depth_interval.valueChanged.connect(self._apply_config_fields)
@@ -1546,8 +1580,7 @@ class MainWindow(QMainWindow):
             name = f"instance-{idx}"
 
         config = BotConfig(name=name)
-        if self.instances:
-            config.copy_shared_from(next(iter(self.instances.values())).config)
+        config.copy_shared_from(self.shared_config)
         entry = InstanceEntry(config=config, serial="")
         self._register_instance(entry)
         self._mark_dirty()
@@ -1578,8 +1611,7 @@ class MainWindow(QMainWindow):
                 idx += 1
                 name = f"instance-{idx}"
             config = BotConfig(name=name)
-            if self.instances:
-                config.copy_shared_from(next(iter(self.instances.values())).config)
+            config.copy_shared_from(self.shared_config)
             entry = InstanceEntry(config=config, serial=serial)
             self._register_instance(entry)
             added += 1
@@ -1685,8 +1717,8 @@ class MainWindow(QMainWindow):
                 self.field_restart_unknown, self.field_speed_board, self.field_speed_react, self.field_speed_tap,
                 *[pw[1] for pw in self.point_widgets.values()])
 
-    def _load_fields_from_entry(self, entry: InstanceEntry) -> None:
-        cfg = entry.config
+    def _load_fields_from_entry(self, entry: InstanceEntry | None) -> None:
+        cfg = entry.config if entry is not None else self.shared_config
         # Blokujemy sygnały na czas wypełniania pól - inaczej samo ustawienie
         # wartości wywołuje _apply_config_fields i nadpisuje config wartościami
         # z formularza, zanim zdążymy wczytać prawdziwe dane.
@@ -1694,11 +1726,18 @@ class MainWindow(QMainWindow):
         for w in fields:
             w.blockSignals(True)
         try:
-            self.field_name.setText(cfg.name)
-            self.field_serial.setText(entry.serial)
-            self.field_game_package.setText(cfg.game_package or "")
-            self.field_game_package.setCursorPosition(0)
-            self.field_game_activity.setText(cfg.game_activity or "")
+            if entry is not None:
+                self.field_name.setText(cfg.name)
+                self.field_serial.setText(entry.serial)
+                self.field_game_package.setText(cfg.game_package or "")
+                self.field_game_package.setCursorPosition(0)
+                self.field_game_activity.setText(cfg.game_activity or "")
+                self.field_depth_mode.setCurrentIndex(max(0, self.field_depth_mode.findData(cfg.depth_mode)))
+                self.field_farm_depth.setValue(max(0, cfg.farm_depth))
+                self.field_depth_pct.setValue(int(round(cfg.depth_below_max_pct)))
+            else:
+                for field in (self.field_name, self.field_serial, self.field_game_package, self.field_game_activity):
+                    field.clear()
             self.field_idle_just_loot.setChecked(cfg.idle_target == "just_loot")
             self.field_drop_choice.setCurrentIndex(max(0, self.field_drop_choice.findData(cfg.drop_choice)))
             self.field_idle_x.setValue(cfg.idle_point[0])
@@ -1734,9 +1773,6 @@ class MainWindow(QMainWindow):
             self.field_play_debris.setChecked(cfg.play_debris)
             self.field_skip_fishing.setChecked(cfg.skip_fishing)
             self.field_fishing_aim.setCurrentIndex(0 if cfg.fishing_aim else 1)
-            self.field_depth_mode.setCurrentIndex(max(0, self.field_depth_mode.findData(cfg.depth_mode)))
-            self.field_farm_depth.setValue(max(0, cfg.farm_depth))
-            self.field_depth_pct.setValue(int(round(cfg.depth_below_max_pct)))
             self.field_loadout.setText(cfg.loadout_name)
             self.field_depth_repeat.setValue(max(2, cfg.depth_repeat_fights))
             self.field_depth_push.setValue(max(0, cfg.depth_push_taps))
@@ -1775,8 +1811,11 @@ class MainWindow(QMainWindow):
         self._update_dependent_enabled()
         if cfg.board_region is not None:
             self.btn_advanced.setChecked(True)  # pokaż, że obszar jest ustawiony
-        self.schedule_summary_label.setText(self._schedule_summary_text(cfg))
-        self._show_stats(entry.last_stats)
+        if entry is not None:
+            self.schedule_summary_label.setText(self._schedule_summary_text(cfg))
+            self._show_stats(entry.last_stats)
+        else:
+            self.schedule_summary_label.setText("—")
 
     def _show_stats(self, stats: BotStats | None) -> None:
         for key, _title in _STAT_FIELDS:
@@ -1785,30 +1824,30 @@ class MainWindow(QMainWindow):
 
     def _update_dependent_enabled(self) -> None:
         """Wyszarza pola, które przy obecnych ustawieniach nic nie robią."""
-        enabled = self.field_name.isEnabled()
-        packs = enabled and self.field_auto_packs.isChecked()
+        has_entry = self._current_entry() is not None
+        packs = self.field_auto_packs.isChecked()
         for w in (self.field_packs_interval, self.field_packs_defeats, self.field_packs_rounds,
                   self.field_packs_per_run, self.field_gear_margin):
             w.setEnabled(packs)
         self.field_packs_rounds.setEnabled(packs and self.field_packs_per_run.value() == 0)
         fixed = self.field_depth_mode.currentData() in (None, "fixed")
-        self.field_farm_depth.setEnabled(enabled and fixed)
-        self.field_depth_pct.setEnabled(enabled and self.field_depth_mode.currentData() == "max_pct")
-        self.field_fishing_aim.setEnabled(enabled and self.field_skip_fishing.isChecked())
-        self.field_depth_repeat.setEnabled(enabled and self.field_depth_mode.currentData() in ("max", "max_normal"))
+        self.field_farm_depth.setEnabled(has_entry and fixed)
+        self.field_depth_pct.setEnabled(has_entry and self.field_depth_mode.currentData() == "max_pct")
+        self.field_fishing_aim.setEnabled(self.field_skip_fishing.isChecked())
+        self.field_depth_repeat.setEnabled(self.field_depth_mode.currentData() in ("max", "max_normal"))
         mode = self.field_depth_mode.currentData()
-        self.field_depth_push.setEnabled(enabled and mode != "max_pct"
+        self.field_depth_push.setEnabled(mode != "max_pct"
                                          and not (mode in (None, "fixed") and self.field_farm_depth.value() > 0))
-        self.field_depth_interval.setEnabled(enabled and (not fixed or self.field_farm_depth.value() > 0
-                                                          or bool(self.field_loadout.text().strip())))
+        self.field_depth_interval.setEnabled(not fixed or self.field_farm_depth.value() > 0
+                                             or bool(self.field_loadout.text().strip()))
         fallback = self.field_idle_fallback.isChecked() or not self.field_idle_just_loot.isChecked()
         self.idle_point_box.setVisible(fallback)
-        self.field_unknown_after.setEnabled(enabled and (self.field_save_unknown.isChecked()
-                                                         or self.field_restart_unknown.isChecked()))
-        salvage = enabled and self.field_salvage_full.isChecked()
+        self.field_unknown_after.setEnabled(self.field_save_unknown.isChecked()
+                                            or self.field_restart_unknown.isChecked())
+        salvage = self.field_salvage_full.isChecked()
         for w in (self.field_salvage_items, self.field_salvage_hold_min, self.field_salvage_hold_max):
             w.setEnabled(salvage)
-        protection = enabled and bool(self.field_game_package.text().strip())
+        protection = bool(self.field_game_package.text().strip())
         for w in (self.field_black_timeout, self.field_fg_lost, self.field_settle):
             w.setEnabled(protection)
 
@@ -1853,12 +1892,17 @@ class MainWindow(QMainWindow):
             self._mark_dirty()
             self._log_local(f"[{entry.config.name}] zaktualizowano harmonogram")
 
-    def _set_config_form_enabled(self, enabled: bool) -> None:
+    def _entry_widgets(self) -> tuple:
+        """Pola i przyciski, które działają tylko na wybranej instancji."""
         point_buttons = tuple(b for pw in self.point_widgets.values() for b in pw[2:])
-        for w in self._config_widgets() + point_buttons + (self.btn_edit_schedule, self.btn_edit_idle, self.btn_edit_region,
-                                           self.btn_clear_region, self.btn_refresh_preview, self.btn_start,
-                                           self.btn_pause, self.btn_stop, self.btn_restart_app,
-                                           self.btn_salvage_now):
+        return (self.field_name, self.field_serial, self.field_game_package, self.field_game_activity,
+                self.field_depth_mode, self.field_farm_depth, self.field_depth_pct,
+                *point_buttons, self.btn_edit_schedule, self.btn_edit_idle, self.btn_edit_region,
+                self.btn_clear_region, self.btn_refresh_preview, self.btn_start,
+                self.btn_pause, self.btn_stop, self.btn_restart_app, self.btn_salvage_now)
+
+    def _set_config_form_enabled(self, enabled: bool) -> None:
+        for w in self._entry_widgets():
             w.setEnabled(enabled)
         if not enabled:
             self.schedule_summary_label.setText("—")
@@ -1868,16 +1912,17 @@ class MainWindow(QMainWindow):
 
     def _apply_config_fields(self) -> None:
         entry = self._current_entry()
-        if entry is None:
-            return
-        cfg = entry.config
-
-        new_name = self.field_name.text().strip()
-        if new_name and new_name != cfg.name:
-            self._rename_entry(entry, new_name)
-
-        cfg.game_package = self.field_game_package.text().strip() or None
-        cfg.game_activity = self.field_game_activity.text().strip() or None
+        # bez zaznaczonej instancji zmiany idą do ustawień wspólnych
+        cfg = entry.config if entry is not None else self.shared_config
+        if entry is not None:
+            new_name = self.field_name.text().strip()
+            if new_name and new_name != cfg.name:
+                self._rename_entry(entry, new_name)
+            cfg.game_package = self.field_game_package.text().strip() or None
+            cfg.game_activity = self.field_game_activity.text().strip() or None
+            cfg.depth_mode = self.field_depth_mode.currentData() or "fixed"
+            cfg.farm_depth = self.field_farm_depth.value()
+            cfg.depth_below_max_pct = float(self.field_depth_pct.value())
         cfg.idle_target = "just_loot" if self.field_idle_just_loot.isChecked() else "fixed"
         cfg.drop_choice = self.field_drop_choice.currentData() or "keep"
         cfg.idle_point = (self.field_idle_x.value(), self.field_idle_y.value())
@@ -1919,9 +1964,6 @@ class MainWindow(QMainWindow):
         cfg.play_debris = self.field_play_debris.isChecked()
         cfg.skip_fishing = self.field_skip_fishing.isChecked()
         cfg.fishing_aim = bool(self.field_fishing_aim.currentData())
-        cfg.depth_mode = self.field_depth_mode.currentData() or "fixed"
-        cfg.farm_depth = self.field_farm_depth.value()
-        cfg.depth_below_max_pct = float(self.field_depth_pct.value())
         cfg.loadout_name = self.field_loadout.text().strip().upper()
         cfg.depth_repeat_fights = self.field_depth_repeat.value()
         cfg.depth_push_taps = self.field_depth_push.value()
@@ -1950,11 +1992,12 @@ class MainWindow(QMainWindow):
         for key, (_value, radius, _pick, _reset) in self.point_widgets.items():
             x, y, _r = getattr(cfg, key)
             setattr(cfg, key, (x, y, radius.value() / 100.0))
-        new_serial = self.field_serial.text().strip()
-        if new_serial != entry.serial:
-            entry.serial = new_serial
-            self._rebuild_dashboard()
-        self._sync_shared(entry)
+        if entry is not None:
+            new_serial = self.field_serial.text().strip()
+            if new_serial != entry.serial:
+                entry.serial = new_serial
+                self._rebuild_dashboard()
+        self._sync_shared(cfg)
 
         self._update_dependent_enabled()
         self._mark_dirty()
@@ -1968,17 +2011,21 @@ class MainWindow(QMainWindow):
         """Punkt awaryjny na podglądzie tylko wtedy, gdy bot go używa."""
         return cfg.idle_point if (cfg.idle_fallback_enabled or cfg.idle_target == "fixed") else None
 
-    def _sync_shared(self, source: InstanceEntry) -> None:
-        """Wspólne ustawienia (wszystko poza nazwą, urządzeniem i
-        harmonogramem) z `source` na pozostałe instancje. Działające boty
-        trzymają te same obiekty configu, więc zmiana działa od razu."""
+    def _sync_shared(self, source: BotConfig) -> None:
+        """Wspólne ustawienia (wszystko poza nazwą, urządzeniem, pakietem,
+        harmonogramem i głębokością farmy) z `source` do ustawień wspólnych
+        i na wszystkie instancje. Działające boty trzymają te same obiekty
+        configu, więc zmiana działa od razu."""
+        if source is not self.shared_config:
+            self.shared_config.copy_shared_from(source)
         for entry in self.instances.values():
-            if entry is not source:
-                entry.config.copy_shared_from(source.config)
+            if entry.config is not source:
+                entry.config.copy_shared_from(source)
 
     def _update_preview_points(self) -> None:
         entry = self._current_entry()
-        on_points_tab = self.tabs.tabText(self.tabs.currentIndex()) == "Punkty"
+        on_points_tab = (self.shared_dialog.isVisible()
+                         and self.shared_tabs.tabText(self.shared_tabs.currentIndex()) == "Punkty")
         if entry is None or not on_points_tab:
             self.preview.set_named_points([])
             return
@@ -2007,7 +2054,7 @@ class MainWindow(QMainWindow):
             return
         r = getattr(entry.config, key)[2]
         setattr(entry.config, key, (x / w, y / h, r))
-        self._sync_shared(entry)
+        self._sync_shared(entry.config)
         self._mark_dirty()
         self._load_fields_from_entry(entry)
         self._update_preview_points()
@@ -2019,7 +2066,7 @@ class MainWindow(QMainWindow):
         if entry is None:
             return
         setattr(entry.config, key, POINT_DEFAULTS[key])
-        self._sync_shared(entry)
+        self._sync_shared(entry.config)
         self._mark_dirty()
         self._load_fields_from_entry(entry)
         self._update_preview_points()
@@ -2506,6 +2553,8 @@ class MainWindow(QMainWindow):
         self.selected_name = None
         for cfg, serial in loaded:
             self._register_instance(InstanceEntry(config=cfg, serial=serial))
+        if self.instances:
+            self._sync_shared(next(iter(self.instances.values())).config)
 
         self._config_path = path
         self._dirty = False
