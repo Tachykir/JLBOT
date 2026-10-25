@@ -44,6 +44,7 @@ import numpy as np
 
 from adb_controller import ADBController, ADBError
 import human_motion as humanize  # nie "humanize" - kolizja z biblioteką PyPI o tej nazwie (PyInstaller)
+import swipe_presets
 import screens
 import vision
 from packs import PackOpener
@@ -192,7 +193,7 @@ class BotConfig:
     #                po kolei (dawne zachowanie).
     # "human" wymaga `input motionevent` (nowsze Androidy); bez niego
     # tor jest prosty, ale punkty chwytu i kolejność nadal są losowe.
-    drag_style: str = "human"
+    drag_style: str = "human"   # "human" | "straight" | klucz presetu (swipe_presets.KEYS)
 
     # Obszar, z którego bot losuje punkty chwytu i puszczenia kulki, jako
     # ułamek promienia kulki (chwyt) i promienia DROP (puszczenie).
@@ -599,8 +600,9 @@ class BotConfig:
                 raise ValueError(f"[{d.name}] drop_choice musi być jednym z {list(DROP_CHOICES)}: {data['drop_choice']!r}")
             d.drop_choice = data["drop_choice"]
         if data.get("drag_style"):
-            if data["drag_style"] not in ("human", "straight"):
-                raise ValueError(f"[{d.name}] drag_style musi być 'human' albo 'straight': {data['drag_style']!r}")
+            if data["drag_style"] not in ("human", "straight") + swipe_presets.KEYS:
+                raise ValueError(f"[{d.name}] drag_style musi być 'human', 'straight' albo presetem "
+                                 f"{list(swipe_presets.KEYS)}: {data['drag_style']!r}")
             d.drag_style = data["drag_style"]
         d.game_package = data.get("game_package") or None
         d.game_activity = data.get("game_activity") or None
@@ -950,13 +952,15 @@ class DustMineBot:
             seconds *= speed_factor(getattr(self.config, "speed_react_pct", 100))
         return self._stop_event.wait(max(0.0, seconds))
 
-    def _t(self, name: str):
-        """Ustawienie tempa: z TURBO_TIMING w trybie turbo, inaczej z configu,
-        przemnożone przez suwak tempa swojej grupy (SPEED_GROUPS)."""
+    def _t(self, name: str, cfg=None):
+        """Ustawienie tempa: z TURBO_TIMING w trybie turbo, inaczej z configu
+        (`cfg`, domyślnie self.config), przemnożone przez suwak tempa swojej
+        grupy (SPEED_GROUPS) z self.config."""
+        source = self.config if cfg is None else cfg
         if getattr(self.config, "turbo", False) and name in TURBO_TIMING:
             value = TURBO_TIMING[name]
         else:
-            value = getattr(self.config, name)
+            value = getattr(source, name)
         group = SPEED_GROUPS.get(name)
         if group is None:
             return value
@@ -2107,15 +2111,15 @@ class DustMineBot:
     def _drag_ball(self, ball: vision.Circle, drop: vision.Circle) -> tuple[int, int]:
         """Przeciąga kulkę do DROP zgodnie z drag_style. Zwraca punkt,
         w którym puszczono palec."""
-        cfg = self.config
-        duration = self._t("drag_duration_ms").sample()
+        cfg = swipe_presets.effective(self.config)
+        duration = self._t("drag_duration_ms", cfg).sample()
         if cfg.drag_style == "straight" and np.hypot(ball.x - drop.x, ball.y - drop.y) >= drop.r:
             self.adb.swipe(ball.x, ball.y, drop.x, drop.y, duration_ms=int(duration))
             return drop.x, drop.y
 
         start = humanize.random_point_in_circle(ball.x, ball.y, ball.r * cfg.drag_grab_radius)
         end = humanize.random_point_in_circle(drop.x, drop.y, drop.r * cfg.drag_release_radius)
-        hold = self._t("drag_end_hold_ms").sample()
+        hold = self._t("drag_end_hold_ms", cfg).sample()
         if self._mistake():
             # puszczenie kulki tuż obok DROP - zostanie, bot spróbuje ponownie
             a = random.uniform(0, 2 * np.pi)
@@ -2134,20 +2138,20 @@ class DustMineBot:
                 ux, uy = float(np.cos(a)), float(np.sin(a))
             out_d = drop.r + ball.r * random.uniform(1.0, 1.5)
             out = (int(drop.x + ux * out_d), int(drop.y + uy * out_d))
-            path = (self._dense_path(start, out, ball.r)
-                    + self._dense_path(out, end, ball.r)[1:])
+            path = (self._dense_path(start, out, ball.r, cfg)
+                    + self._dense_path(out, end, ball.r, cfg)[1:])
             self._adb_drag(path, duration * 1.5, hold)
             return end
-        path = self._dense_path(start, end, ball.r)
+        path = self._dense_path(start, end, ball.r, cfg)
         self._adb_drag(path, duration, hold)
         return end
 
-    def _dense_path(self, start, end, ball_r: float) -> list[tuple[int, int]]:
+    def _dense_path(self, start, end, ball_r: float, cfg=None) -> list[tuple[int, int]]:
         """Ludzki tor. Liczba punktów pośrednich: z `drag_points`, jeśli
         ustawiona; inaczej zależy od długości - kolejne punkty najwyżej
         ~1.5 promienia kulki od siebie, żeby palec nie "przeskakiwał"
         dalej, niż kulka nadąża."""
-        cfg = self.config
+        cfg = self.config if cfg is None else cfg
         pts = cfg.drag_points
         jitter = cfg.drag_jitter_px
         bend = (cfg.drag_bend.min, cfg.drag_bend.max)

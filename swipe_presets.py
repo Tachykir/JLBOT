@@ -16,6 +16,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+import copy
+
 import human_motion as humanize
 from scheduler import RandomRange
 
@@ -65,6 +67,22 @@ def get(key: str) -> SwipePreset:
     return _BY_KEY[key]
 
 
+# klucze presetów jako wartości drag_style (obok "human" i "straight")
+KEYS = tuple(_BY_KEY)
+
+
+def effective(cfg):
+    """Konfig, którym bot przeciąga kulkę. Dla stylu-presetu zwraca kopię
+    z wartościami presetu (bez punktów zależnych od odległości), inaczej
+    sam konfig."""
+    if cfg.drag_style not in _BY_KEY:
+        return cfg
+    eff = copy.copy(cfg)
+    apply(eff, cfg.drag_style)
+    eff.drag_points_by_distance = False
+    return eff
+
+
 def apply(cfg, key: str) -> None:
     """Wpisuje preset do configu (wartości w ms i ułamkach, tak jak w BotConfig)."""
     p = get(key)
@@ -81,7 +99,8 @@ def apply(cfg, key: str) -> None:
 
 
 def values_from_config(cfg) -> dict:
-    """Aktualne wartości configu w tej samej postaci co preset (do podglądu)."""
+    """Aktualne wartości, jakich użyje bot, w postaci jak w presecie (do podglądu)."""
+    cfg = effective(cfg)
     return {
         "duration": (cfg.drag_duration_ms.min, cfg.drag_duration_ms.max),
         "hold": (cfg.drag_end_hold_ms.min, cfg.drag_end_hold_ms.max),

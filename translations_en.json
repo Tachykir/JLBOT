@@ -430,5 +430,11 @@
  "Szeroki łuk": "Wide arc",
  "Bardzo szeroki, długi łuk z dużą liczbą punktów.": "A very wide, long arc with many points.",
  "Szarpany tor, mocno drżący, często przestrzeliwany.": "A jerky, strongly shaking path that often overshoots.",
- "Losowo wszystko: kształt, czas, drżenie i punkty chwytu.": "Everything random: shape, timing, tremor and grab points."
+ "Losowo wszystko: kształt, czas, drżenie i punkty chwytu.": "Everything random: shape, timing, tremor and grab points.",
+ "Ludzki ruch (ustawienia ręczne)": "Human-like movement (manual settings)",
+ "Prosty: środek–środek": "Straight: centre to centre",
+ "Sposób przeciągania:": "Drag style:",
+ "Sposób przeciągania kulki. Presety to gotowe rodzaje gestu; działają zamiast ustawień ręcznych poniżej.": "How the ball is dragged. Presets are ready-made gesture types; they replace the manual settings below.",
+ "Ustawienia ręczne z tej zakładki: czas, punkty, drżenie, wygięcie.": "Manual settings from this tab: timing, points, tremor, curve.",
+ "Prosta linia od środka kulki do środka DROP.": "A straight line from the ball's centre to the centre of DROP."
 }
