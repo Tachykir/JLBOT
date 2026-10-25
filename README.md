@@ -176,6 +176,9 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   puszczenia nad DROP, jako ułamek promienia kulki i DROP-a: `0` = zawsze
   środek, `1` = aż do brzegu. GUI: zakładka Ogólne, „Styl ruchu”
   (w procentach).
+- **`drag_jitter_px`** (domyślnie `1.2`) — drżenie dłoni na torze
+  przeciągnięcia: losowe odchylenie punktów toru w pikselach. `0` = palec
+  idzie gładko. GUI: zakładka Tempo, „Styl ruchu” („Drżenie dłoni na torze”).
 - **`drag_points`** (domyślnie brak = automatycznie) — zakres liczby
   punktów pośrednich toru jednego przeciągnięcia, np. `{"min": 8, "max": 12}`.
   Mało punktów = prosty, skokowy ruch; dużo = płynniejszy, dłuższy gest.

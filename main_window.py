@@ -1247,6 +1247,16 @@ class MainWindow(QMainWindow):
             "Gdzie nad DROP bot puszcza kulkę: 0 % = zawsze w środku DROP,\n"
             "100 % = losowo aż do jego brzegu.")
         form.addRow("Punkt puszczenia na DROP:", self.field_release_radius)
+        self.field_drag_jitter = QDoubleSpinBox()
+        self.field_drag_jitter.setRange(0.0, 10.0)
+        self.field_drag_jitter.setSingleStep(0.1)
+        self.field_drag_jitter.setDecimals(1)
+        self.field_drag_jitter.setSuffix(" px")
+        self.field_drag_jitter.setSpecialValueText("wyłączone")
+        self.field_drag_jitter.setToolTip("Drżenie dłoni: losowe odchylenie punktów toru od idealnej linii. "
+                                          "0 = palec idzie gładko.")
+        self.field_drag_jitter.valueChanged.connect(self._apply_config_fields)
+        form.addRow("Drżenie dłoni na torze:", self.field_drag_jitter)
         form.addRow(self._hint("Palec jedzie po losowej krzywej, przyspiesza i zwalnia, łapie kulkę w "
                                "losowym miejscu, a kulki zbiera w losowej kolejności. Wyłączone: "
                                "prosta linia środek–środek, kulki po kolei."))
@@ -1724,7 +1734,7 @@ class MainWindow(QMainWindow):
                 self.field_idle_interval_min, self.field_idle_interval_max,
                 self.field_drag_ms_min, self.field_drag_ms_max, self.field_hold_end_min, self.field_hold_end_max,
                 self.field_between_drags_min, self.field_between_drags_max, self.field_human_drag,
-                self.field_grab_radius, self.field_release_radius,
+                self.field_grab_radius, self.field_release_radius, self.field_drag_jitter,
                 self.field_drag_points_custom, self.field_drag_points_min, self.field_drag_points_max,
                 self.field_reaction_min, self.field_reaction_max, self.field_hold_min, self.field_hold_max,
                 self.field_mistake, self.field_proc_width, self.field_capture, self.field_turbo,
@@ -1783,6 +1793,7 @@ class MainWindow(QMainWindow):
             self.field_just_loot_radius.setValue(cfg.just_loot_click_radius * 100)
             self.field_grab_radius.setValue(cfg.drag_grab_radius * 100)
             self.field_release_radius.setValue(cfg.drag_release_radius * 100)
+            self.field_drag_jitter.setValue(cfg.drag_jitter_px)
             self.field_drag_points_custom.setChecked(cfg.drag_points is not None)
             pts = cfg.drag_points or RandomRange(4, 7)
             self.field_drag_points_min.setValue(pts.min)
@@ -1970,6 +1981,7 @@ class MainWindow(QMainWindow):
         cfg.just_loot_click_radius = self.field_just_loot_radius.value() / 100.0
         cfg.drag_grab_radius = self.field_grab_radius.value() / 100.0
         cfg.drag_release_radius = self.field_release_radius.value() / 100.0
+        cfg.drag_jitter_px = self.field_drag_jitter.value()
         custom = self.field_drag_points_custom.isChecked()
         self.field_drag_points_min.setEnabled(custom)
         self.field_drag_points_max.setEnabled(custom)

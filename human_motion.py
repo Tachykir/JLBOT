@@ -58,12 +58,13 @@ def _bezier(p0, p1, p2, p3, t: float) -> tuple[float, float]:
 
 
 def drag_path(start: Point, end: Point, rng=random,
-              min_points: int = 4, max_points: int = 7) -> list[Point]:
+              min_points: int = 4, max_points: int = 7, jitter: float = 1.2) -> list[Point]:
     """
     Zwraca listę punktów od `start` do `end` (włącznie) po losowej,
     naturalnie wyglądającej krzywej. Liczba punktów pośrednich jest
     losowana z [min_points, max_points] - każdy punkt to osobny event
-    ruchu, więc nie ma sensu generować ich setek.
+    ruchu, więc nie ma sensu generować ich setek. `jitter` to odchylenie
+    drżenia dłoni w pikselach (0 = bez drżenia).
     """
     x0, y0 = start
     x3, y3 = end
@@ -93,8 +94,8 @@ def drag_path(start: Point, end: Point, rng=random,
         t = _ease_in_out(i / (n + 1))
         x, y = _bezier(start, p1, p2, end, t)
         # drżenie dłoni
-        x += rng.gauss(0.0, 1.2)
-        y += rng.gauss(0.0, 1.2)
+        x += rng.gauss(0.0, jitter)
+        y += rng.gauss(0.0, jitter)
         points.append((int(round(x)), int(round(y))))
 
     if rng.random() < 0.2:

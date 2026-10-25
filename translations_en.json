@@ -373,5 +373,7 @@
  "z": "of",
  "📋  Przegląd": "📋  Overview",
  "⚙  Instancje": "⚙  Instances",
- "🧾  Log akcji": "🧾  Action log"
+ "🧾  Log akcji": "🧾  Action log",
+ "Drżenie dłoni na torze:": "Hand tremor on the path:",
+ "Drżenie dłoni: losowe odchylenie punktów toru od idealnej linii. 0 = palec idzie gładko.": "Hand tremor: random deviation of the path points from a perfect line. 0 = the finger moves smoothly."
 }
