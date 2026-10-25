@@ -165,7 +165,7 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   natychmiast.
 - **`minigame_detect_delay_chance`** (domyślnie `0`) i **`minigame_detect_delay`**
   (domyślnie `2–5` s) — szansa, że bot zauważy minigrę (Depth Collapse, Fishing)
-  z dodatkowym opóźnieniem, i długość tego opóźnienia. GUI: zakładka Tempo,
+  z dodatkowym opóźnieniem, i długość tego opóźnienia. GUI: zakładka Tempo (ustawienia wspólne),
   „Zachowanie jak człowiek”. W trybie turbo pomijane.
 - **`drag_style`** (domyślnie `"human"`) — `"human"`: przeciąganie po
   losowej krzywej (łuk C/S, przyspieszanie i zwalnianie, drżenie, czasem
@@ -186,7 +186,7 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   (w procentach).
 - **`drag_jitter_px`** (domyślnie `1.2`) — drżenie dłoni na torze
   przeciągnięcia: losowe odchylenie punktów toru w pikselach. `0` = palec
-  idzie gładko. GUI: zakładka Tempo, „Styl ruchu” („Drżenie dłoni na torze”).
+  idzie gładko. GUI: zakładka Tempo (ustawienia wspólne), „Styl ruchu” („Drżenie dłoni na torze”).
 - **`drag_points`** (domyślnie brak = automatycznie) — zakres liczby
   punktów pośrednich toru jednego przeciągnięcia, np. `{"min": 8, "max": 12}`.
   Mało punktów = prosty, skokowy ruch; dużo = płynniejszy, dłuższy gest.
@@ -250,7 +250,7 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   jaśniejszym pionowym pasku karty, więc działa też przy stosach kopii
   legendary/mythic („MYTHIC 2× · …”), gdzie karty są węższe, a przycisk
   jest na środku ekranu.
-- **Wydajność** (GUI: zakładka Tempo → Wydajność, `processing_width`,
+- **Wydajność** (GUI: zakładka Tempo (ustawienia wspólne) → Wydajność, `processing_width`,
   domyślnie 540) — zrzut ekranu jest przed analizą pomniejszany do tej
   szerokości (1080×1920 → 540×960): ok. 3× mniej CPU na klatkę, a
   rozpoznawanie działa tak samo (sprawdzone na wszystkich zrzutach).
@@ -322,7 +322,7 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
 - **Motyw jasny / ciemny** — lista „🌓 Motyw” na pasku narzędzi:
   Systemowy / Jasny / Ciemny. Wybór jest zapamiętywany (ustawienie
   programu, nie config.json) i przywracany przy następnym uruchomieniu.
-- **Tryb turbo** (`turbo`, GUI: zakładka Tempo „⚡ Tryb turbo” albo przyciski
+- **Tryb turbo** (`turbo`, GUI: zakładka Tempo (ustawienia wspólne) „⚡ Tryb turbo” albo przyciski
   „⚡ Turbo” / „🐢 Normalne tempo” w „Wszystkie instancje”) — maksymalna
   szybkość: czas reakcji ~0, przeciągnięcie kulki 0.2–0.28 s, przerwy między
   przeciągnięciami 0.02–0.06 s, tapnięcia 10–25 ms, bez celowych pomyłek,
@@ -427,7 +427,7 @@ w `bot.py` w klasie `BotConfig` — np. `drag_duration_ms`,
   wyboru dropu (Keep Current) bot klika co ~0.15–0.45 s bez pełnego
   wykrywania planszy; po wyborze na panelu czeka min. 1.2 s, zanim
   kliknie go ponownie.
-- **Zachowanie jak człowiek** (GUI: zakładka Tempo):
+- **Zachowanie jak człowiek** (GUI: zakładka Tempo (ustawienia wspólne)):
   - `reaction_delay` (domyślnie 0.4–1.8 s) — chwila na „zauważenie”
     nowej planszy / minigry przed pierwszym ruchem,
   - `tap_hold_ms` (50–150 ms) — tapnięcie trwa jak dotyk palcem i lekko

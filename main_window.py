@@ -606,6 +606,7 @@ class MainWindow(QMainWindow):
         self.selected_name: str | None = None
         self._config_path: Path | None = None
         self._dirty = False
+        self._last_shared_preview = 0.0
         # ustawienia wspólne - każda instancja dostaje ich kopię, zmiana trafia do wszystkich
         self.shared_config = BotConfig(name="wspólne")
 
@@ -724,7 +725,8 @@ class MainWindow(QMainWindow):
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         for text, tip in (("📋  Przegląd", "Wszystkie instancje: podgląd, liczby, akcje dla wszystkich"),
                           ("⚙  Instancje", "Podgląd na żywo i ustawienia wybranej instancji"),
-                          ("🧾  Log akcji", "Zapis każdej akcji bota do CSV i jego podgląd")):
+                          ("🧾  Log akcji", "Zapis każdej akcji bota do CSV i jego podgląd"),
+                          ("⚙  Ustawienia wspólne", "Ustawienia dla wszystkich instancji - na podglądzie ekranu gry wskazujesz punkty")):
             item = QListWidgetItem(tr(text))
             item.setToolTip(tr(tip))
             self.nav.addItem(item)
@@ -758,6 +760,8 @@ class MainWindow(QMainWindow):
         self.main_tabs.addWidget(self.dashboard)
         self.main_tabs.addWidget(top)
         self.main_tabs.addWidget(self._build_action_log_page())
+        self.shared_page = self._build_shared_page()
+        self.main_tabs.addWidget(self.shared_page)
         self.nav.currentRowChanged.connect(self.main_tabs.setCurrentIndex)
         self.main_tabs.currentChanged.connect(self._on_page_changed)
         self.nav.setCurrentRow(0)
@@ -780,6 +784,10 @@ class MainWindow(QMainWindow):
             self._rebuild_dashboard()  # miniatury od razu po przejściu na przegląd
         elif index == 2:
             self._refresh_action_log()
+        elif index == 3:
+            self._load_fields_from_entry(self._current_entry())
+            self._refresh_shared_preview()
+        self._update_preview_points()
 
     def _build_toolbar(self) -> None:
         tb = self.addToolBar(tr("Główne"))
@@ -837,6 +845,76 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Dust Mine Bot",
                                 "Restart the program to switch the interface language.\n"
                                 "Zmiana języka wymaga ponownego uruchomienia programu.")
+
+    def _build_shared_page(self) -> QWidget:
+        """Strona „Ustawienia wspólne”: podgląd ekranu gry (do wskazywania
+        punktów) po lewej, zakładki ustawień wspólnych po prawej."""
+        page = QWidget()
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        left = QVBoxLayout()
+        left.addWidget(self._hint("Te ustawienia obowiązują na wszystkich instancjach, także na nowo "
+                                  "dodanych. Punkty wskazujesz klikając na podglądzie ekranu gry."))
+        self.shared_preview = PreviewWidget()
+        self.shared_preview.idle_point_picked.connect(self._on_idle_point_picked)
+        self.shared_preview.board_region_picked.connect(self._on_board_region_picked)
+        self.shared_preview.named_point_picked.connect(self._on_named_point_picked)
+        left.addWidget(self.shared_preview, stretch=1)
+        source_row = QHBoxLayout()
+        self.shared_source_label = QLabel("")
+        self.shared_source_label.setObjectName("hint")
+        self.btn_shared_refresh = QPushButton("⟳ Odśwież podgląd")
+        self.btn_shared_refresh.setToolTip("Pobiera zrzut ekranu z wybranej instancji (gdy bot jest zatrzymany)")
+        self.btn_shared_refresh.clicked.connect(self._refresh_preview_once)
+        source_row.addWidget(self.shared_source_label, 1)
+        source_row.addWidget(self.btn_shared_refresh)
+        left.addLayout(source_row)
+        left_box = QWidget()
+        left_box.setLayout(left)
+
+        self.shared_tabs = QTabWidget()
+        self.shared_tabs.setUsesScrollButtons(False)
+        for title, builder in (("Ogólne", self._tab_general), ("Punkty", self._tab_points),
+                               ("Tempo", self._tab_tempo), ("Minigry", self._tab_minigames),
+                               ("Głębokość i paczki", self._tab_packs), ("Ochrona", self._tab_protection)):
+            self.shared_tabs.addTab(self._scroll_tab(builder()), title)
+        self.shared_tabs.currentChanged.connect(lambda _i: self._update_preview_points())
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left_box)
+        splitter.addWidget(self.shared_tabs)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([560, 560])
+        layout.addWidget(splitter)
+        return page
+
+    def _preview_source_entry(self) -> InstanceEntry | None:
+        """Instancja, z której bierzemy obraz ekranu do wskazywania punktów:
+        zaznaczona, a gdy nic nie jest zaznaczone - pierwsza z obrazem."""
+        entry = self._current_entry()
+        if entry is not None:
+            return entry
+        for e in self.instances.values():
+            if e.last_frame is not None:
+                return e
+        return next(iter(self.instances.values()), None)
+
+    def _active_preview(self) -> PreviewWidget:
+        return self.shared_preview if self.main_tabs.currentWidget() is self.shared_page else self.preview
+
+    def _refresh_shared_preview(self) -> None:
+        """Ustawia podgląd na stronie wspólnej obrazem z instancji źródłowej."""
+        entry = self._preview_source_entry()
+        self.shared_source_label.setText(f"{tr('Obraz z:')} {entry.config.name}" if entry
+                                         else tr("Brak instancji - dodaj jedną"))
+        if entry is not None and entry.last_frame is not None:
+            self.shared_preview.update_frame(entry.last_frame, entry.last_det, entry.last_scale)
+        self.shared_preview.set_known_config(self._shown_idle_point(self.shared_config),
+                                             self.shared_config.board_region,
+                                             self.shared_config.idle_point_radius)
+        self._update_preview_points()
 
     def _build_instances_panel(self) -> QWidget:
         panel = QWidget()
@@ -940,26 +1018,6 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._scroll_tab(self._tab_schedule()), "Plan")
         self.tabs.setTabToolTip(1, "Harmonogram (osobny dla każdej instancji)")
         layout.addWidget(self.tabs, stretch=1)
-
-        # okno ustawień wspólnych - działa też bez zaznaczonej instancji
-        self.shared_dialog = QDialog(self)
-        self.shared_dialog.setWindowTitle("Ustawienia wspólne")
-        self.shared_dialog.resize(760, 820)
-        dlg_layout = QVBoxLayout(self.shared_dialog)
-        dlg_layout.addWidget(self._hint("Te ustawienia obowiązują na wszystkich instancjach, także na "
-                                        "nowo dodanych. Zmiany działają od razu."))
-        self.shared_tabs = QTabWidget()
-        self.shared_tabs.setUsesScrollButtons(False)
-        for title, builder in (("Ogólne", self._tab_general), ("Punkty", self._tab_points),
-                               ("Tempo", self._tab_tempo), ("Minigry", self._tab_minigames),
-                               ("Głębokość i paczki", self._tab_packs), ("Ochrona", self._tab_protection)):
-            self.shared_tabs.addTab(self._scroll_tab(builder()), title)
-        self.shared_tabs.currentChanged.connect(lambda _i: self._update_preview_points())
-        dlg_layout.addWidget(self.shared_tabs, stretch=1)
-        close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
-        close_buttons.rejected.connect(self.shared_dialog.reject)
-        dlg_layout.addWidget(close_buttons)
-        self.shared_dialog.finished.connect(lambda _r: self._update_preview_points())
 
         stats_box = QGroupBox("Statystyki")
         grid = QGridLayout(stats_box)
@@ -1111,8 +1169,7 @@ class MainWindow(QMainWindow):
         return w
 
     def _open_shared_settings(self) -> None:
-        self._load_fields_from_entry(self._current_entry())
-        self.shared_dialog.exec()
+        self.nav.setCurrentRow(3)  # strona „Ustawienia wspólne”
 
     def _toggle_advanced(self, shown: bool) -> None:
         self.advanced_box.setVisible(shown)
@@ -2172,6 +2229,8 @@ class MainWindow(QMainWindow):
         self.preview.set_known_config(self._shown_idle_point(cfg), cfg.board_region, cfg.idle_point_radius)
         self._update_preview_points()
         self._refresh_swipe_preview()
+        if self.main_tabs.currentWidget() is self.shared_page:
+            self._refresh_shared_preview()
 
     @staticmethod
     def _shown_idle_point(cfg: BotConfig):
@@ -2190,21 +2249,24 @@ class MainWindow(QMainWindow):
                 entry.config.copy_shared_from(source)
 
     def _update_preview_points(self) -> None:
-        entry = self._current_entry()
-        on_points_tab = (self.shared_dialog.isVisible()
-                         and self.shared_tabs.tabText(self.shared_tabs.currentIndex()) == "Punkty")
+        self.preview.set_named_points([])
+        on_shared = self.main_tabs.currentWidget() is self.shared_page
+        entry = self._preview_source_entry()
+        on_points_tab = on_shared and self.shared_tabs.tabText(self.shared_tabs.currentIndex()) == "Punkty"
         if entry is None or not on_points_tab:
-            self.preview.set_named_points([])
+            self.shared_preview.set_named_points([])
             return
         pts = []
         for key, label, color in _POINTS:
-            x, y, r = getattr(entry.config, key)
+            x, y, r = getattr(self.shared_config, key)
             pts.append((label.split(" (")[0], x, y, r, color))
-        self.preview.set_named_points(pts)
+        self.shared_preview.set_named_points(pts)
 
     def _pick_point(self, key: str) -> None:
-        entry = self._current_entry()
+        entry = self._preview_source_entry()
         if entry is None:
+            QMessageBox.information(self, tr("Brak instancji"),
+                                    "Dodaj instancję, żeby mieć podgląd ekranu gry do wskazywania punktów.")
             return
         if entry.last_frame is None:
             QMessageBox.information(self, "Brak podglądu",
@@ -2212,30 +2274,27 @@ class MainWindow(QMainWindow):
                                     "„Odśwież podgląd”, a potem wskaż punkt.")
             return
         label = next(lbl for k, lbl, _c in _POINTS if k == key)
-        self.preview.pick_named_point(key)
+        self._active_preview().pick_named_point(key)
         self.statusBar().showMessage(f"Kliknij na podglądzie: {label}", 15000)
 
     def _on_named_point_picked(self, key: str, x: int, y: int, w: int, h: int) -> None:
-        entry = self._current_entry()
+        entry = self._preview_source_entry()
         if entry is None or w <= 0 or h <= 0:
             return
-        r = getattr(entry.config, key)[2]
-        setattr(entry.config, key, (x / w, y / h, r))
-        self._sync_shared(entry.config)
+        r = getattr(self.shared_config, key)[2]
+        setattr(self.shared_config, key, (x / w, y / h, r))
+        self._sync_shared(self.shared_config)
         self._mark_dirty()
-        self._load_fields_from_entry(entry)
+        self._load_fields_from_entry(self._current_entry())
         self._update_preview_points()
         label = next(lbl for k, lbl, _c in _POINTS if k == key)
         self._log_local(f"Ustawiono punkt: {label} = ({x}, {y}) - na wszystkich instancjach")
 
     def _reset_point(self, key: str) -> None:
-        entry = self._current_entry()
-        if entry is None:
-            return
-        setattr(entry.config, key, POINT_DEFAULTS[key])
-        self._sync_shared(entry.config)
+        setattr(self.shared_config, key, POINT_DEFAULTS[key])
+        self._sync_shared(self.shared_config)
         self._mark_dirty()
-        self._load_fields_from_entry(entry)
+        self._load_fields_from_entry(self._current_entry())
         self._update_preview_points()
 
     def _clear_board_region(self) -> None:
@@ -2280,23 +2339,23 @@ class MainWindow(QMainWindow):
     def _toggle_edit_idle(self, checked: bool) -> None:
         if checked:
             self.btn_edit_region.setChecked(False)
-            self.preview.set_edit_mode(EditMode.SET_IDLE_POINT)
+            self._active_preview().set_edit_mode(EditMode.SET_IDLE_POINT)
         else:
-            self.preview.set_edit_mode(EditMode.NONE)
+            self._active_preview().set_edit_mode(EditMode.NONE)
 
     def _toggle_edit_region(self, checked: bool) -> None:
         if checked:
             self.btn_edit_idle.setChecked(False)
-            self.preview.set_edit_mode(EditMode.SET_BOARD_REGION)
+            self._active_preview().set_edit_mode(EditMode.SET_BOARD_REGION)
         else:
-            self.preview.set_edit_mode(EditMode.NONE)
+            self._active_preview().set_edit_mode(EditMode.NONE)
 
     def _on_idle_point_picked(self, x: int, y: int) -> None:
         self.field_idle_x.setValue(x)
         self.field_idle_y.setValue(y)
         self._apply_config_fields()
         self.btn_edit_idle.setChecked(False)
-        self.preview.set_edit_mode(EditMode.NONE)
+        self._active_preview().set_edit_mode(EditMode.NONE)
         self._log_local(f"Ustawiono idle_point = ({x}, {y})")
 
     def _on_board_region_picked(self, x1: int, y1: int, x2: int, y2: int) -> None:
@@ -2306,13 +2365,13 @@ class MainWindow(QMainWindow):
         self.field_region_y2.setValue(y2)
         self._apply_config_fields()
         self.btn_edit_region.setChecked(False)
-        self.preview.set_edit_mode(EditMode.NONE)
+        self._active_preview().set_edit_mode(EditMode.NONE)
         self._log_local(f"Ustawiono board_region = ({x1}, {y1}, {x2}, {y2})")
 
     def _refresh_preview_once(self) -> None:
         """Pobiera jeden zrzut ekranu w tle (przydatne, gdy bot jest
         zatrzymany i nie generuje klatek automatycznie)."""
-        entry = self._current_entry()
+        entry = self._preview_source_entry()
         if entry is None:
             return
         if entry.worker is not None and entry.worker.isRunning():
@@ -2347,6 +2406,8 @@ class MainWindow(QMainWindow):
         entry.last_scale = 1.0  # ręczny podgląd jest w pełnej rozdzielczości
         if name == self.selected_name:
             self.preview.update_frame(frame, det, 1.0)
+        if self.main_tabs.currentWidget() is self.shared_page and entry is self._preview_source_entry():
+            self._refresh_shared_preview()
         self._log_local(f"[{name}] odświeżono podgląd ręcznie "
                          f"(DROP={'tak' if det.drop else 'nie'}, kulki={len(det.balls)})")
 
@@ -2627,6 +2688,10 @@ class MainWindow(QMainWindow):
             entry.last_preview = now
             self.preview.update_frame(frame, det, entry.last_scale,
                                       trace=getattr(entry.worker, "trace", None), activity=entry.activity)
+        if (self.main_tabs.currentWidget() is self.shared_page and entry is self._preview_source_entry()
+                and now - self._last_shared_preview >= 0.2):
+            self._last_shared_preview = now
+            self.shared_preview.update_frame(frame, det, entry.last_scale)
         # miniatury w przeglądzie - najwyżej 2 razy na sekundę na instancję
         if now - entry.last_thumb >= 0.5 and self.main_tabs.currentIndex() == 0:
             entry.last_thumb = now

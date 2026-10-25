@@ -440,5 +440,14 @@
  "Szansa na opóźnione wykrycie minigry:": "Chance of a delayed minigame detection:",
  "Opóźnienie wykrycia minigry:": "Minigame detection delay:",
  "Jak często bot zauważa minigrę z opóźnieniem - np. odwraca uwagę i dopiero po chwili reaguje.": "How often the bot notices a minigame late - e.g. it gets distracted and reacts only after a moment.",
- "Minigra – zauważam ją z opóźnieniem": "Minigame – noticing it late"
+ "Minigra – zauważam ją z opóźnieniem": "Minigame – noticing it late",
+ "⚙  Ustawienia wspólne": "⚙  Shared settings",
+ "Ustawienia dla wszystkich instancji - na podglądzie ekranu gry wskazujesz punkty": "Settings for all instances - pick points on the game screen preview",
+ "Te ustawienia obowiązują na wszystkich instancjach, także na nowo dodanych. Punkty wskazujesz klikając na podglądzie ekranu gry.": "These settings apply to all instances, including newly added ones. Pick points by clicking on the game screen preview.",
+ "Obraz z:": "Image from:",
+ "Brak instancji - dodaj jedną": "No instances - add one",
+ "Brak instancji": "No instances",
+ "Dodaj instancję, żeby mieć podgląd ekranu gry do wskazywania punktów.": "Add an instance to get a game screen preview for picking points.",
+ "Pobiera zrzut ekranu z wybranej instancji (gdy bot jest zatrzymany)": "Takes a screenshot from the selected instance (when the bot is stopped)",
+ "Pobiera zrzut ekranu z pierwszej instancji (gdy bot jest zatrzymany)": "Takes a screenshot from the first instance (when the bot is stopped)"
 }
