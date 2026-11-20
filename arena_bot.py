@@ -249,11 +249,12 @@ def signed(v: int | None) -> str:
     return ("+" if v > 0 else "−") + f"{abs(v):,}".replace(",", " ")
 
 
-def leaderboard_deltas(prev: LeaderboardEvent | None, cur: LeaderboardEvent):
-    """Zmiana (moje LP, LP rywala, brakuje) od poprzedniego udanego odczytu."""
+def gap_change(prev: LeaderboardEvent | None, cur: LeaderboardEvent) -> int | None:
+    """O ile zmniejszył się dystans do rywala od poprzedniego udanego odczytu:
+    było 800, jest 790 -> +10 (podbiłem o 10 LP); było 800, jest 820 -> −20."""
     if prev is None or not prev.valid or not cur.valid:
         return None
-    return cur.my_lp - prev.my_lp, cur.rival_lp - prev.rival_lp, cur.missing - prev.missing
+    return prev.missing - cur.missing
 
 
 @dataclass
@@ -340,11 +341,9 @@ class ArenaBot:
                    else f"przewaga {fmt(-ev.missing)} LP")
         else:
             msg = "nie udało się odczytać"
-        d = leaderboard_deltas(self.last_leaderboard, ev)
-        if d:
-            mins = (ev.when - self.last_leaderboard.when) / 60
-            msg += (f" | od ostatniego ({mins:.0f} min): ja {signed(d[0])}, "
-                    f"{ev.rival_name} {signed(d[1])}, różnica {signed(d[2])}")
+        d = gap_change(self.last_leaderboard, ev)
+        if d is not None:
+            msg += f" | {signed(d)}"
         log.info("[%s] %s %s LP | ja %s LP | %s", self.tag, ev.rival_name, fmt(ev.rival_lp),
                  fmt(ev.my_lp), msg)
         if ev.valid:
