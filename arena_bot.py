@@ -58,7 +58,7 @@ class Config:
     click_margin_y: float = 0.20
 
     # leaderboard: co ile minut (losowo z zakresu), 0 = wyłączone
-    leaderboard_every_min: list = field(default_factory=lambda: [10, 20])
+    leaderboard_every_min: list = field(default_factory=lambda: [5, 60])
     rival_name: str = "MossG"            # tylko do opisu - szukany wzorcem templates/mossg.png
     # przyciski paska nawigacji (ułamki ekranu x1, y1, x2, y2)
     nav_leaderboard: list = field(default_factory=lambda: [0.775, 0.945, 0.835, 0.980])

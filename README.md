@@ -4,7 +4,7 @@ Odchudzony fork Dust Mine Bota (LDPlayer przez ADB, działa w tle). Bot:
 
 1. gdy na ekranie głównym pojawi się przycisk **RUN 10 MORE** (arena
    skończyła 10 walk), klika go,
-2. co 10–20 minut wchodzi na **leaderboard** (ikona wykresu na dole),
+2. losowo co 5–60 minut wchodzi na **leaderboard** (ikona wykresu na dole),
    odczytuje LP swoje i **MossG**, wypisuje, ile brakuje, i wraca do
    **Profile** (pierwszy przycisk na dole). Historia trafia do
    `leaderboard.csv`.
@@ -66,7 +66,7 @@ copy config.example.json config.json
 - `poll_interval` ([1.0, 2.5] s) – co ile sprawdzać ekran
 - `after_click_wait` ([1.5, 3.0] s) – przerwa po kliknięciu
 - `click_margin_x`, `click_margin_y` (0.06, 0.20) – margines od krawędzi przycisku
-- `leaderboard_every_min` ([10, 20] min) – co ile sprawdzać leaderboard; `[0, 0]` wyłącza
+- `leaderboard_every_min` ([5, 60] min) – losowy odstęp między sprawdzeniami sprawdzać leaderboard; `[0, 0]` wyłącza
 - `nav_leaderboard`, `nav_profile` – obszary ikon na pasku (ułamki ekranu `[x1, y1, x2, y2]`)
 
 ## Jak odczytywane są LP
