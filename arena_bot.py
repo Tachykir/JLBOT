@@ -71,6 +71,8 @@ class Config:
     startup_min_s: float = 6.0
     startup_timeout_s: float = 60.0
     find_match_attempts: int = 4
+    find_match_clicks: int = 3           # ile razy kliknąć FIND MATCH
+    find_match_click_gap: list = field(default_factory=lambda: [0.25, 0.7])
 
     @classmethod
     def from_dict(cls, d: dict) -> "Config":
@@ -285,14 +287,24 @@ class ArenaBot:
             remaining -= step
             self._wait([0.25, 0.7])
 
+    def _multi_click(self, rect, key: str, label: str) -> None:
+        """Kilka kliknięć w losowe (za każdym razem inne) punkty obszaru."""
+        n = max(1, int(self.cfg.find_match_clicks))
+        for i in range(n):
+            if self.stop.is_set():
+                return
+            x, y = self.clicker.click(rect, key)
+            log.info("[%s] %s %d/%d (%d, %d)", self.tag, label, i + 1, n, x, y)
+            if i < n - 1:
+                self._wait(self.cfg.find_match_click_gap)
+
     def click_find_match(self) -> bool:
         for attempt in range(self.cfg.find_match_attempts):
             if self.stop.is_set():
                 return False
             rect = find_white_button(self.adb.screenshot())
             if rect:
-                x, y = self.clicker.click(rect, "find_match")
-                log.info("[%s] FIND MATCH (%d, %d)", self.tag, x, y)
+                self._multi_click(rect, "find_match", "FIND MATCH")
                 return True
             log.info("[%s] nie widzę FIND MATCH (próba %d) - przewijam", self.tag, attempt + 1)
             # gra mogła przewinąć za mało/za dużo: raz w dół, raz w górę
@@ -304,8 +316,9 @@ class ArenaBot:
                 self.adb.swipe(x, int(h * random.uniform(0.33, 0.38)), x,
                                int(h * random.uniform(0.55, 0.62)), random.randint(*self.cfg.swipe_ms))
             self._wait([0.6, 1.2])
-        x, y = self.clicker.click(self.clicker.frac_rect(self.cfg.find_match_fallback), "find_match_fb")
-        log.warning("[%s] FIND MATCH nie wykryty - klik w obszar zapasowy (%d, %d)", self.tag, x, y)
+        log.warning("[%s] FIND MATCH nie wykryty - klikam obszar zapasowy", self.tag)
+        self._multi_click(self.clicker.frac_rect(self.cfg.find_match_fallback),
+                          "find_match_fb", "FIND MATCH (zapasowy)")
         return True
 
     def one_loop(self) -> None:

@@ -48,6 +48,7 @@ klasie `Config` w `arena_bot.py`, m.in.:
 
 - `more_button`, `arena_menu_item`, `find_match_fallback` – obszary kliknięć
   jako ułamki ekranu `[x1, y1, x2, y2]` (działają w każdej rozdzielczości 9:16)
+- `find_match_clicks` (3), `find_match_click_gap` ([0.25, 0.7] s) – ile razy i w jakich odstępach klikać FIND MATCH
 - `scroll_screens` (1.5), `scroll_jitter` (0.15) – ile przewinąć
 - `delay_after_*`, `delay_between_loops` – losowe przerwy `[od, do]` w sekundach
 - `startup_min_s`, `startup_timeout_s` – czekanie na grę po restarcie
