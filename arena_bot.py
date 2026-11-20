@@ -129,9 +129,35 @@ class ADB:
             raise RuntimeError("Nie udało się odczytać zrzutu ekranu")
         return img
 
+    def _launcher_component(self, package: str) -> str | None:
+        """Activity startowa gry ("pakiet/.MainActivity") wg systemu.
+        `monkey` bywa niedostępny (np. LDPlayer 14), więc startujemy przez
+        `am start -n`."""
+        if getattr(self, "_component", None):
+            return self._component
+        try:
+            out = self.shell("cmd", "package", "resolve-activity", "--brief",
+                             "-a", "android.intent.action.MAIN",
+                             "-c", "android.intent.category.LAUNCHER", package)
+        except RuntimeError as e:
+            log.info("[%s] resolve-activity: %s", self.serial, e)
+            return None
+        for line in reversed(out.splitlines()):
+            if line.strip().startswith(package + "/"):
+                self._component = line.strip()
+                log.info("[%s] activity startowa: %s", self.serial, self._component)
+                return self._component
+        return None
+
     def restart_app(self, package: str) -> None:
         self.shell("am", "force-stop", package)
         time.sleep(random.uniform(0.8, 1.6))
+        component = self._launcher_component(package)
+        if component:
+            out = self.shell("am", "start", "-n", component)
+            if "Error" not in out:
+                return
+            log.info("[%s] am start: %s", self.serial, out.strip()[:200])
         self.shell("monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1")
 
 
