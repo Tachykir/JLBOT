@@ -1,20 +1,14 @@
-# Just Loot – Arena Bot
+# Just Loot – RUN 10 MORE
 
-Odchudzony fork Dust Mine Bota: zostaje tylko jedna pętla areny
-(LDPlayer przez ADB, działa w tle).
+Odchudzony fork Dust Mine Bota (LDPlayer przez ADB, działa w tle). Bot
+robi jedną rzecz: gdy na ekranie głównym pojawi się przycisk
+**RUN 10 MORE** (arena skończyła 10 walk), klika go.
 
-## Pętla
-
-1. Klik **„…”** (prawy dolny róg paska nawigacji)
-2. Klik **Arena** w menu
-3. Przewinięcie w dół o ok. **1,5 ekranu** (kilka losowych swipe'ów)
-4. Klik **FIND MATCH** – przycisk jest wykrywany na obrazie (jedyny szeroki,
-   wypełniony biały przycisk); gdy go nie widać, bot lekko przewija i
-   próbuje ponownie, a na końcu klika obszar zapasowy
-5. **Restart aplikacji**, czekanie aż gra wstanie (widać koło JUST LOOT), od nowa
-
-Każde kliknięcie to losowy punkt w obszarze przycisku (nigdy ten sam punkt
-dwa razy z rzędu), przerwy, miejsca i długości swipe'ów też są losowe.
+- Przycisk jest wykrywany na obrazie (wzorzec `templates/run10more.png`,
+  działa w każdej rozdzielczości). Bot nie klika, gdy przycisku nie ma ani
+  gdy jest przyciemniony pod otwartym menu.
+- Każde kliknięcie trafia w losowy punkt przycisku (gęściej przy środku,
+  z dala od ramki), nigdy w ten sam punkt co poprzednio. Przerwy też są losowe.
 
 ## Uruchomienie
 
@@ -22,33 +16,38 @@ dwa razy z rzędu), przerwy, miejsca i długości swipe'ów też są losowe.
 pip install -r requirements.txt
 ```
 
+**Z oknem:** `start.bat` albo:
+
 ```bash
-copy config.example.json config.json
+python gui.py
 ```
+
+Wybierz urządzenie z listy (to, co pokazuje `adb devices`, np.
+`emulator-5566`) i kliknij **Start**. W oknie widać:
+
+- **Ekran**: podgląd z emulatora, zielona ramka = wykryty RUN 10 MORE
+- **Mapa kliknięć**: wszystkie kliknięcia na przycisku (mapa ciepła +
+  kropki; czerwona = ostatnie, białe = 10 ostatnich). Zapisywana w
+  `clicks.json`, przycisk „Wyczyść” ją zeruje.
+- licznik kliknięć, wynik dopasowania i log
+
+**Bez okna** (wszystkie instancje z `config.json`, a bez configu wszystkie z `adb devices`):
 
 ```bash
 python arena_bot.py
 ```
 
-Opcje:
+```bash
+python arena_bot.py --serial emulator-5566
+```
 
-- `--serial 127.0.0.1:5555` – tylko jedna instancja
-- `--loops 5` – tylko 5 pętli (domyślnie bez końca, Ctrl+C kończy)
-- `--no-initial-restart` – nie restartuj gry przed pierwszą pętlą
-- `--adb ŚCIEŻKA` – własny adb (domyślnie `vendor/adb/adb.exe` na Windowsie)
-- `-v` – więcej logów
+## config.json (opcjonalny)
 
-Na Windowsie można też odpalić `start.bat`.
+```bash
+copy config.example.json config.json
+```
 
-## config.json
-
-Pola na najwyższym poziomie są domyślne dla wszystkich instancji, pola w
-`instances` je nadpisują. Wszystkie opcje (z wartościami domyślnymi) są w
-klasie `Config` w `arena_bot.py`, m.in.:
-
-- `more_button`, `arena_menu_item`, `find_match_fallback` – obszary kliknięć
-  jako ułamki ekranu `[x1, y1, x2, y2]` (działają w każdej rozdzielczości 9:16)
-- `find_match_clicks` (3), `find_match_click_gap` ([0.25, 0.7] s) – ile razy i w jakich odstępach klikać FIND MATCH
-- `scroll_screens` (1.5), `scroll_jitter` (0.15) – ile przewinąć
-- `delay_after_*`, `delay_between_loops` – losowe przerwy `[od, do]` w sekundach
-- `startup_min_s`, `startup_timeout_s` – czekanie na grę po restarcie
+- `match_threshold` (0.85) – jak pewne musi być wykrycie przycisku (0–1)
+- `poll_interval` ([1.0, 2.5] s) – co ile sprawdzać ekran
+- `after_click_wait` ([1.5, 3.0] s) – przerwa po kliknięciu
+- `click_margin_x`, `click_margin_y` (0.06, 0.20) – margines od krawędzi przycisku

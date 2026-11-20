@@ -1,8 +1,8 @@
 {
-  "game_package": "com.timhilgenstoehlerexpo.justlootapp",
-  "scroll_screens": 1.5,
+  "match_threshold": 0.85,
+  "poll_interval": [1.0, 2.5],
+  "after_click_wait": [1.5, 3.0],
   "instances": [
-    {"serial": "127.0.0.1:5555", "name": "instance-1"},
-    {"serial": "127.0.0.1:5557", "name": "instance-2"}
+    {"serial": "emulator-5566", "name": "instance-1"}
   ]
 }

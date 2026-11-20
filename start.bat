@@ -1,4 +1,3 @@
 @echo off
 cd /d "%~dp0"
-python arena_bot.py %*
-pause
+start "" pythonw gui.py
