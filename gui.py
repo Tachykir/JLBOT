@@ -65,6 +65,7 @@ class App:
         self.stop_event: threading.Event | None = None
         self.thread: threading.Thread | None = None
         self.bot: ab.ArenaBot | None = None
+        self.prev_lb: ab.LeaderboardEvent | None = None
         self.button_imgs = {k: cv2.imread(str(p)) for k, (_t, p) in BUTTONS.items()}
         self.clicks: dict[str, list[tuple[float, float]]] = self._load_clicks()
         self._photos = {}  # referencje, żeby tk nie zgubił obrazów
@@ -138,7 +139,13 @@ class App:
         self.lb_missing_var = tk.StringVar(value="brakuje: ?")
         self.lb_detail_var = tk.StringVar(value="MossG ? LP · ja ? LP")
         self.lb_when_var = tk.StringVar(value="jeszcze nie sprawdzano")
-        ttk.Label(lb, textvariable=self.lb_missing_var, style="Big.TLabel").grid(row=0, column=0, sticky="w")
+        self.lb_delta_var = tk.StringVar(value="")
+        head = ttk.Frame(lb)
+        head.grid(row=0, column=0, sticky="w")
+        ttk.Label(head, textvariable=self.lb_missing_var, style="Big.TLabel").pack(side="left")
+        self.lb_delta_label = ttk.Label(head, textvariable=self.lb_delta_var,
+                                        font=("Segoe UI", 12, "bold"))
+        self.lb_delta_label.pack(side="left", padx=(10, 0))
         ttk.Label(lb, textvariable=self.lb_detail_var).grid(row=1, column=0, sticky="w")
         ttk.Label(lb, textvariable=self.lb_when_var, style="Dim.TLabel").grid(row=2, column=0, sticky="w")
         self.lb_btn = ttk.Button(lb, text="Sprawdź teraz", command=self.check_now, state="disabled")
@@ -264,7 +271,7 @@ class App:
                 elif kind == "frame":
                     last_frame = data  # rysujemy tylko najnowszą klatkę
                 elif kind == "lb":
-                    self.show_leaderboard(data.my_lp, data.rival_lp, data.rival_name, data.when)
+                    self.show_leaderboard(data)
         except queue.Empty:
             pass
         if last_frame is not None:
@@ -280,26 +287,39 @@ class App:
                 self.lb_when_var.set(f"{base} · następne za {left // 60}:{left % 60:02d}")
         self.root.after(1000, self._tick)
 
-    def show_leaderboard(self, my, rival, rival_name, when):
-        missing = rival - my if my is not None and rival is not None else None
+    def show_leaderboard(self, ev: ab.LeaderboardEvent):
+        missing = ev.missing
+        name = ev.rival_name
+        d = ab.leaderboard_deltas(self.prev_lb, ev)
         if missing is None:
             self.lb_missing_var.set("brakuje: ? (nie odczytano)")
         elif missing > 0:
-            self.lb_missing_var.set(f"brakuje {fmt(missing)} LP do {rival_name}")
+            self.lb_missing_var.set(f"brakuje {fmt(missing)} LP do {name}")
         else:
-            self.lb_missing_var.set(f"przewaga {fmt(-missing)} LP nad {rival_name}")
-        self.lb_detail_var.set(f"{rival_name} {fmt(rival)} LP · ja {fmt(my)} LP")
-        self.lb_when_var.set("sprawdzono " + time.strftime("%H:%M:%S", time.localtime(when)))
+            self.lb_missing_var.set(f"przewaga {fmt(-missing)} LP nad {name}")
+        if d:
+            # różnica rośnie = gorzej dla mnie (czerwony), maleje = lepiej (zielony)
+            self.lb_delta_var.set(f"{ab.signed(d[2])} od ostatniego")
+            self.lb_delta_label.configure(foreground="#7ee08a" if d[2] < 0 else
+                                          "#ff7b7b" if d[2] > 0 else "#aaa")
+            self.lb_detail_var.set(f"{name} {fmt(ev.rival_lp)} LP ({ab.signed(d[1])}) · "
+                                   f"ja {fmt(ev.my_lp)} LP ({ab.signed(d[0])})")
+        else:
+            self.lb_delta_var.set("")
+            self.lb_detail_var.set(f"{name} {fmt(ev.rival_lp)} LP · ja {fmt(ev.my_lp)} LP")
+        when = "sprawdzono " + time.strftime("%H:%M:%S", time.localtime(ev.when))
+        if d:
+            when += f" (poprzednio {time.strftime('%H:%M', time.localtime(self.prev_lb.when))})"
+        self.lb_when_var.set(when)
+        if ev.valid:
+            self.prev_lb = ev
 
     def _load_last_leaderboard(self):
-        try:
-            lines = ab.LEADERBOARD_CSV.read_text(encoding="utf-8").strip().splitlines()
-            t, _serial, my, rival_name, rival, _m = lines[-1].split(";")
-            to_int = lambda v: int(v) if v else None
-            self.show_leaderboard(to_int(my), to_int(rival), rival_name,
-                                  time.mktime(time.strptime(t, "%Y-%m-%d %H:%M:%S")))
-        except Exception:
-            pass
+        hist = ab.load_leaderboard_history()
+        if not hist:
+            return
+        self.prev_lb = hist[-2] if len(hist) > 1 else None
+        self.show_leaderboard(hist[-1])
 
     def show_frame(self, e: ab.FrameEvent):
         self.last_frame = e

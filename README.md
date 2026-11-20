@@ -32,7 +32,9 @@ Wybierz urządzenie z listy (to, co pokazuje `adb devices`, np.
 
 - **Ekran**: podgląd z emulatora, zielona ramka = wykryty RUN 10 MORE
 - **Leaderboard**: ile brakuje do MossG, LP obu graczy, kiedy sprawdzono
-  i za ile następne; „Sprawdź teraz” sprawdza od razu
+  i za ile następne, oraz zmianę od poprzedniego odczytu (np. „−40 od
+  ostatniego”: zielone = różnica maleje, czerwone = rośnie; przy LP obu
+  graczy „(+54)”). „Sprawdź teraz” sprawdza od razu
 - **Mapy kliknięć**: RUN 10 MORE, Leaderboard i Profile - wszystkie
   kliknięcia na przycisku (mapa ciepła + kropki; czerwona = ostatnie,
   białe = 10 ostatnich). Zapisywane w `clicks.json`, „Wyczyść” je zeruje.

@@ -235,6 +235,26 @@ class LeaderboardEvent:
             return None
         return self.rival_lp - self.my_lp
 
+    @property
+    def valid(self) -> bool:
+        return self.missing is not None
+
+
+def signed(v: int | None) -> str:
+    """+54 / −42 / ±0 (spacja jako separator tysięcy)."""
+    if v is None:
+        return "?"
+    if v == 0:
+        return "±0"
+    return ("+" if v > 0 else "−") + f"{abs(v):,}".replace(",", " ")
+
+
+def leaderboard_deltas(prev: LeaderboardEvent | None, cur: LeaderboardEvent):
+    """Zmiana (moje LP, LP rywala, brakuje) od poprzedniego udanego odczytu."""
+    if prev is None or not prev.valid or not cur.valid:
+        return None
+    return cur.my_lp - prev.my_lp, cur.rival_lp - prev.rival_lp, cur.missing - prev.missing
+
 
 @dataclass
 class FrameEvent:
@@ -263,7 +283,9 @@ class ArenaBot:
         self.lb_reader = lp_reader.LeaderboardReader()
         self.check_leaderboard_now = threading.Event()
         self.next_leaderboard = time.monotonic() + 20  # pierwszy raz zaraz po starcie
-        self.last_leaderboard: LeaderboardEvent | None = None
+        # ostatni udany odczyt (także z poprzedniego uruchomienia) - do różnic
+        hist = [e for e in load_leaderboard_history() if e.serial == cfg.serial]
+        self.last_leaderboard: LeaderboardEvent | None = hist[-1] if hist else None
 
     def tap_in(self, key: str, rect, img: np.ndarray | None, mx: float, my: float,
                score: float = 1.0) -> tuple[int, int]:
@@ -318,9 +340,15 @@ class ArenaBot:
                    else f"przewaga {fmt(-ev.missing)} LP")
         else:
             msg = "nie udało się odczytać"
+        d = leaderboard_deltas(self.last_leaderboard, ev)
+        if d:
+            mins = (ev.when - self.last_leaderboard.when) / 60
+            msg += (f" | od ostatniego ({mins:.0f} min): ja {signed(d[0])}, "
+                    f"{ev.rival_name} {signed(d[1])}, różnica {signed(d[2])}")
         log.info("[%s] %s %s LP | ja %s LP | %s", self.tag, ev.rival_name, fmt(ev.rival_lp),
                  fmt(ev.my_lp), msg)
-        self.last_leaderboard = ev
+        if ev.valid:
+            self.last_leaderboard = ev
         save_leaderboard(ev)
         if self.on_leaderboard:
             self.on_leaderboard(ev)
@@ -376,6 +404,25 @@ def save_leaderboard(ev: LeaderboardEvent) -> None:
                     f"{ev.missing if ev.missing is not None else ''}\n")
     except OSError as e:
         log.warning("nie zapisano %s: %s", LEADERBOARD_CSV, e)
+
+
+def load_leaderboard_history() -> list[LeaderboardEvent]:
+    """Udane odczyty z leaderboard.csv (najstarsze pierwsze)."""
+    out = []
+    try:
+        lines = LEADERBOARD_CSV.read_text(encoding="utf-8").strip().splitlines()[1:]
+    except OSError:
+        return out
+    for line in lines:
+        try:
+            t, serial, my, rival_name, rival, _m = line.split(";")
+            ev = LeaderboardEvent(serial, int(my) if my else None, int(rival) if rival else None,
+                                  rival_name, time.mktime(time.strptime(t, "%Y-%m-%d %H:%M:%S")))
+        except ValueError:
+            continue
+        if ev.valid:
+            out.append(ev)
+    return out
 
 
 # --------------------------------------------------------------------- #
