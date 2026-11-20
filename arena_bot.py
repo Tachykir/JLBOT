@@ -58,7 +58,7 @@ class Config:
 
     scroll_screens: float = 1.5          # ile ekranów przewinąć (łącznie)
     scroll_jitter: float = 0.15          # +- losowo do scroll_screens
-    swipe_ms: list = field(default_factory=lambda: [220, 380])
+    swipe_ms: list = field(default_factory=lambda: [700, 1100])
 
     delay_after_more: list = field(default_factory=lambda: [0.3, 0.7])
     delay_after_arena: list = field(default_factory=lambda: [0.9, 1.6])
@@ -303,14 +303,14 @@ class ArenaBot:
         w, h = self.adb.width, self.adb.height
         remaining = screens
         while remaining > 0.05 and not self.stop.is_set():
-            step = min(remaining, random.uniform(0.55, 0.70))
+            step = min(remaining, random.uniform(0.40, 0.55))
             x1 = int(w * random.uniform(0.25, 0.75))
             y1 = int(h * random.uniform(0.70, 0.80))
             x2 = x1 + int(w * random.uniform(-0.05, 0.05))
             y2 = y1 - int(h * step)
             self.adb.swipe(x1, y1, x2, y2, random.randint(*self.cfg.swipe_ms))
             remaining -= step
-            self._wait([0.1, 0.3])
+            self._wait([0.2, 0.45])
 
     def _multi_click(self, rect, key: str, label: str) -> None:
         """Kilka kliknięć w losowe (za każdym razem inne) punkty obszaru."""
