@@ -58,21 +58,21 @@ class Config:
 
     scroll_screens: float = 1.5          # ile ekranów przewinąć (łącznie)
     scroll_jitter: float = 0.15          # +- losowo do scroll_screens
-    swipe_ms: list = field(default_factory=lambda: [450, 800])
+    swipe_ms: list = field(default_factory=lambda: [220, 380])
 
-    delay_after_more: list = field(default_factory=lambda: [0.7, 1.6])
-    delay_after_arena: list = field(default_factory=lambda: [2.0, 3.5])
-    delay_after_scroll: list = field(default_factory=lambda: [0.8, 1.8])
-    delay_after_find_match: list = field(default_factory=lambda: [1.5, 3.0])
-    delay_between_loops: list = field(default_factory=lambda: [0.5, 2.0])
+    delay_after_more: list = field(default_factory=lambda: [0.3, 0.7])
+    delay_after_arena: list = field(default_factory=lambda: [0.9, 1.6])
+    delay_after_scroll: list = field(default_factory=lambda: [0.3, 0.7])
+    delay_after_find_match: list = field(default_factory=lambda: [0.6, 1.2])
+    delay_between_loops: list = field(default_factory=lambda: [0.1, 0.5])
 
     # po restarcie: czekaj aż widać pasek nawigacji (koło JUST LOOT),
     # najmniej startup_min_s, najwyżej startup_timeout_s
-    startup_min_s: float = 6.0
+    startup_min_s: float = 2.0
     startup_timeout_s: float = 60.0
     find_match_attempts: int = 4
     find_match_clicks: int = 3           # ile razy kliknąć FIND MATCH
-    find_match_click_gap: list = field(default_factory=lambda: [0.25, 0.7])
+    find_match_click_gap: list = field(default_factory=lambda: [0.1, 0.3])
 
     @classmethod
     def from_dict(cls, d: dict) -> "Config":
@@ -91,6 +91,24 @@ def default_adb_path() -> str:
     if sys.platform == "win32" and bundled.exists():
         return str(bundled)
     return "adb"
+
+
+_RAW_FORMATS = {1: cv2.COLOR_RGBA2BGR, 2: cv2.COLOR_RGBA2BGR, 5: cv2.COLOR_BGRA2BGR}
+
+
+def decode_raw(data: bytes) -> np.ndarray | None:
+    """Wynik `screencap` bez -p: nagłówek (w, h, format; Android 9+ jeszcze
+    4 bajty) i piksele RGBA. None, gdy format się nie zgadza."""
+    if len(data) < 16:
+        return None
+    w, h, fmt = (int(v) for v in np.frombuffer(data[:12], dtype="<u4"))
+    if fmt not in _RAW_FORMATS or not (0 < w < 10000 and 0 < h < 10000):
+        return None
+    header = len(data) - w * h * 4
+    if header not in (12, 16):
+        return None
+    px = np.frombuffer(data, dtype=np.uint8, offset=header).reshape(h, w, 4)
+    return cv2.cvtColor(px, _RAW_FORMATS[fmt])
 
 
 class ADB:
@@ -125,6 +143,13 @@ class ADB:
         self.shell("input", "swipe", str(x1), str(y1), str(x2), str(y2), str(ms))
 
     def screenshot(self) -> np.ndarray:
+        # surowe piksele zamiast PNG - emulator nie traci czasu na kompresję
+        if not getattr(self, "_png_only", False):
+            img = decode_raw(self._run(["exec-out", "screencap"]))
+            if img is not None:
+                return img
+            self._png_only = True
+            log.info("[%s] surowy screencap nieobsługiwany - używam PNG", self.serial)
         data = self._run(["exec-out", "screencap", "-p"])
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
         if img is None:
@@ -153,7 +178,7 @@ class ADB:
 
     def restart_app(self, package: str) -> None:
         self.shell("am", "force-stop", package)
-        time.sleep(random.uniform(0.8, 1.6))
+        time.sleep(random.uniform(0.3, 0.6))
         component = self._launcher_component(package)
         if component:
             out = self.shell("am", "start", "-n", component)
@@ -266,11 +291,11 @@ class ArenaBot:
         while not self.stop.is_set() and time.monotonic() - start < self.cfg.startup_timeout_s:
             try:
                 if nav_bar_visible(self.adb.screenshot()):
-                    self._wait([1.0, 2.5])  # niech UI się ustabilizuje
+                    self._wait([0.4, 1.0])  # niech UI się ustabilizuje
                     return
             except Exception as e:
                 log.debug("[%s] zrzut: %s", self.tag, e)
-            self.stop.wait(1.0)
+            self.stop.wait(0.4)
         log.warning("[%s] gra nie wstała w %.0f s - próbuję dalej",
                     self.tag, self.cfg.startup_timeout_s)
 
@@ -278,14 +303,14 @@ class ArenaBot:
         w, h = self.adb.width, self.adb.height
         remaining = screens
         while remaining > 0.05 and not self.stop.is_set():
-            step = min(remaining, random.uniform(0.40, 0.55))
+            step = min(remaining, random.uniform(0.55, 0.70))
             x1 = int(w * random.uniform(0.25, 0.75))
             y1 = int(h * random.uniform(0.70, 0.80))
             x2 = x1 + int(w * random.uniform(-0.05, 0.05))
             y2 = y1 - int(h * step)
             self.adb.swipe(x1, y1, x2, y2, random.randint(*self.cfg.swipe_ms))
             remaining -= step
-            self._wait([0.25, 0.7])
+            self._wait([0.1, 0.3])
 
     def _multi_click(self, rect, key: str, label: str) -> None:
         """Kilka kliknięć w losowe (za każdym razem inne) punkty obszaru."""
@@ -315,7 +340,7 @@ class ArenaBot:
             else:
                 self.adb.swipe(x, int(h * random.uniform(0.33, 0.38)), x,
                                int(h * random.uniform(0.55, 0.62)), random.randint(*self.cfg.swipe_ms))
-            self._wait([0.6, 1.2])
+            self._wait([0.3, 0.6])
         log.warning("[%s] FIND MATCH nie wykryty - klikam obszar zapasowy", self.tag)
         self._multi_click(self.clicker.frac_rect(self.cfg.find_match_fallback),
                           "find_match_fb", "FIND MATCH (zapasowy)")
