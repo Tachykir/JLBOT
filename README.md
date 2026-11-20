@@ -39,6 +39,10 @@ Wybierz urządzenie z listy (to, co pokazuje `adb devices`, np.
   kliknięcia na przycisku (mapa ciepła + kropki; czerwona = ostatnie,
   białe = 10 ostatnich). Zapisywane w `clicks.json`, „Wyczyść” je zeruje.
 - licznik kliknięć, wynik dopasowania i log
+- **⏱ Minutnik** (pod paskiem urządzenia): wpisz `90` (za 90 min), `1h30`
+  albo `23:15` (o tej godzinie; jeśli już minęła - jutro) i kliknij
+  **Ustaw**. Widać, ile zostało. Po czasie bot **zamyka grę** i przestaje
+  klikać. Można ustawić przed Startem albo w trakcie; **Anuluj** wyłącza.
 
 **Bez okna** (wszystkie instancje z `config.json`, a bez configu wszystkie z `adb devices`):
 
@@ -49,6 +53,8 @@ python arena_bot.py
 ```bash
 python arena_bot.py --serial emulator-5566
 ```
+
+Minutnik bez okna: `--stop-after 90`, `--stop-after 1h30` albo `--stop-after 23:15`.
 
 ## config.json (opcjonalny)
 

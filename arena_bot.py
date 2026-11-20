@@ -48,6 +48,7 @@ TEMPLATE_REF_WIDTH = 547  # szerokość ekranu, z którego wycięto wzorzec
 class Config:
     serial: str = "127.0.0.1:5555"
     name: str = ""
+    game_package: str = "com.timhilgenstoehlerexpo.justlootapp"
 
     match_threshold: float = 0.85        # 0..1, im wyżej tym ostrzej
     poll_interval: list = field(default_factory=lambda: [1.0, 2.5])
@@ -132,6 +133,9 @@ class ADB:
 
     def tap(self, x: int, y: int) -> None:
         self._run(["shell", "input", "tap", str(x), str(y)])
+
+    def stop_app(self, package: str) -> None:
+        self._run(["shell", "am", "force-stop", package])
 
     def screenshot(self) -> np.ndarray:
         # surowe piksele zamiast PNG - emulator nie traci czasu na kompresję
@@ -283,6 +287,7 @@ class ArenaBot:
         self.clicks = 0
         self.lb_reader = lp_reader.LeaderboardReader()
         self.check_leaderboard_now = threading.Event()
+        self.stop_at: float | None = None  # minutnik (time.time()), None = bez
         self.next_leaderboard = time.monotonic() + 20  # pierwszy raz zaraz po starcie
         # ostatni udany odczyt (także z poprzedniego uruchomienia) - do różnic
         hist = [e for e in load_leaderboard_history() if e.serial == cfg.serial]
@@ -370,6 +375,9 @@ class ArenaBot:
     def run(self) -> None:
         log.info("[%s] start - czekam na RUN 10 MORE", self.tag)
         while not self.stop.is_set():
+            if self.stop_at is not None and time.time() >= self.stop_at:
+                self.finish()
+                break
             try:
                 lb_on = self.cfg.leaderboard_every_min and max(self.cfg.leaderboard_every_min) > 0
                 if self.check_leaderboard_now.is_set() or (
@@ -385,6 +393,15 @@ class ArenaBot:
                 log.error("[%s] błąd: %s", self.tag, e)
                 self.stop.wait(5)
         log.info("[%s] zatrzymany", self.tag)
+
+    def finish(self) -> None:
+        """Minutnik: zamknij grę i przestań klikać."""
+        log.info("[%s] minutnik - zamykam grę i kończę", self.tag)
+        try:
+            self.adb.stop_app(self.cfg.game_package)
+        except Exception as e:
+            log.error("[%s] nie udało się zamknąć gry: %s", self.tag, e)
+        self.stop.set()
 
 
 LEADERBOARD_CSV = BASE_DIR / "leaderboard.csv"
@@ -424,6 +441,32 @@ def load_leaderboard_history() -> list[LeaderboardEvent]:
     return out
 
 
+def parse_stop_time(text: str, now: float | None = None) -> float:
+    """Minutnik: "90" / "90m" = za 90 minut, "1h30" = za 1 h 30 min,
+    "23:15" = o tej godzinie (jutro, jeśli już minęła). Zwraca time.time()."""
+    now = time.time() if now is None else now
+    t = text.strip().lower().replace(" ", "")
+    if not t:
+        raise ValueError("pusty minutnik")
+    if "h" in t:
+        h, _, m = t.partition("h")
+        return now + 3600 * int(h or 0) + 60 * int(m.rstrip("m") or 0)
+    if ":" in t:
+        h, m = (int(v) for v in t.split(":", 1))
+        if not (0 <= h < 24 and 0 <= m < 60):
+            raise ValueError(text)
+        lt = time.localtime(now)
+        target = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, h, m, 0, 0, 0, -1))
+        # godzina, która dziś już minęła = jutro
+        if target <= now:
+            target += 86400
+        return target
+    minutes = float(t.rstrip("m").replace(",", "."))
+    if minutes <= 0:
+        raise ValueError(text)
+    return now + 60 * minutes
+
+
 # --------------------------------------------------------------------- #
 def load_instances(path: Path) -> list[dict]:
     if not path.exists():
@@ -438,6 +481,8 @@ def main() -> None:
     ap.add_argument("--config", default=str(BASE_DIR / "config.json"))
     ap.add_argument("--serial", help="tylko ta instancja")
     ap.add_argument("--adb", default=os.environ.get("ADB_PATH") or default_adb_path())
+    ap.add_argument("--stop-after", metavar="MIN|HH:MM",
+                    help="minutnik: po tylu minutach (albo o tej godzinie) zamknij grę i zakończ")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -458,6 +503,10 @@ def main() -> None:
     for inst in instances:
         cfg = Config.from_dict(inst)
         bot = ArenaBot(cfg, args.adb, stop)
+        if args.stop_after:
+            bot.stop_at = parse_stop_time(args.stop_after)
+            log.info("[%s] minutnik: koniec o %s", bot.tag,
+                     time.strftime("%H:%M", time.localtime(bot.stop_at)))
         t = threading.Thread(target=bot.run, name=cfg.serial, daemon=True)
         t.start()
         threads.append(t)

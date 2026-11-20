@@ -66,6 +66,7 @@ class App:
         self.thread: threading.Thread | None = None
         self.bot: ab.ArenaBot | None = None
         self.prev_lb: ab.LeaderboardEvent | None = None
+        self.stop_at: float | None = None  # minutnik (time.time())
         self.button_imgs = {k: cv2.imread(str(p)) for k, (_t, p) in BUTTONS.items()}
         self.clicks: dict[str, list[tuple[float, float]]] = self._load_clicks()
         self._photos = {}  # referencje, żeby tk nie zgubił obrazów
@@ -111,6 +112,22 @@ class App:
         self.stop_btn.pack(side="left")
         self.status_var = tk.StringVar(value="zatrzymany")
         ttk.Label(top, textvariable=self.status_var).pack(side="left", padx=12)
+
+        # minutnik: po czasie bot zamyka grę i przestaje klikać
+        timer = ttk.Frame(self.root, padding=(8, 0, 8, 6))
+        timer.pack(fill="x")
+        ttk.Label(timer, text="⏱ Minutnik – zamknij grę:").pack(side="left")
+        self.timer_var = tk.StringVar()
+        entry = ttk.Entry(timer, textvariable=self.timer_var, width=8)
+        entry.pack(side="left", padx=4)
+        entry.bind("<Return>", lambda e: self.set_timer())
+        ttk.Label(timer, text="(90 = za 90 min, 1h30, 23:15 = o godzinie)",
+                  style="Dim.TLabel").pack(side="left")
+        ttk.Button(timer, text="Ustaw", command=self.set_timer).pack(side="left", padx=(8, 4))
+        ttk.Button(timer, text="Anuluj", command=self.cancel_timer).pack(side="left")
+        self.timer_info_var = tk.StringVar(value="wyłączony")
+        self.timer_label = ttk.Label(timer, textvariable=self.timer_info_var)
+        self.timer_label.pack(side="left", padx=12)
 
         # wszystko skaluje się z oknem: obrazy rysujemy na Canvasach, a obraz
         # jest dopasowywany do ich rozmiaru (z zachowaniem proporcji)
@@ -223,6 +240,7 @@ class App:
         except Exception as e:
             logging.error("nie mogę wystartować: %s", e)
             return
+        self.bot.stop_at = self.stop_at
         self.thread = threading.Thread(target=self.bot.run, daemon=True)
         self.thread.start()
         self.start_btn.configure(state="disabled")
@@ -246,6 +264,42 @@ class App:
             self.bot = None
             self.status_var.set("zatrzymany")
         wait()
+
+    # --------------------------------------------------------------- minutnik
+    def set_timer(self):
+        text = self.timer_var.get().strip()
+        if not text:
+            self.cancel_timer()
+            return
+        try:
+            self.stop_at = ab.parse_stop_time(text)
+        except ValueError:
+            self.timer_info_var.set("nie rozumiem – wpisz np. 90, 1h30 albo 23:15")
+            self.timer_label.configure(foreground="#ff7b7b")
+            return
+        self.timer_label.configure(foreground="#ddd")
+        if self.bot:
+            self.bot.stop_at = self.stop_at
+        logging.info("minutnik: zamknięcie gry o %s",
+                     time.strftime("%H:%M", time.localtime(self.stop_at)))
+        self._update_timer()
+
+    def cancel_timer(self):
+        self.stop_at = None
+        if self.bot:
+            self.bot.stop_at = None
+        self.timer_label.configure(foreground="#ddd")
+        self.timer_info_var.set("wyłączony")
+
+    def _update_timer(self):
+        if self.stop_at is None:
+            return
+        left = int(self.stop_at - time.time())
+        at = time.strftime("%H:%M", time.localtime(self.stop_at))
+        if left > 0:
+            h, rem = divmod(left, 3600)
+            self.timer_info_var.set(f"o {at} – zostało {h}:{rem // 60:02d}:{rem % 60:02d}"
+                                    + ("" if self.bot else " (zacznie liczyć się po Start)"))
 
     def check_now(self):
         if self.bot:
@@ -279,6 +333,22 @@ class App:
         self.root.after(100, self._pump)
 
     def _tick(self):
+        self._update_timer()
+        # bot skończył sam (minutnik) - przywróć przyciski
+        if self.thread and not self.thread.is_alive():
+            finished = self.stop_at is not None and time.time() >= self.stop_at
+            self.thread = None
+            self.bot = None
+            self.start_btn.configure(state="normal")
+            self.stop_btn.configure(state="disabled")
+            self.lb_btn.configure(state="disabled")
+            if finished:
+                at = time.strftime("%H:%M", time.localtime(self.stop_at))
+                self.status_var.set(f"zakończony minutnikiem o {at}")
+                self.timer_info_var.set(f"gra zamknięta o {at}")
+                self.stop_at = None
+            else:
+                self.status_var.set("zatrzymany")
         # odliczanie do następnego sprawdzenia leaderboardu
         if self.bot and self.lb_when_var.get() != "sprawdzam…":
             left = int(self.bot.next_leaderboard - time.monotonic())
