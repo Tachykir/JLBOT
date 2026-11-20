@@ -1,8 +1,13 @@
 # Just Loot – RUN 10 MORE
 
-Odchudzony fork Dust Mine Bota (LDPlayer przez ADB, działa w tle). Bot
-robi jedną rzecz: gdy na ekranie głównym pojawi się przycisk
-**RUN 10 MORE** (arena skończyła 10 walk), klika go.
+Odchudzony fork Dust Mine Bota (LDPlayer przez ADB, działa w tle). Bot:
+
+1. gdy na ekranie głównym pojawi się przycisk **RUN 10 MORE** (arena
+   skończyła 10 walk), klika go,
+2. co 10–20 minut wchodzi na **leaderboard** (ikona wykresu na dole),
+   odczytuje LP swoje i **MossG**, wypisuje, ile brakuje, i wraca do
+   **Profile** (pierwszy przycisk na dole). Historia trafia do
+   `leaderboard.csv`.
 
 - Przycisk jest wykrywany na obrazie (wzorzec `templates/run10more.png`,
   działa w każdej rozdzielczości). Bot nie klika, gdy przycisku nie ma ani
@@ -26,9 +31,11 @@ Wybierz urządzenie z listy (to, co pokazuje `adb devices`, np.
 `emulator-5566`) i kliknij **Start**. W oknie widać:
 
 - **Ekran**: podgląd z emulatora, zielona ramka = wykryty RUN 10 MORE
-- **Mapa kliknięć**: wszystkie kliknięcia na przycisku (mapa ciepła +
-  kropki; czerwona = ostatnie, białe = 10 ostatnich). Zapisywana w
-  `clicks.json`, przycisk „Wyczyść” ją zeruje.
+- **Leaderboard**: ile brakuje do MossG, LP obu graczy, kiedy sprawdzono
+  i za ile następne; „Sprawdź teraz” sprawdza od razu
+- **Mapy kliknięć**: RUN 10 MORE, Leaderboard i Profile - wszystkie
+  kliknięcia na przycisku (mapa ciepła + kropki; czerwona = ostatnie,
+  białe = 10 ostatnich). Zapisywane w `clicks.json`, „Wyczyść” je zeruje.
 - licznik kliknięć, wynik dopasowania i log
 
 **Bez okna** (wszystkie instancje z `config.json`, a bez configu wszystkie z `adb devices`):
@@ -51,3 +58,15 @@ copy config.example.json config.json
 - `poll_interval` ([1.0, 2.5] s) – co ile sprawdzać ekran
 - `after_click_wait` ([1.5, 3.0] s) – przerwa po kliknięciu
 - `click_margin_x`, `click_margin_y` (0.06, 0.20) – margines od krawędzi przycisku
+- `leaderboard_every_min` ([10, 20] min) – co ile sprawdzać leaderboard; `[0, 0]` wyłącza
+- `nav_leaderboard`, `nav_profile` – obszary ikon na pasku (ułamki ekranu `[x1, y1, x2, y2]`)
+
+## Jak odczytywane są LP
+
+Gra używa czcionki **Chakra Petch** (SIL OFL, `templates/ChakraPetch-OFL.txt`).
+Wzory cyfr i liter w `templates/digits.npz` są wyrenderowane z tej czcionki
+(4 grubości, różne rozmiary) i uzupełnione próbkami z prawdziwych zrzutów.
+- moje LP: liczba w lewej kolumnie przy karcie z fioletową ramką,
+- LP MossG: liczba w lewej kolumnie przy karcie z napisem „MossG”
+  (szukany wzorcem `templates/mossg.png`, na jasnej i ciemnej karcie).
+Gdy cyfra jest niepewna, bot nie zgaduje - wpisuje „?”.

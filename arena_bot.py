@@ -1,10 +1,14 @@
 """
 arena_bot.py
 ============
-Minimalny bot do Just Loot (LDPlayer, ADB): gdy na ekranie głównym pojawi
-się przycisk **RUN 10 MORE** (arena skończyła 10 walk), bot klika go w
-losowy punkt (nigdy dwa razy w to samo miejsce). Przycisk jest wykrywany
-na obrazie (dopasowanie wzorca templates/run10more.png).
+Minimalny bot do Just Loot (LDPlayer, ADB):
+  - gdy na ekranie głównym pojawi się przycisk **RUN 10 MORE** (arena
+    skończyła 10 walk), bot klika go (wykrywany na obrazie, wzorzec
+    templates/run10more.png),
+  - co jakiś czas wchodzi na leaderboard, odczytuje LP swoje i MossG,
+    wypisuje, ile brakuje, i wraca do Profile.
+Każde kliknięcie trafia w losowy punkt przycisku (nigdy dwa razy w to samo
+miejsce).
 
 Uruchomienie:
     python gui.py                        # okno z podglądem i mapą kliknięć
@@ -30,6 +34,8 @@ from typing import Callable
 import cv2
 import numpy as np
 
+import lp_reader
+
 log = logging.getLogger("arena")
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -49,6 +55,13 @@ class Config:
     # margines od krawędzi przycisku (ułamek szer./wys.), żeby nie klikać w ramkę
     click_margin_x: float = 0.06
     click_margin_y: float = 0.20
+
+    # leaderboard: co ile minut (losowo z zakresu), 0 = wyłączone
+    leaderboard_every_min: list = field(default_factory=lambda: [10, 20])
+    rival_name: str = "MossG"            # tylko do opisu - szukany wzorcem templates/mossg.png
+    # przyciski paska nawigacji (ułamki ekranu x1, y1, x2, y2)
+    nav_leaderboard: list = field(default_factory=lambda: [0.775, 0.945, 0.835, 0.980])
+    nav_profile: list = field(default_factory=lambda: [0.025, 0.940, 0.085, 0.975])
 
     @classmethod
     def from_dict(cls, d: dict) -> "Config":
@@ -199,12 +212,28 @@ def rand_between(rng: list) -> float:
 @dataclass
 class ClickEvent:
     serial: str
+    key: str            # "run10" | "leaderboard" | "profile"
     fx: float           # 0..1 względem prostokąta przycisku
     fy: float
     x: int              # px urządzenia
     y: int
     score: float
     button: np.ndarray  # wycinek ekranu z przyciskiem (BGR)
+
+
+@dataclass
+class LeaderboardEvent:
+    serial: str
+    my_lp: int | None
+    rival_lp: int | None
+    rival_name: str
+    when: float
+
+    @property
+    def missing(self) -> int | None:
+        if self.my_lp is None or self.rival_lp is None:
+            return None
+        return self.rival_lp - self.my_lp
 
 
 @dataclass
@@ -219,16 +248,82 @@ class FrameEvent:
 class ArenaBot:
     def __init__(self, cfg: Config, adb_path: str, stop: threading.Event,
                  on_click: Callable[[ClickEvent], None] | None = None,
-                 on_frame: Callable[[FrameEvent], None] | None = None):
+                 on_frame: Callable[[FrameEvent], None] | None = None,
+                 on_leaderboard: Callable[[LeaderboardEvent], None] | None = None):
         self.cfg = cfg
         self.stop = stop
         self.adb = ADB(cfg.serial, adb_path)
         self.detector = RunButtonDetector()
-        self.clicker = RandomClicker()
+        self.clickers: dict[str, RandomClicker] = {}
         self.on_click = on_click
         self.on_frame = on_frame
+        self.on_leaderboard = on_leaderboard
         self.tag = cfg.name or cfg.serial
         self.clicks = 0
+        self.lb_reader = lp_reader.LeaderboardReader()
+        self.check_leaderboard_now = threading.Event()
+        self.next_leaderboard = time.monotonic() + 20  # pierwszy raz zaraz po starcie
+        self.last_leaderboard: LeaderboardEvent | None = None
+
+    def tap_in(self, key: str, rect, img: np.ndarray | None, mx: float, my: float,
+               score: float = 1.0) -> tuple[int, int]:
+        """Klik w losowy punkt prostokąta (px urządzenia) + zdarzenie dla GUI."""
+        x1, y1, x2, y2 = rect
+        fx, fy = self.clickers.setdefault(key, RandomClicker()).pick(mx, my)
+        x = int(round(x1 + fx * (x2 - x1)))
+        y = int(round(y1 + fy * (y2 - y1)))
+        self.adb.tap(x, y)
+        if self.on_click:
+            crop = img[y1:y2, x1:x2].copy() if img is not None else None
+            self.on_click(ClickEvent(self.cfg.serial, key, fx, fy, x, y, score, crop))
+        return x, y
+
+    def frac_rect(self, img: np.ndarray, r) -> tuple[int, int, int, int]:
+        h, w = img.shape[:2]
+        return int(r[0] * w), int(r[1] * h), int(r[2] * w), int(r[3] * h)
+
+    def schedule_leaderboard(self) -> None:
+        lo, hi = self.cfg.leaderboard_every_min
+        self.next_leaderboard = time.monotonic() + 60 * random.uniform(lo, hi)
+
+    def check_leaderboard(self) -> None:
+        img = self.adb.screenshot()
+        x, y = self.tap_in("leaderboard", self.frac_rect(img, self.cfg.nav_leaderboard), img, 0.1, 0.1)
+        log.info("[%s] leaderboard (%d, %d)", self.tag, x, y)
+        self.stop.wait(rand_between([1.5, 2.5]))
+        result = None
+        for _ in range(5):
+            if self.stop.is_set():
+                return
+            frame = self.adb.screenshot()
+            if self.on_frame:
+                self.on_frame(FrameEvent(self.cfg.serial, frame, 0.0, None, False))
+            lb = self.lb_reader.read(frame)
+            if lb.my_lp is not None and lb.rival_lp is not None:
+                result = lb
+                break
+            result = result or lb
+            self.stop.wait(1.0)
+
+        img = self.adb.screenshot()
+        x, y = self.tap_in("profile", self.frac_rect(img, self.cfg.nav_profile), img, 0.1, 0.1)
+        log.info("[%s] powrót do Profile (%d, %d)", self.tag, x, y)
+        self.stop.wait(rand_between([1.0, 2.0]))
+
+        ev = LeaderboardEvent(self.cfg.serial, result.my_lp if result else None,
+                              result.rival_lp if result else None, self.cfg.rival_name, time.time())
+        fmt = lambda v: f"{v:,}".replace(",", " ") if v is not None else "?"
+        if ev.missing is not None:
+            msg = (f"brakuje {fmt(ev.missing)} LP" if ev.missing > 0
+                   else f"przewaga {fmt(-ev.missing)} LP")
+        else:
+            msg = "nie udało się odczytać"
+        log.info("[%s] %s %s LP | ja %s LP | %s", self.tag, ev.rival_name, fmt(ev.rival_lp),
+                 fmt(ev.my_lp), msg)
+        self.last_leaderboard = ev
+        save_leaderboard(ev)
+        if self.on_leaderboard:
+            self.on_leaderboard(ev)
 
     def step(self) -> bool:
         """Jedno sprawdzenie ekranu; True = kliknięto."""
@@ -239,22 +334,23 @@ class ArenaBot:
             self.on_frame(FrameEvent(self.cfg.serial, img, score, rect, visible))
         if not visible:
             return False
-        x1, y1, x2, y2 = rect
-        fx, fy = self.clicker.pick(self.cfg.click_margin_x, self.cfg.click_margin_y)
-        x = int(round(x1 + fx * (x2 - x1)))
-        y = int(round(y1 + fy * (y2 - y1)))
-        self.adb.tap(x, y)
+        x, y = self.tap_in("run10", rect, img, self.cfg.click_margin_x,
+                           self.cfg.click_margin_y, score)
         self.clicks += 1
         log.info("[%s] RUN 10 MORE #%d (%d, %d) dopasowanie %.2f", self.tag, self.clicks, x, y, score)
-        if self.on_click:
-            self.on_click(ClickEvent(self.cfg.serial, fx, fy, x, y, score,
-                                     img[y1:y2, x1:x2].copy()))
         return True
 
     def run(self) -> None:
         log.info("[%s] start - czekam na RUN 10 MORE", self.tag)
         while not self.stop.is_set():
             try:
+                lb_on = self.cfg.leaderboard_every_min and max(self.cfg.leaderboard_every_min) > 0
+                if self.check_leaderboard_now.is_set() or (
+                        lb_on and time.monotonic() >= self.next_leaderboard):
+                    self.check_leaderboard_now.clear()
+                    self.schedule_leaderboard()
+                    self.check_leaderboard()
+                    continue
                 clicked = self.step()
                 self.stop.wait(rand_between(self.cfg.after_click_wait if clicked
                                             else self.cfg.poll_interval))
@@ -262,6 +358,24 @@ class ArenaBot:
                 log.error("[%s] błąd: %s", self.tag, e)
                 self.stop.wait(5)
         log.info("[%s] zatrzymany", self.tag)
+
+
+LEADERBOARD_CSV = BASE_DIR / "leaderboard.csv"
+
+
+def save_leaderboard(ev: LeaderboardEvent) -> None:
+    """Historia odczytów: czas, urządzenie, moje LP, LP rywala, brakuje."""
+    try:
+        new = not LEADERBOARD_CSV.exists()
+        with open(LEADERBOARD_CSV, "a", encoding="utf-8") as f:
+            if new:
+                f.write("time;serial;my_lp;rival;rival_lp;missing\n")
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ev.when))};{ev.serial};"
+                    f"{ev.my_lp if ev.my_lp is not None else ''};{ev.rival_name};"
+                    f"{ev.rival_lp if ev.rival_lp is not None else ''};"
+                    f"{ev.missing if ev.missing is not None else ''}\n")
+    except OSError as e:
+        log.warning("nie zapisano %s: %s", LEADERBOARD_CSV, e)
 
 
 # --------------------------------------------------------------------- #
