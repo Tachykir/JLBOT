@@ -66,7 +66,7 @@ copy config.example.json config.json
 - `poll_interval` ([1.0, 2.5] s) – co ile sprawdzać ekran
 - `after_click_wait` ([1.5, 3.0] s) – przerwa po kliknięciu
 - `click_margin_x`, `click_margin_y` (0.06, 0.20) – margines od krawędzi przycisku
-- `leaderboard_every_min` ([5, 60] min) – losowy odstęp między sprawdzeniami sprawdzać leaderboard; `[0, 0]` wyłącza
+- `leaderboard_every_min` ([5, 60] min) – losowy odstęp między sprawdzeniami leaderboardu; `[0, 0]` wyłącza
 - `nav_leaderboard`, `nav_profile` – obszary ikon na pasku (ułamki ekranu `[x1, y1, x2, y2]`)
 
 ## Jak odczytywane są LP
