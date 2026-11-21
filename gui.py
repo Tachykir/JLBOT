@@ -385,7 +385,7 @@ class App:
             else:
                 self.status_var.set("zatrzymany")
         # odliczanie do następnego sprawdzenia leaderboardu
-        if self.bot and self.lb_when_var.get() != "sprawdzam…":
+        if self.bot and self.bot.auto_leaderboard and self.lb_when_var.get() != "sprawdzam…":
             left = int(self.bot.next_leaderboard - time.monotonic())
             base = self.lb_when_var.get().split(" · następne")[0]
             if left > 0:

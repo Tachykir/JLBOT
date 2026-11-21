@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import logging
 import os
 import random
@@ -57,12 +58,21 @@ class Config:
     # po kliknięciu RUN 10 MORE nie klikaj go ponownie przez tyle sekund,
     # nawet jeśli gra jeszcze go pokazuje (zawsze jedno tapnięcie)
     reclick_after_s: float = 20.0
+
+    # naturalne odstępy (sekundy: [min, mediana, max])
+    reaction_s: list = field(default_factory=lambda: [0.4, 1.1, 6.0])     # zauważenie RUN 10 MORE
+    distraction_chance: float = 0.07                                       # czasem "zagapienie się"
+    distraction_s: list = field(default_factory=lambda: [4.0, 9.0, 40.0])
+    nav_reaction_s: list = field(default_factory=lambda: [0.3, 0.8, 3.0])   # przed ikoną leaderboardu
+    look_leaderboard_s: list = field(default_factory=lambda: [1.5, 3.5, 10.0])  # patrzenie na ranking
+    tap_hold_ms: list = field(default_factory=lambda: [45, 130])           # jak długo palec dotyka
     # margines od krawędzi przycisku (ułamek szer./wys.), żeby nie klikać w ramkę
     click_margin_x: float = 0.06
     click_margin_y: float = 0.20
 
-    # leaderboard: co ile minut (losowo z zakresu), 0 = wyłączone
-    leaderboard_every_min: list = field(default_factory=lambda: [5, 60])
+    # leaderboard automatycznie co ile minut (losowo z zakresu); [0, 0] = tylko
+    # na żądanie (przycisk "Sprawdź teraz" w GUI)
+    leaderboard_every_min: list = field(default_factory=lambda: [0, 0])
     rival_name: str = "MossG"            # tylko do opisu - szukany wzorcem templates/mossg.png
     # przyciski paska nawigacji (ułamki ekranu x1, y1, x2, y2)
     nav_leaderboard: list = field(default_factory=lambda: [0.775, 0.945, 0.835, 0.980])
@@ -135,8 +145,15 @@ class ADB:
             raise RuntimeError(f"adb {' '.join(args)}: {p.stderr.decode(errors='replace').strip()}")
         return p.stdout
 
-    def tap(self, x: int, y: int) -> None:
-        self._run(["shell", "input", "tap", str(x), str(y)])
+    def tap(self, x: int, y: int, hold_ms: int | None = None) -> None:
+        """Tapnięcie. Z hold_ms - jak palec: przytrzymanie przez tyle ms
+        z drobnym (0-2 px) przesunięciem zamiast idealnego `input tap`."""
+        if not hold_ms:
+            self._run(["shell", "input", "tap", str(x), str(y)])
+            return
+        x2 = x + random.randint(-2, 2)
+        y2 = y + random.randint(-2, 2)
+        self._run(["shell", "input", "swipe", str(x), str(y), str(x2), str(y2), str(int(hold_ms))])
 
     def stop_app(self, package: str) -> None:
         self._run(["shell", "am", "force-stop", package])
@@ -245,6 +262,12 @@ class RandomClicker:
         return fx, fy
 
 
+def human_pause(lo: float, median: float, hi: float) -> float:
+    """Czas reakcji człowieka: rozkład log-normalny (najczęściej koło mediany,
+    czasem wyraźnie dłużej, nigdy idealnie równo), obcięty do [lo, hi]."""
+    return min(hi, max(lo, random.lognormvariate(math.log(median), 0.45)))
+
+
 def rand_between(rng: list) -> float:
     lo, hi = rng
     # zwykle bliżej dolnej granicy, czasem dłużej - jak człowiek
@@ -346,7 +369,7 @@ class ArenaBot:
         fx, fy = self.clickers.setdefault(key, RandomClicker()).pick(mx, my)
         x = int(round(x1 + fx * (x2 - x1)))
         y = int(round(y1 + fy * (y2 - y1)))
-        self.adb.tap(x, y)
+        self.adb.tap(x, y, random.randint(*self.cfg.tap_hold_ms))
         if self.on_click:
             crop = img[y1:y2, x1:x2].copy() if img is not None else None
             self.on_click(ClickEvent(self.cfg.serial, key, fx, fy, x, y, score, crop))
@@ -356,15 +379,25 @@ class ArenaBot:
         h, w = img.shape[:2]
         return int(r[0] * w), int(r[1] * h), int(r[2] * w), int(r[3] * h)
 
+    @property
+    def auto_leaderboard(self) -> bool:
+        return bool(self.cfg.leaderboard_every_min) and max(self.cfg.leaderboard_every_min) > 0
+
     def schedule_leaderboard(self) -> None:
         lo, hi = self.cfg.leaderboard_every_min
         self.next_leaderboard = time.monotonic() + 60 * random.uniform(lo, hi)
 
+    def pause(self, rng: list) -> None:
+        self.stop.wait(human_pause(*rng))
+
     def check_leaderboard(self) -> None:
+        self.pause(self.cfg.nav_reaction_s)
         img = self.adb.screenshot()
         x, y = self.tap_in("leaderboard", self.frac_rect(img, self.cfg.nav_leaderboard), img, 0.1, 0.1)
         log.info("[%s] leaderboard (%d, %d)", self.tag, x, y)
-        self.stop.wait(rand_between([1.5, 2.5]))
+        opened = time.monotonic()
+        look = human_pause(*self.cfg.look_leaderboard_s)  # tyle "patrzymy" na ranking
+        self.stop.wait(min(look, rand_between([1.2, 2.0])))
         result = None
         for _ in range(5):
             if self.stop.is_set():
@@ -379,10 +412,13 @@ class ArenaBot:
             result = result or lb
             self.stop.wait(1.0)
 
+        rest = look - (time.monotonic() - opened)
+        if rest > 0:
+            self.stop.wait(rest)
         img = self.adb.screenshot()
         x, y = self.tap_in("profile", self.frac_rect(img, self.cfg.nav_profile), img, 0.1, 0.1)
         log.info("[%s] powrót do Profile (%d, %d)", self.tag, x, y)
-        self.stop.wait(rand_between([1.0, 2.0]))
+        self.pause([0.8, 1.6, 4.0])
 
         ev = LeaderboardEvent(self.cfg.serial, result.my_lp if result else None,
                               result.rival_lp if result else None, self.cfg.rival_name, time.time())
@@ -419,11 +455,24 @@ class ArenaBot:
             return False
         if time.monotonic() - self._last_run10 < self.cfg.reclick_after_s:
             return False  # dopiero kliknięty - czekamy, aż gra zareaguje
+        # człowiek nie klika w tej samej milisekundzie: czas reakcji,
+        # czasem dłuższe zagapienie się; potem sprawdź, czy przycisk dalej jest
+        delay = human_pause(*self.cfg.reaction_s)
+        if random.random() < self.cfg.distraction_chance:
+            delay += human_pause(*self.cfg.distraction_s)
+        self.stop.wait(delay)
+        if self.stop.is_set():
+            return False
+        img = self.adb.screenshot()
+        score, rect = self.detector.find(img)
+        if rect is None or score < self.cfg.match_threshold:
+            return False
         self._last_run10 = time.monotonic()
         x, y = self.tap_in("run10", rect, img, self.cfg.click_margin_x,
                            self.cfg.click_margin_y, score)
         self.clicks += 1
-        log.info("[%s] RUN 10 MORE #%d (%d, %d) dopasowanie %.2f", self.tag, self.clicks, x, y, score)
+        log.info("[%s] RUN 10 MORE #%d (%d, %d) po %.1f s, dopasowanie %.2f",
+                 self.tag, self.clicks, x, y, delay, score)
         return True
 
     # ------------------------------------------------------------ harmonogram
@@ -510,7 +559,7 @@ class ArenaBot:
             if self.stop.is_set():
                 break
             try:
-                lb_on = self.cfg.leaderboard_every_min and max(self.cfg.leaderboard_every_min) > 0
+                lb_on = self.auto_leaderboard
                 if self.check_leaderboard_now.is_set() or (
                         lb_on and time.monotonic() >= self.next_leaderboard):
                     self.check_leaderboard_now.clear()

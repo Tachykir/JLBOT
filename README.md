@@ -4,7 +4,7 @@ Odchudzony fork Dust Mine Bota (LDPlayer przez ADB, działa w tle). Bot:
 
 1. gdy na ekranie głównym pojawi się przycisk **RUN 10 MORE** (arena
    skończyła 10 walk), klika go,
-2. losowo co 5–60 minut wchodzi na **leaderboard** (ikona wykresu na dole),
+2. po kliknięciu **Sprawdź teraz** w GUI wchodzi na **leaderboard** (ikona wykresu na dole),
    odczytuje LP swoje i **MossG**, wypisuje, ile brakuje, i wraca do
    **Profile** (pierwszy przycisk na dole). Historia trafia do
    `leaderboard.csv`.
@@ -32,7 +32,7 @@ Wybierz urządzenie z listy (to, co pokazuje `adb devices`, np.
 
 - **Ekran**: podgląd z emulatora, zielona ramka = wykryty RUN 10 MORE
 - **Leaderboard**: ile brakuje do MossG, LP obu graczy, kiedy sprawdzono
-  i za ile następne, oraz bilans dystansu **od startu** (od pierwszego
+  (i za ile następne, jeśli włączone automatyczne), oraz bilans dystansu **od startu** (od pierwszego
   odczytu po kliknięciu Start) i od ostatniego sprawdzenia, np.
   „od startu −308 (ostatnio +141)”. + = dystans zmalał (podbiłem), − = urósł:
   było 800, jest 790 → +10. Kolor (zielony / czerwony) według bilansu od startu.
@@ -75,8 +75,15 @@ copy config.example.json config.json
 - `poll_interval` ([1.0, 2.5] s) – co ile sprawdzać ekran
 - `after_click_wait` ([1.5, 3.0] s) – przerwa po kliknięciu
 - `reclick_after_s` (20 s) – po kliknięciu RUN 10 MORE bot nie klika go ponownie przez tyle sekund, nawet jeśli przycisk jeszcze widać
+- **naturalne odstępy** (sekundy `[min, mediana, max]`, rozkład log-normalny jak
+  czas reakcji człowieka): `reaction_s` ([0.4, 1.1, 6]) – zanim kliknie RUN 10
+  MORE, `distraction_chance` (0.07) + `distraction_s` ([4, 9, 40]) – czasem
+  dłuższe „zagapienie się”, `nav_reaction_s` ([0.3, 0.8, 3]) – przed ikoną
+  leaderboardu, `look_leaderboard_s` ([1.5, 3.5, 10]) – ile „patrzy” na ranking
+  przed powrotem do Profile, `tap_hold_ms` ([45, 130]) – jak długo palec
+  dotyka ekranu (tapnięcie z drobnym, 0–2 px ruchem)
 - `click_margin_x`, `click_margin_y` (0.06, 0.20) – margines od krawędzi przycisku
-- `leaderboard_every_min` ([5, 60] min) – losowy odstęp między sprawdzeniami leaderboardu; `[0, 0]` wyłącza
+- `leaderboard_every_min` ([0, 0]) – leaderboard tylko przyciskiem „Sprawdź teraz”; np. `[5, 60]` = dodatkowo automatycznie co losowe 5–60 min
 - `nav_leaderboard`, `nav_profile` – obszary ikon na pasku (ułamki ekranu `[x1, y1, x2, y2]`)
 
 ## Jak odczytywane są LP
