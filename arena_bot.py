@@ -349,6 +349,7 @@ class ArenaBot:
         self.on_leaderboard = on_leaderboard
         self.tag = cfg.name or cfg.serial
         self.clicks = 0
+        self.taps_sent: dict[str, int] = {}  # wszystkie dotknięcia wysłane do gry
         self.lb_reader = lp_reader.LeaderboardReader()
         self.check_leaderboard_now = threading.Event()
         self.stop_at: float | None = None  # koniec (time.time()), None = bez
@@ -370,6 +371,7 @@ class ArenaBot:
         x = int(round(x1 + fx * (x2 - x1)))
         y = int(round(y1 + fy * (y2 - y1)))
         self.adb.tap(x, y, random.randint(*self.cfg.tap_hold_ms))
+        self.taps_sent[key] = self.taps_sent.get(key, 0) + 1
         if self.on_click:
             crop = img[y1:y2, x1:x2].copy() if img is not None else None
             self.on_click(ClickEvent(self.cfg.serial, key, fx, fy, x, y, score, crop))
@@ -572,7 +574,9 @@ class ArenaBot:
             except Exception as e:
                 log.error("[%s] błąd: %s", self.tag, e)
                 self.stop.wait(5)
-        log.info("[%s] zatrzymany", self.tag)
+        log.info("[%s] zatrzymany - wysłano %d kliknięć do gry (%s)", self.tag,
+                 sum(self.taps_sent.values()),
+                 ", ".join(f"{k} {v}" for k, v in self.taps_sent.items()) or "brak")
 
     def finish(self) -> None:
         """Minutnik: zamknij grę i przestań klikać."""

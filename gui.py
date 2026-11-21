@@ -67,6 +67,7 @@ class App:
         self.bot: ab.ArenaBot | None = None
         self.prev_lb: ab.LeaderboardEvent | None = None
         self.session_lb: ab.LeaderboardEvent | None = None  # pierwszy odczyt po Start
+        self.session_taps: dict[str, int] = {}  # kliknięcia wysłane w tej sesji
         self.stop_at: float | None = None  # koniec (time.time())
         self.start_at: float | None = None  # "start od" (time.time())
         self.button_imgs = {k: cv2.imread(str(p)) for k, (_t, p) in BUTTONS.items()}
@@ -204,6 +205,10 @@ class App:
 
         stats = ttk.Frame(right, padding=(0, 4))
         stats.grid(row=2, column=0, sticky="ew")
+        self.sent_var = tk.StringVar()
+        ttk.Label(stats, textvariable=self.sent_var, font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        self.sent_detail_var = tk.StringVar()
+        ttk.Label(stats, textvariable=self.sent_detail_var, style="Dim.TLabel").pack(anchor="w")
         self.score_var = tk.StringVar(value="dopasowanie: –")
         self.last_var = tk.StringVar(value="ostatnie kliknięcie: –")
         for v in (self.score_var, self.last_var):
@@ -252,6 +257,8 @@ class App:
         self.bot.stop_at = self.stop_at
         self.bot.start_at = self.start_at
         self.session_lb = None  # "od startu" liczymy od nowa
+        self.session_taps = {}
+        self._update_sent()
         self.thread = threading.Thread(target=self.bot.run, daemon=True)
         self.thread.start()
         self.start_btn.configure(state="disabled")
@@ -484,7 +491,15 @@ class App:
             cv2.rectangle(img, (x1, y1), (x2, y2), (0, 220, 0), 2)
         self._draw_on(self.preview, "preview", img)
 
+    def _update_sent(self):
+        sess = sum(self.session_taps.values())
+        total = sum(len(v) for v in self.clicks.values())
+        parts = " · ".join(f"{BUTTONS.get(k, (k,))[0]} {n}" for k, n in self.session_taps.items())
+        self.sent_var.set(f"kliknięcia wysłane do gry: {sess} w tej sesji · łącznie {total}")
+        self.sent_detail_var.set(parts or "w tej sesji jeszcze nic")
+
     def on_click(self, e: ab.ClickEvent):
+        self.session_taps[e.key] = self.session_taps.get(e.key, 0) + 1
         self.clicks.setdefault(e.key, []).append((round(e.fx, 4), round(e.fy, 4)))
         if e.button is not None and e.button.size:
             self.button_imgs[e.key] = e.button  # prawdziwy wygląd przycisku z gry
@@ -539,6 +554,7 @@ class App:
     def _update_titles(self):
         for key, (title, _p) in BUTTONS.items():
             self.map_title[key].set(f"{title} – kliknięcia: {len(self.clicks.get(key, []))}")
+        self._update_sent()
 
     def _load_clicks(self) -> dict[str, list[tuple[float, float]]]:
         try:

@@ -40,7 +40,8 @@ Wybierz urządzenie z listy (to, co pokazuje `adb devices`, np.
 - **Mapy kliknięć**: RUN 10 MORE, Leaderboard i Profile - wszystkie
   kliknięcia na przycisku (mapa ciepła + kropki; czerwona = ostatnie,
   białe = 10 ostatnich). Zapisywane w `clicks.json`, „Wyczyść” je zeruje.
-- licznik kliknięć, wynik dopasowania i log
+- **licznik kliknięć wysłanych do gry**: w tej sesji (od Start) i łącznie (z `clicks.json`), z podziałem na RUN 10 MORE / Leaderboard / Profile; po Stop bot wypisuje w logu, ile kliknięć wysłał
+- wynik dopasowania i log
 - **⏱ Harmonogram** (pod paskiem urządzenia), potem **Ustaw**:
   - **Start od** `8:00` + **Koniec** `23:15` (albo `90` / `1h30` = tyle po
     starcie): codzienne okno. Przed startem i po końcu gra jest **zamknięta**,
