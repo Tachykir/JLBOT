@@ -54,6 +54,9 @@ class Config:
     match_threshold: float = 0.85        # 0..1, im wyżej tym ostrzej
     poll_interval: list = field(default_factory=lambda: [1.0, 2.5])
     after_click_wait: list = field(default_factory=lambda: [1.5, 3.0])
+    # po kliknięciu RUN 10 MORE nie klikaj go ponownie przez tyle sekund,
+    # nawet jeśli gra jeszcze go pokazuje (zawsze jedno tapnięcie)
+    reclick_after_s: float = 20.0
     # margines od krawędzi przycisku (ułamek szer./wys.), żeby nie klikać w ramkę
     click_margin_x: float = 0.06
     click_margin_y: float = 0.20
@@ -329,6 +332,7 @@ class ArenaBot:
         self.start_at: float | None = None  # "start od" (time.time()), None = od razu
         self._outside = False
         self._next_game_check = 0.0
+        self._last_run10 = -1e9
         self.next_leaderboard = time.monotonic() + 20  # pierwszy raz zaraz po starcie
         # ostatni udany odczyt (także z poprzedniego uruchomienia) - do różnic
         hist = [e for e in load_leaderboard_history() if e.serial == cfg.serial]
@@ -413,6 +417,9 @@ class ArenaBot:
             self.on_frame(FrameEvent(self.cfg.serial, img, score, rect, visible))
         if not visible:
             return False
+        if time.monotonic() - self._last_run10 < self.cfg.reclick_after_s:
+            return False  # dopiero kliknięty - czekamy, aż gra zareaguje
+        self._last_run10 = time.monotonic()
         x, y = self.tap_in("run10", rect, img, self.cfg.click_margin_x,
                            self.cfg.click_margin_y, score)
         self.clicks += 1
