@@ -74,6 +74,7 @@ copy config.example.json config.json
 - `match_threshold` (0.85) – jak pewne musi być wykrycie przycisku (0–1)
 - `poll_interval` ([1.0, 2.5] s) – co ile sprawdzać ekran
 - `after_click_wait` ([1.5, 3.0] s) – przerwa po kliknięciu
+- `reclick_after_s` (20 s) – po kliknięciu RUN 10 MORE bot nie klika go ponownie przez tyle sekund, nawet jeśli przycisk jeszcze widać
 - `click_margin_x`, `click_margin_y` (0.06, 0.20) – margines od krawędzi przycisku
 - `leaderboard_every_min` ([5, 60] min) – losowy odstęp między sprawdzeniami leaderboardu; `[0, 0]` wyłącza
 - `nav_leaderboard`, `nav_profile` – obszary ikon na pasku (ułamki ekranu `[x1, y1, x2, y2]`)
