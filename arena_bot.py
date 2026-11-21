@@ -292,6 +292,7 @@ class ArenaBot:
         # ostatni udany odczyt (także z poprzedniego uruchomienia) - do różnic
         hist = [e for e in load_leaderboard_history() if e.serial == cfg.serial]
         self.last_leaderboard: LeaderboardEvent | None = hist[-1] if hist else None
+        self.session_start_lb: LeaderboardEvent | None = None  # pierwszy odczyt po Start
 
     def tap_in(self, key: str, rect, img: np.ndarray | None, mx: float, my: float,
                score: float = 1.0) -> tuple[int, int]:
@@ -346,9 +347,14 @@ class ArenaBot:
                    else f"przewaga {fmt(-ev.missing)} LP")
         else:
             msg = "nie udało się odczytać"
+        if ev.valid and self.session_start_lb is None:
+            self.session_start_lb = ev
+        total = gap_change(self.session_start_lb, ev)
         d = gap_change(self.last_leaderboard, ev)
-        if d is not None:
-            msg += f" | {signed(d)}"
+        if total is not None:
+            msg += f" | od startu {signed(total)}"
+            if d is not None:
+                msg += f" (ostatnio {signed(d)})"
         log.info("[%s] %s %s LP | ja %s LP | %s", self.tag, ev.rival_name, fmt(ev.rival_lp),
                  fmt(ev.my_lp), msg)
         if ev.valid:

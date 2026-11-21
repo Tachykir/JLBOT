@@ -66,6 +66,7 @@ class App:
         self.thread: threading.Thread | None = None
         self.bot: ab.ArenaBot | None = None
         self.prev_lb: ab.LeaderboardEvent | None = None
+        self.session_lb: ab.LeaderboardEvent | None = None  # pierwszy odczyt po Start
         self.stop_at: float | None = None  # minutnik (time.time())
         self.button_imgs = {k: cv2.imread(str(p)) for k, (_t, p) in BUTTONS.items()}
         self.clicks: dict[str, list[tuple[float, float]]] = self._load_clicks()
@@ -159,10 +160,10 @@ class App:
         self.lb_delta_var = tk.StringVar(value="")
         head = ttk.Frame(lb)
         head.grid(row=0, column=0, sticky="w")
-        ttk.Label(head, textvariable=self.lb_missing_var, style="Big.TLabel").pack(side="left")
+        ttk.Label(head, textvariable=self.lb_missing_var, style="Big.TLabel").pack(anchor="w")
         self.lb_delta_label = ttk.Label(head, textvariable=self.lb_delta_var,
                                         font=("Segoe UI", 12, "bold"))
-        self.lb_delta_label.pack(side="left", padx=(10, 0))
+        self.lb_delta_label.pack(anchor="w")
         ttk.Label(lb, textvariable=self.lb_detail_var).grid(row=1, column=0, sticky="w")
         ttk.Label(lb, textvariable=self.lb_when_var, style="Dim.TLabel").grid(row=2, column=0, sticky="w")
         self.lb_btn = ttk.Button(lb, text="Sprawdź teraz", command=self.check_now, state="disabled")
@@ -241,6 +242,7 @@ class App:
             logging.error("nie mogę wystartować: %s", e)
             return
         self.bot.stop_at = self.stop_at
+        self.session_lb = None  # "od startu" liczymy od nowa
         self.thread = threading.Thread(target=self.bot.run, daemon=True)
         self.thread.start()
         self.start_btn.configure(state="disabled")
@@ -360,18 +362,28 @@ class App:
     def show_leaderboard(self, ev: ab.LeaderboardEvent):
         missing = ev.missing
         name = ev.rival_name
+        if ev.valid and self.session_lb is None and self.bot is not None:
+            self.session_lb = ev
         d = ab.gap_change(self.prev_lb, ev)
+        total = ab.gap_change(self.session_lb, ev)
         if missing is None:
             self.lb_missing_var.set("brakuje: ? (nie odczytano)")
         elif missing > 0:
             self.lb_missing_var.set(f"brakuje {fmt(missing)} LP do {name}")
         else:
             self.lb_missing_var.set(f"przewaga {fmt(-missing)} LP nad {name}")
-        if d is not None:
-            # + = dystans zmalał (podbiłem), − = urósł
-            self.lb_delta_var.set(ab.signed(d))
-            self.lb_delta_label.configure(foreground="#7ee08a" if d > 0 else
-                                          "#ff7b7b" if d < 0 else "#aaa")
+        # + = dystans zmalał (podbiłem), − = urósł; na górze bilans od Start
+        main = total if total is not None else None
+        if main is not None:
+            text = f"od startu {ab.signed(main)}"
+            if d is not None:
+                text += f"  (ostatnio {ab.signed(d)})"
+            self.lb_delta_var.set(text)
+            self.lb_delta_label.configure(foreground="#7ee08a" if main > 0 else
+                                          "#ff7b7b" if main < 0 else "#aaa")
+        elif d is not None:
+            self.lb_delta_var.set(f"ostatnio {ab.signed(d)}")
+            self.lb_delta_label.configure(foreground="#aaa")
         else:
             self.lb_delta_var.set("")
         self.lb_detail_var.set(f"{name} {fmt(ev.rival_lp)} LP · ja {fmt(ev.my_lp)} LP")
