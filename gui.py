@@ -67,7 +67,8 @@ class App:
         self.bot: ab.ArenaBot | None = None
         self.prev_lb: ab.LeaderboardEvent | None = None
         self.session_lb: ab.LeaderboardEvent | None = None  # pierwszy odczyt po Start
-        self.stop_at: float | None = None  # minutnik (time.time())
+        self.stop_at: float | None = None  # koniec (time.time())
+        self.start_at: float | None = None  # "start od" (time.time())
         self.button_imgs = {k: cv2.imread(str(p)) for k, (_t, p) in BUTTONS.items()}
         self.clicks: dict[str, list[tuple[float, float]]] = self._load_clicks()
         self._photos = {}  # referencje, żeby tk nie zgubił obrazów
@@ -114,21 +115,28 @@ class App:
         self.status_var = tk.StringVar(value="zatrzymany")
         ttk.Label(top, textvariable=self.status_var).pack(side="left", padx=12)
 
-        # minutnik: po czasie bot zamyka grę i przestaje klikać
+        # harmonogram: "Start od" (gra się włącza) i "Koniec" (gra się zamyka);
+        # poza oknem gra jest wyłączona
         timer = ttk.Frame(self.root, padding=(8, 0, 8, 6))
         timer.pack(fill="x")
-        ttk.Label(timer, text="⏱ Minutnik – zamknij grę:").pack(side="left")
+        ttk.Label(timer, text="⏱ Start od:").pack(side="left")
+        self.start_var = tk.StringVar()
+        e1 = ttk.Entry(timer, textvariable=self.start_var, width=6)
+        e1.pack(side="left", padx=4)
+        ttk.Label(timer, text="Koniec:").pack(side="left", padx=(6, 0))
         self.timer_var = tk.StringVar()
-        entry = ttk.Entry(timer, textvariable=self.timer_var, width=8)
+        entry = ttk.Entry(timer, textvariable=self.timer_var, width=6)
         entry.pack(side="left", padx=4)
-        entry.bind("<Return>", lambda e: self.set_timer())
-        ttk.Label(timer, text="(90 = za 90 min, 1h30, 23:15 = o godzinie)",
+        for e in (e1, entry):
+            e.bind("<Return>", lambda ev: self.set_timer())
+        ttk.Label(timer, text="(8:00 · 23:15, 90 = 90 min, 1h30)",
                   style="Dim.TLabel").pack(side="left")
         ttk.Button(timer, text="Ustaw", command=self.set_timer).pack(side="left", padx=(8, 4))
         ttk.Button(timer, text="Anuluj", command=self.cancel_timer).pack(side="left")
-        self.timer_info_var = tk.StringVar(value="wyłączony")
-        self.timer_label = ttk.Label(timer, textvariable=self.timer_info_var)
-        self.timer_label.pack(side="left", padx=12)
+        self.timer_info_var = tk.StringVar(value="harmonogram wyłączony")
+        self.timer_label = ttk.Label(self.root, textvariable=self.timer_info_var,
+                                     padding=(8, 0, 8, 6), background="#111", foreground="#ddd")
+        self.timer_label.pack(fill="x")
 
         # wszystko skaluje się z oknem: obrazy rysujemy na Canvasach, a obraz
         # jest dopasowywany do ich rozmiaru (z zachowaniem proporcji)
@@ -242,6 +250,7 @@ class App:
             logging.error("nie mogę wystartować: %s", e)
             return
         self.bot.stop_at = self.stop_at
+        self.bot.start_at = self.start_at
         self.session_lb = None  # "od startu" liczymy od nowa
         self.thread = threading.Thread(target=self.bot.run, daemon=True)
         self.thread.start()
@@ -267,41 +276,64 @@ class App:
             self.status_var.set("zatrzymany")
         wait()
 
-    # --------------------------------------------------------------- minutnik
+    # ------------------------------------------------------------ harmonogram
     def set_timer(self):
-        text = self.timer_var.get().strip()
-        if not text:
+        start_text, stop_text = self.start_var.get().strip(), self.timer_var.get().strip()
+        if not start_text and not stop_text:
             self.cancel_timer()
             return
         try:
-            self.stop_at = ab.parse_stop_time(text)
+            self.start_at, self.stop_at = ab.make_window(start_text, stop_text)
         except ValueError:
-            self.timer_info_var.set("nie rozumiem – wpisz np. 90, 1h30 albo 23:15")
+            self.timer_info_var.set("nie rozumiem – start np. 8:00, koniec np. 23:15, 90 albo 1h30")
             self.timer_label.configure(foreground="#ff7b7b")
             return
         self.timer_label.configure(foreground="#ddd")
         if self.bot:
-            self.bot.stop_at = self.stop_at
-        logging.info("minutnik: zamknięcie gry o %s",
-                     time.strftime("%H:%M", time.localtime(self.stop_at)))
+            self.bot.start_at, self.bot.stop_at = self.start_at, self.stop_at
+        hm = lambda t: time.strftime("%H:%M", time.localtime(t)) if t else "…"
+        if self.start_at:
+            logging.info("harmonogram: gra włączona %s–%s%s, poza oknem wyłączona",
+                         hm(self.start_at), hm(self.stop_at), " codziennie" if self.stop_at else "")
+        else:
+            logging.info("minutnik: zamknięcie gry o %s", hm(self.stop_at))
         self._update_timer()
 
     def cancel_timer(self):
-        self.stop_at = None
+        self.stop_at = self.start_at = None
         if self.bot:
-            self.bot.stop_at = None
+            self.bot.stop_at = self.bot.start_at = None
         self.timer_label.configure(foreground="#ddd")
-        self.timer_info_var.set("wyłączony")
+        self.timer_info_var.set("harmonogram wyłączony")
 
     def _update_timer(self):
-        if self.stop_at is None:
+        # bot przesuwa okno na kolejne dni - bierzemy jego wartości
+        start = self.bot.start_at if self.bot else self.start_at
+        stop = self.bot.stop_at if self.bot else self.stop_at
+        if start is None and stop is None:
             return
-        left = int(self.stop_at - time.time())
-        at = time.strftime("%H:%M", time.localtime(self.stop_at))
-        if left > 0:
-            h, rem = divmod(left, 3600)
-            self.timer_info_var.set(f"o {at} – zostało {h}:{rem // 60:02d}:{rem % 60:02d}"
-                                    + ("" if self.bot else " (zacznie liczyć się po Start)"))
+        now = time.time()
+        hm = lambda t: time.strftime("%H:%M", time.localtime(t))
+
+        def left(t):
+            h, rem = divmod(max(0, int(t - now)), 3600)
+            return f"{h}:{rem // 60:02d}:{rem % 60:02d}"
+
+        idle = "" if self.bot else " (po kliknięciu Start)"
+        if start is None:
+            self.timer_info_var.set(f"koniec o {hm(stop)} – zostało {left(stop)}{idle}")
+            self.timer_label.configure(foreground="#ddd")
+        elif now < start:
+            span = f"{hm(start)}–{hm(stop)}" if stop else f"od {hm(start)}"
+            self.timer_info_var.set(f"okno {span} · gra wyłączona, start za {left(start)}{idle}")
+            self.timer_label.configure(foreground="#aaa")
+        elif stop is None:
+            self.timer_info_var.set(f"od {hm(start)} · gra włączona{idle}")
+            self.timer_label.configure(foreground="#7ee08a")
+        else:
+            self.timer_info_var.set(f"okno {hm(start)}–{hm(stop)} · gra włączona, "
+                                    f"koniec za {left(stop)}{idle}")
+            self.timer_label.configure(foreground="#7ee08a")
 
     def check_now(self):
         if self.bot:
@@ -338,7 +370,8 @@ class App:
         self._update_timer()
         # bot skończył sam (minutnik) - przywróć przyciski
         if self.thread and not self.thread.is_alive():
-            finished = self.stop_at is not None and time.time() >= self.stop_at
+            finished = (self.start_at is None and self.stop_at is not None
+                        and time.time() >= self.stop_at)
             self.thread = None
             self.bot = None
             self.start_btn.configure(state="normal")

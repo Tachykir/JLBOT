@@ -49,6 +49,7 @@ class Config:
     serial: str = "127.0.0.1:5555"
     name: str = ""
     game_package: str = "com.timhilgenstoehlerexpo.justlootapp"
+    game_start_wait_s: float = 25.0      # ile czekać po włączeniu gry
 
     match_threshold: float = 0.85        # 0..1, im wyżej tym ostrzej
     poll_interval: list = field(default_factory=lambda: [1.0, 2.5])
@@ -136,6 +137,43 @@ class ADB:
 
     def stop_app(self, package: str) -> None:
         self._run(["shell", "am", "force-stop", package])
+
+    def is_running(self, package: str) -> bool:
+        out = self._run(["shell", "pidof", package], check=False).strip()
+        if out:
+            return True
+        # starsze Androidy bez pidof
+        ps = self._run(["shell", "ps"], check=False).decode(errors="replace")
+        return any(line.split()[-1] == package for line in ps.splitlines() if line.split())
+
+    def _launcher_component(self, package: str) -> str | None:
+        """Activity startowa gry ("pakiet/.MainActivity") wg systemu.
+        `monkey` bywa niedostępny (np. LDPlayer 14), więc startujemy przez
+        `am start -n`."""
+        if getattr(self, "_component", None):
+            return self._component
+        try:
+            out = self._run(["shell", "cmd", "package", "resolve-activity", "--brief",
+                             "-a", "android.intent.action.MAIN",
+                             "-c", "android.intent.category.LAUNCHER", package]
+                            ).decode(errors="replace")
+        except RuntimeError as e:
+            log.info("[%s] resolve-activity: %s", self.serial, e)
+            return None
+        for line in reversed(out.splitlines()):
+            if line.strip().startswith(package + "/"):
+                self._component = line.strip()
+                return self._component
+        return None
+
+    def start_app(self, package: str) -> None:
+        component = self._launcher_component(package)
+        if component:
+            out = self._run(["shell", "am", "start", "-n", component]).decode(errors="replace")
+            if "Error" not in out:
+                return
+            log.info("[%s] am start: %s", self.serial, out.strip()[:200])
+        self._run(["shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"])
 
     def screenshot(self) -> np.ndarray:
         # surowe piksele zamiast PNG - emulator nie traci czasu na kompresję
@@ -287,7 +325,10 @@ class ArenaBot:
         self.clicks = 0
         self.lb_reader = lp_reader.LeaderboardReader()
         self.check_leaderboard_now = threading.Event()
-        self.stop_at: float | None = None  # minutnik (time.time()), None = bez
+        self.stop_at: float | None = None  # koniec (time.time()), None = bez
+        self.start_at: float | None = None  # "start od" (time.time()), None = od razu
+        self._outside = False
+        self._next_game_check = 0.0
         self.next_leaderboard = time.monotonic() + 20  # pierwszy raz zaraz po starcie
         # ostatni udany odczyt (także z poprzedniego uruchomienia) - do różnic
         hist = [e for e in load_leaderboard_history() if e.serial == cfg.serial]
@@ -378,11 +419,88 @@ class ArenaBot:
         log.info("[%s] RUN 10 MORE #%d (%d, %d) dopasowanie %.2f", self.tag, self.clicks, x, y, score)
         return True
 
+    # ------------------------------------------------------------ harmonogram
+    # start_at / stop_at (time.time()):
+    #   - tylko stop_at: minutnik - o tej porze zamknij grę i zakończ,
+    #   - start_at (+ ew. stop_at): okno codzienne - przed startem i po
+    #     końcu gra jest zamknięta, w oknie bot ją włącza (gdy wyłączona)
+    #     i klika; po końcu okno przesuwa się na następny dzień.
+    def in_window(self, now: float) -> bool:
+        if self.start_at is None:
+            return True
+        if now < self.start_at:
+            return False
+        return self.stop_at is None or now < self.stop_at
+
+    def _close_game(self, why: str) -> None:
+        try:
+            if self.adb.is_running(self.cfg.game_package):
+                log.info("[%s] %s - zamykam grę", self.tag, why)
+                self.adb.stop_app(self.cfg.game_package)
+        except Exception as e:
+            log.error("[%s] nie udało się zamknąć gry: %s", self.tag, e)
+
+    def _ensure_game(self) -> None:
+        """W oknie: gra ma działać - włącz, jeśli wyłączona (sprawdzane co minutę)."""
+        if time.monotonic() < self._next_game_check:
+            return
+        self._next_game_check = time.monotonic() + 60
+        if self.adb.is_running(self.cfg.game_package):
+            return
+        log.info("[%s] gra wyłączona - włączam", self.tag)
+        self.adb.start_app(self.cfg.game_package)
+        self.stop.wait(self.cfg.game_start_wait_s)
+        self.next_leaderboard = max(self.next_leaderboard, time.monotonic() + 20)
+
+    def _schedule_tick(self) -> bool:
+        """True = poza oknem (nic nie klikamy)."""
+        now = time.time()
+        if self.stop_at is not None and now >= self.stop_at:
+            if self.start_at is None:
+                self.finish()
+                return True
+            # okno codzienne: następny dzień
+            while self.stop_at <= now:
+                self.start_at += 86400
+                self.stop_at += 86400
+            self._close_game("koniec okna")
+            log.info("[%s] następne okno: %s–%s", self.tag,
+                     time.strftime("%d.%m %H:%M", time.localtime(self.start_at)),
+                     time.strftime("%H:%M", time.localtime(self.stop_at)))
+            self._outside = True
+            return True
+        if not self.in_window(now):
+            if not self._outside or time.monotonic() >= self._next_game_check:
+                self._close_game("poza oknem")
+                self._next_game_check = time.monotonic() + 60
+                if not self._outside:
+                    log.info("[%s] czekam na start o %s", self.tag,
+                             time.strftime("%H:%M", time.localtime(self.start_at)))
+            self._outside = True
+            return True
+        if self._outside:
+            log.info("[%s] start okna", self.tag)
+            self._outside = False
+            self._next_game_check = 0
+        self._ensure_game()
+        return False
+
     def run(self) -> None:
         log.info("[%s] start - czekam na RUN 10 MORE", self.tag)
         while not self.stop.is_set():
-            if self.stop_at is not None and time.time() >= self.stop_at:
-                self.finish()
+            try:
+                if self._schedule_tick():
+                    # poza oknem: sprawdzaj co 5 s, ale wstań dokładnie na start
+                    wait = 5.0
+                    if self.start_at is not None and self.start_at > time.time():
+                        wait = min(wait, max(0.2, self.start_at - time.time()))
+                    self.stop.wait(wait)
+                    continue
+            except Exception as e:
+                log.error("[%s] harmonogram: %s", self.tag, e)
+                self.stop.wait(10)
+                continue
+            if self.stop.is_set():
                 break
             try:
                 lb_on = self.cfg.leaderboard_every_min and max(self.cfg.leaderboard_every_min) > 0
@@ -473,6 +591,34 @@ def parse_stop_time(text: str, now: float | None = None) -> float:
     return now + 60 * minutes
 
 
+def make_window(start_text: str, stop_text: str,
+                now: float | None = None) -> tuple[float | None, float | None]:
+    """(start_at, stop_at) z pól "Start od" i "Koniec". Start to godzina
+    (HH:MM); koniec to godzina albo czas trwania od startu (90, 1h30).
+    Gdy okno trwa właśnie teraz, start jest dzisiejszy (w przeszłości)."""
+    now = time.time() if now is None else now
+    start_text, stop_text = start_text.strip(), stop_text.strip()
+    if not start_text:
+        return None, (parse_stop_time(stop_text, now) if stop_text else None)
+    if ":" not in start_text:
+        raise ValueError("start podaj jako godzinę, np. 8:00")
+    h, m = (int(v) for v in start_text.split(":", 1))
+    if not (0 <= h < 24 and 0 <= m < 60):
+        raise ValueError(start_text)
+    lt = time.localtime(now)
+    today = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, h, m, 0, 0, 0, -1))
+    # trwające okno: wczorajszy start (okno przez północ) albo dzisiejszy
+    for start in (today - 86400, today):
+        if start <= now:
+            stop = parse_stop_time(stop_text, start) if stop_text else None
+            if stop is None and start == today:
+                return start, None
+            if stop is not None and stop > now:
+                return start, stop
+    start = today if today > now else today + 86400
+    return start, (parse_stop_time(stop_text, start) if stop_text else None)
+
+
 # --------------------------------------------------------------------- #
 def load_instances(path: Path) -> list[dict]:
     if not path.exists():
@@ -489,6 +635,8 @@ def main() -> None:
     ap.add_argument("--adb", default=os.environ.get("ADB_PATH") or default_adb_path())
     ap.add_argument("--stop-after", metavar="MIN|HH:MM",
                     help="minutnik: po tylu minutach (albo o tej godzinie) zamknij grę i zakończ")
+    ap.add_argument("--start-at", metavar="HH:MM",
+                    help="okno: od tej godziny gra włączona (z --stop-after codziennie), wcześniej wyłączona")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -509,10 +657,10 @@ def main() -> None:
     for inst in instances:
         cfg = Config.from_dict(inst)
         bot = ArenaBot(cfg, args.adb, stop)
-        if args.stop_after:
-            bot.stop_at = parse_stop_time(args.stop_after)
-            log.info("[%s] minutnik: koniec o %s", bot.tag,
-                     time.strftime("%H:%M", time.localtime(bot.stop_at)))
+        if args.stop_after or args.start_at:
+            bot.start_at, bot.stop_at = make_window(args.start_at or "", args.stop_after or "")
+            hm = lambda t: time.strftime("%d.%m %H:%M", time.localtime(t)) if t else "-"
+            log.info("[%s] harmonogram: start %s, koniec %s", bot.tag, hm(bot.start_at), hm(bot.stop_at))
         t = threading.Thread(target=bot.run, name=cfg.serial, daemon=True)
         t.start()
         threads.append(t)
