@@ -21,7 +21,7 @@ Odchudzony fork Dust Mine Bota (LDPlayer przez ADB, działa w tle). Bot:
 pip install -r requirements.txt
 ```
 
-**Z oknem:** `start.bat` albo:
+**Z oknem:** `start.bat` (najpierw robi `git pull` i doinstalowuje biblioteki, potem otwiera okno) albo:
 
 ```bash
 python gui.py
